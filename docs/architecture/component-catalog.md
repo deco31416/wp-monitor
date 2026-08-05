@@ -1,0 +1,127 @@
+# Catalogo de Componentes
+
+## Objetivo
+
+Relacionar carpetas y archivos con responsabilidades, entradas, salidas, estado y riesgos. Esta vista ayuda a localizar cambios sin convertir `server.ts` en la respuesta para todo.
+
+## Backend
+
+### `src/server.ts`
+
+**Responsabilidad:** composicion del proceso. Carga entorno, configura Express/CORS/auth, registra rutas, inicializa Socket.IO, abre MongoDB, mantiene Baileys y conecta tracker/captura.
+
+**Entradas:** variables, HTTP, Socket.IO y eventos Baileys.
+
+**Salidas:** respuestas HTTP, eventos en tiempo real, persistencia, logs y archivos.
+
+**Estado:** QR actual, conexion WhatsApp, presencia efimera, captura activa y caches de proceso.
+
+**Riesgo:** alta superficie y acoplamiento. Un cambio debe identificar si pertenece a ruta, dominio, adaptador o bootstrap antes de agregar mas logica aqui.
+
+### `src/runtime.ts` y `src/routes/runtime.ts`
+
+Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `TRUST_PROXY`, token de produccion, capacidades y health. Son el contrato que permite al frontend ocultar funciones imposibles en cloud.
+
+Invariantes:
+
+- produccion necesita token de 32+ caracteres;
+- captura por defecto solo en `local-full`;
+- Railway detectado usa dashboard si no se define modo;
+- health distingue configurado de conectado.
+
+### `src/db.ts`
+
+Propietario de MongoDB: tipos de dominio, colecciones, indices, TTL y operaciones CRUD. La inicializacion crea indices idempotentes. No expone credenciales ni debe contener presentacion HTML.
+
+Colecciones logicas: measurements, activity events, contacts, call analyses, audit events, case records, evidence links y check-ins.
+
+### `src/tracker.ts`
+
+Ejecuta observaciones RTT y produce clasificacion/actualizaciones. Debe conservar metodo, timestamp, JID y resultado. Sus estados son heuristicas dependientes de cobertura.
+
+### `src/analytics.ts` y `src/stats-insights.ts`
+
+Transforman series historicas en distribuciones, sesiones, ventanas, patrones y resumentes. Las funciones deben tolerar muestras vacias, fechas antiguas y divisiones por cero. Una tendencia necesita cobertura visible.
+
+### `src/packet-capture.ts`
+
+Adapta el modulo nativo `cap`: enumera interfaces, inicia/detiene, normaliza metadata, aplica filtros y acumula estadisticas. Es una frontera privilegiada; no debe abrirse sin guard de capacidad y metadata de caso.
+
+### `src/call-analyzer.ts`
+
+Administra una ventana de llamada, agrupa paquetes y produce ruta observada, infraestructura, candidatos y resumen. No controla la llamada de WhatsApp.
+
+### `src/call-scoring.ts`
+
+Reglas deterministas para puntuar IPs y conservar reason codes. Separa score de confianza narrativa. Los pesos necesitan prueba y versionado cuando cambian.
+
+### `src/meta-ip-ranges.ts`
+
+Catalogo/heuristicas para reconocer infraestructura de Meta. Debe tratarse como dataset tecnico que puede quedar obsoleto.
+
+### `src/ip-enrichment.ts`
+
+Consulta DB-IP como proveedor principal y usa complemento cuando corresponde. Implementa timeout y cache. Una discrepancia de ciudad/coordenadas debe quedar visible y puede impedir mostrar mapa.
+
+### `src/check-in.ts`
+
+Define modelo y renderizado de landing, consentimiento, metadata del cliente y recibo. La divulgacion minima es una restriccion del producto, no un campo comercial removible.
+
+### `src/evidence-package.ts`
+
+Construye estructura canonica, manifiesto, hashes y ZIP. Debe ser determinista en contenido canonico y excluir secretos. Los tiempos de exportacion pueden hacer distinto un paquete posterior.
+
+### `src/validation.ts`
+
+Frontera de entrada para Case ID, JID, limites, texto, estados y listas. Validar en un solo lugar evita que REST y Socket.IO acepten formatos diferentes.
+
+### `src/routes`
+
+- `cases.ts`: CRUD, cierre y enlaces.
+- `audit.ts`: consulta y exportacion auditada.
+- `reports.ts`: paquete y reportes finales.
+- `runtime.ts`: capacidades, health y guard local.
+
+## Frontend
+
+### `client/src/App.tsx`
+
+Compone layout, navegacion, capacidades, conexion, sesion y vista activa. Debe distinguir estado del servidor de estado WhatsApp.
+
+### `client/src/auth.ts`
+
+Fuente de `API_URL`, token y `authFetch`. Todo componente debe reutilizarlo para no omitir cabeceras o apuntar a puertos antiguos.
+
+### `client/src/types.ts`
+
+Contratos compartidos del lado cliente. Un cambio de payload backend requiere actualizar tipos antes de consumirlo.
+
+### Componentes de dominio
+
+| Componente | Responsabilidad | Dependencias principales |
+| --- | --- | --- |
+| `Cases.tsx` | Expedientes y exports finales | Cases/Reports API |
+| `Dashboard.tsx` | Orquestar contactos y paneles | REST + Socket.IO |
+| `ContactCard.tsx` | Estado actual y resumen | live state, tracker update |
+| `ActivityLogPanel.tsx` | Bitacora y exportacion | activity/report endpoints |
+| `StatsPanel.tsx` | Cobertura y tendencias | stats |
+| `IntelPanel.tsx` | Rutina, sesiones, heatmap | intel endpoints |
+| `ProfilePanel.tsx` | Perfil y OPSEC | profile/privacy APIs |
+| `CallAnalysisPanel.tsx` | Ventana y resultados | call capture/history |
+| `NetworkMonitor.tsx` | Captura, filtros, estadisticas | network REST/Socket |
+| `CheckIns.tsx` | Builder y lista en vivo | check-in REST/event |
+| `AuditTrail.tsx` | Timeline y paquetes | audit/case reports |
+
+## Dependencias externas
+
+| Dependencia | Contrato | Degradacion |
+| --- | --- | --- |
+| WhatsApp/Baileys | Sesion y eventos | QR, reconexion o tracking no disponible |
+| MongoDB | Persistencia | Health degradado y perdida de funciones durables |
+| Npcap/libpcap | Captura local | Network/Call no disponibles |
+| DB-IP/ip-api | Enriquecimiento | Resultado sin metadata ampliada |
+| Navegador | GPS y metadata Check-In | Permiso denegado o campos no disponibles |
+
+## Regla para nuevos componentes
+
+Define antes de implementar: propietario, entrada, salida, persistencia, autenticacion, auditoria, expiracion, fallo degradado, prueba y documento canonico.

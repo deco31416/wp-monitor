@@ -1,0 +1,180 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ── Base Layer ──────────────────────────────────── */
+@layer base {
+    * {
+        @apply border-surface-border;
+    }
+
+    html {
+        color-scheme: dark;
+    }
+
+    body {
+        @apply bg-surface text-txt-primary font-sans antialiased;
+        margin: 0;
+    }
+
+    ::selection {
+        @apply bg-accent/30 text-white;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+        @apply w-1.5 h-1.5;
+    }
+    ::-webkit-scrollbar-track {
+        @apply bg-surface;
+    }
+    ::-webkit-scrollbar-thumb {
+        @apply bg-surface-border-strong rounded-full;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        @apply bg-surface-border-strong;
+    }
+}
+
+/* ── Component Layer ─────────────────────────────── */
+@layer components {
+    /* Cards */
+    .card {
+        @apply bg-surface-raised border border-surface-border rounded-2xl shadow-card;
+    }
+    .card-hover {
+        @apply card transition-colors duration-200 hover:border-surface-border-strong hover:shadow-card-hover;
+    }
+
+    /* Glass effect */
+    .glass {
+        @apply bg-surface-raised/80 backdrop-blur-md border border-surface-border;
+    }
+
+    /* Primary button */
+    .btn-primary {
+        @apply px-5 py-2.5 bg-accent text-surface rounded-xl font-semibold text-sm
+               border border-accent
+               transition-all duration-200
+               hover:bg-white hover:text-surface hover:border-white hover:shadow-glow-sm
+               disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none;
+    }
+
+    /* Ghost button */
+    .btn-ghost {
+        @apply px-4 py-2 bg-surface-overlay text-txt-secondary rounded-xl font-medium text-sm
+               border border-surface-border
+               transition-all duration-200
+               hover:bg-white hover:text-surface hover:border-white
+               ;
+    }
+
+    /* Danger button */
+    .btn-danger {
+        @apply px-4 py-2 bg-danger/10 text-danger rounded-xl font-medium text-sm
+               border border-danger/20
+               transition-all duration-200
+               hover:bg-danger/20 hover:border-danger/30
+               ;
+    }
+
+    /* Input fields */
+    .input-field {
+        @apply w-full px-4 py-2.5 bg-surface-overlay text-txt-primary rounded-xl
+               border border-surface-border
+               placeholder:text-txt-dim
+               focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30
+               transition-all duration-200;
+    }
+
+    /* Select fields */
+    .select-field {
+        @apply px-3 py-2 bg-surface-overlay text-txt-primary rounded-xl text-sm
+               border border-surface-border
+               focus:outline-none focus:border-accent/50
+               disabled:opacity-40 disabled:cursor-not-allowed
+               transition-all duration-200;
+    }
+
+    /* Badge / Pill */
+    .badge {
+        @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium;
+    }
+    .badge-accent {
+        @apply badge bg-accent-muted text-accent border border-accent/20;
+    }
+    .badge-success {
+        @apply badge bg-success-muted text-success border border-success/20;
+    }
+    .badge-danger {
+        @apply badge bg-danger-muted text-danger border border-danger/20;
+    }
+    .badge-warning {
+        @apply badge bg-warning-muted text-warning border border-warning/20;
+    }
+    .badge-neutral {
+        @apply badge bg-surface-overlay text-txt-secondary border border-surface-border;
+    }
+
+    /* Tab navigation */
+    .tab-group {
+        @apply flex gap-1 bg-surface-overlay rounded-xl p-1 border border-surface-border;
+    }
+    .tab-item {
+        @apply flex-1 px-4 py-2.5 rounded-lg text-sm font-medium
+               transition-all duration-200 text-center
+               cursor-pointer select-none;
+    }
+    .tab-active {
+        @apply tab-item bg-accent/15 text-accent border border-accent/25 shadow-glow-sm;
+    }
+    .tab-inactive {
+        @apply tab-item text-txt-muted hover:text-txt-primary hover:bg-surface-hover;
+    }
+
+    /* Stat card (metric display) */
+    .stat-card {
+        @apply card p-4 flex items-center gap-3;
+    }
+    .stat-icon {
+        @apply p-2.5 rounded-xl;
+    }
+
+    /* Empty state */
+    .empty-state {
+        @apply card border-dashed border-2 border-surface-border-strong rounded-2xl p-12 text-center;
+    }
+
+    /* Grid background */
+    .bg-grid {
+        background-image:
+            linear-gradient(rgba(41,64,74,0.38) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(41,64,74,0.38) 1px, transparent 1px);
+        background-size: 48px 48px;
+    }
+}
+
+/* ── Utility Layer ───────────────────────────────── */
+@layer utilities {
+    .text-gradient {
+        @apply bg-clip-text text-transparent bg-gradient-to-r from-accent to-cyan-300;
+    }
+
+    .glow-accent {
+        box-shadow: 0 10px 26px rgba(0,0,0,0.30), 0 0 0 1px rgba(37,211,102,0.10);
+    }
+
+    .glow-success {
+        box-shadow: 0 0 20px rgba(16,185,129,0.3);
+    }
+
+    .glow-danger {
+        box-shadow: 0 0 15px rgba(239,68,68,0.25);
+    }
+}
+
+code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}

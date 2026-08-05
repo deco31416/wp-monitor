@@ -1,0 +1,57 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "WP MONITOR: Backend 4000",
+      "type": "shell",
+      "command": "$env:PORT='4000'; $env:BACKEND_PORT='4000'; Write-Host '[WP MONITOR Backend] http://127.0.0.1:4000' -ForegroundColor Green; pnpm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true,
+        "group": "wp-monitor"
+      }
+    },
+    {
+      "label": "WP MONITOR: Frontend 4001",
+      "type": "shell",
+      "command": "$env:PORT='4001'; $env:CLIENT_PORT='4001'; $env:BROWSER='none'; $env:REACT_APP_API_URL='http://127.0.0.1:4000'; Write-Host '[WP MONITOR Frontend] http://127.0.0.1:4001' -ForegroundColor Green; pnpm --dir client start",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true,
+        "group": "wp-monitor"
+      }
+    },
+    {
+      "label": "WP MONITOR: Start Local Full Stack",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "WP MONITOR: Backend 4000",
+        "WP MONITOR: Frontend 4001"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "wp-monitor"
+      }
+    }
+  ]
+}

@@ -1,0 +1,806 @@
+# =====================================================================
+# WP MONITOR - Node.js / TypeScript / WhatsApp / Security Project
+# =====================================================================
+# This file excludes dependencies, compiled files, credentials,
+# authentication sessions, user data, packet captures, audit evidence,
+# local databases, logs, temporary files and development artifacts.
+#
+# IMPORTANT:
+# - Never commit WhatsApp sessions, API keys, tokens or private keys.
+# - Keep package lockfiles tracked:
+#   package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lock or bun.lockb.
+# =====================================================================
+
+
+# =====================================================================
+# DEPENDENCIES
+# =====================================================================
+
+node_modules/
+jspm_packages/
+bower_components/
+
+# Package manager caches
+.npm/
+.npm-cache/
+.pnpm-store/
+.bun/
+
+# Yarn generated data
+# Remove .yarn/cache/ from this list when using Yarn Zero-Installs.
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.yarn-integrity
+
+
+# =====================================================================
+# BUILD OUTPUTS
+# =====================================================================
+
+dist/
+build/
+out/
+release/
+output/
+
+# Frontend and framework builds
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+.astro/
+.angular/cache/
+.gatsby-cache/
+.docusaurus/
+storybook-static/
+
+# Bundler outputs and caches
+.vite/
+.parcel-cache/
+.rollup.cache/
+.webpack/
+.swc/
+
+# Generated public assets
+public/build/
+public/dist/
+
+# Generated documentation
+typedoc/
+docs/generated/
+docs/api-generated/
+
+
+# =====================================================================
+# MONOREPO AND TASK RUNNER CACHES
+# =====================================================================
+
+.turbo/
+.nx/
+.lerna/
+rush-debug.log*
+common/temp/
+
+
+# =====================================================================
+# TYPESCRIPT
+# =====================================================================
+
+*.tsbuildinfo
+.tsbuildinfo
+
+
+# =====================================================================
+# ENVIRONMENT VARIABLES
+# =====================================================================
+
+.env
+.env.*
+*.env
+.envrc
+.envrc.local
+.direnv/
+
+# Safe environment templates
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+!.env.*.sample
+!.env.*.template
+!*.env.example
+!*.env.sample
+!*.env.template
+!.envrc.example
+
+
+# =====================================================================
+# LOCAL CONFIGURATION
+# =====================================================================
+
+config/local.*
+config/*.local.*
+config/private.*
+config/*.private.*
+
+*.local.json
+*.private.json
+*.secret.json
+
+# Keep safe configuration examples
+!*.example.json
+!*.sample.json
+!*.template.json
+
+
+# =====================================================================
+# SECRETS, TOKENS AND CREDENTIALS
+# =====================================================================
+
+secrets/
+.secret/
+.secrets/
+credentials/
+private/
+private-data/
+keys/
+certs/private/
+
+# Local authentication files
+credentials.json
+credentials.*.json
+token.json
+tokens.json
+auth-token.json
+access-token.json
+refresh-token.json
+
+# Cloud and service credentials
+service-account*.json
+firebase-adminsdk*.json
+google-credentials*.json
+google-service-account*.json
+oauth-client*.json
+oauth-credentials*.json
+
+# Authentication and token files
+*.token
+*.secret
+*.secrets
+*.credentials
+*.auth
+*.apikey
+*.api-key
+
+# Safe credential templates
+!credentials.example.json
+!credentials.sample.json
+!tokens.example.json
+!service-account.example.json
+!*.example.token
+!*.sample.token
+
+
+# =====================================================================
+# PRIVATE KEYS AND CERTIFICATES
+# =====================================================================
+
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+*.agekey
+
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+
+# Safe key templates or public examples
+!*.example.key
+!*.example.pem
+!*.sample.key
+!*.sample.pem
+
+# Local security directories
+.ssh/
+.gnupg/
+.aws/
+.gcloud/
+.azure/
+.kube/
+
+# Kubernetes credentials
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+
+# VPN profiles may contain credentials
+*.ovpn
+
+# CLI authentication files
+.netrc
+.npmrc
+.pnpmrc
+.pypirc
+.yarnrc.local.yml
+pip.conf
+.sentryclirc
+.vault-token
+
+
+# =====================================================================
+# WHATSAPP / BAILEYS / WHATSAPP-WEB.JS AUTHENTICATION
+# =====================================================================
+# CRITICAL: These files allow access to authenticated WhatsApp sessions.
+# Never commit, upload or distribute them.
+# =====================================================================
+
+auth_info_baileys/
+auth_info_baileys*/
+auth_info_multi/
+auth_info_multi*/
+
+baileys_auth/
+baileys_auth*/
+baileys_sessions/
+baileys-sessions/
+
+whatsapp_auth/
+whatsapp-auth/
+whatsapp_sessions/
+whatsapp-sessions/
+sessions/whatsapp/
+
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Baileys session internals
+creds.json
+app-state-sync-key-*.json
+sender-key-*.json
+sender-key-memory-*.json
+pre-key-*.json
+session-*.json
+
+# Generated WhatsApp QR codes
+whatsapp-qr*.png
+baileys-qr*.png
+qr-code*.png
+qr-whatsapp*.png
+
+
+# =====================================================================
+# BROWSER AUTOMATION AND LOCAL BROWSER PROFILES
+# =====================================================================
+# Browser profiles may contain cookies, tokens and authenticated sessions.
+# =====================================================================
+
+browser-data/
+browser-profile/
+browser-profiles/
+chrome-profile/
+chromium-profile/
+puppeteer-data/
+playwright-data/
+playwright/.auth/
+playwright-auth/
+
+# Browser session exports may contain cookies and authenticated state.
+storageState.json
+storage-state.json
+cookies.json
+cookies.txt
+
+.puppeteer/
+.chromium/
+.chrome/
+
+user-data-dir/
+local-browser-storage/
+
+
+# =====================================================================
+# USER UPLOADS AND RUNTIME STORAGE
+# =====================================================================
+
+uploads/**
+!uploads/.gitkeep
+!uploads/README.md
+
+public/uploads/**
+!public/uploads/.gitkeep
+!public/uploads/README.md
+
+storage/**
+!storage/.gitkeep
+!storage/README.md
+
+runtime-storage/**
+!runtime-storage/.gitkeep
+
+data/runtime/**
+!data/runtime/.gitkeep
+
+data/sessions/**
+!data/sessions/.gitkeep
+
+runtime/downloads/
+runtime/screenshots/
+runtime/recordings/
+runtime/media/
+
+
+# =====================================================================
+# PACKET CAPTURES AND NETWORK EVIDENCE
+# =====================================================================
+# These files may contain IP addresses, cookies, credentials,
+# user communications, session tokens and private network information.
+# =====================================================================
+
+captures/
+packet-captures/
+packet_captures/
+network-captures/
+network_captures/
+
+capture_exports/
+capture-exports/
+
+*.pcap
+*.pcapng
+*.cap
+*.dmp
+
+# HTTP Archive files may contain cookies and authorization headers
+*.har
+
+# Allow sanitized examples when intentionally included
+!*.example.har
+!*.sanitized.har
+
+
+# =====================================================================
+# AUDIT, FORENSICS AND SECURITY OUTPUTS
+# =====================================================================
+
+audit_exports/
+audit-exports/
+audit-results/
+audit_results/
+
+evidence_packages/
+evidence-packages/
+evidence/
+forensics-output/
+forensics_output/
+
+generated_reports/
+generated-reports/
+reports/generated/
+reports/private/
+
+security-reports/
+security_reports/
+scan-results/
+scan_results/
+vulnerability-reports/
+vulnerability_reports/
+
+# Security tools
+nuclei-output/
+nuclei-results/
+zap-reports/
+burp-projects/
+trivy-reports/
+semgrep-results/
+dependency-check-reports/
+
+# Security report formats
+*.sarif
+*.nessus
+*.burp
+
+# SonarQube
+.scannerwork/
+.sonar/
+
+
+# =====================================================================
+# LOCAL DATABASES AND DATA STORES
+# =====================================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Allow sanitized database fixtures
+!*.example.db
+!*.fixture.db
+!*.sample.db
+
+# Prisma local development database
+prisma/dev.db
+prisma/dev.db-journal
+
+# Redis
+dump.rdb
+appendonly.aof
+appendonlydir/
+
+# Local container database volumes
+mongo-data/
+mongodb-data/
+postgres-data/
+postgresql-data/
+mysql-data/
+mariadb-data/
+redis-data/
+minio-data/
+elasticsearch-data/
+
+
+# =====================================================================
+# LOGS
+# =====================================================================
+
+logs/
+.runtime-logs/
+runtime-logs/
+
+*.log
+*.log.*
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+debug.log*
+
+# Process and application logs
+access.log*
+error.log*
+combined.log*
+application.log*
+server.log*
+worker.log*
+
+# Node.js diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+
+# =====================================================================
+# PROCESS IDS, SOCKETS AND RUNTIME STATE
+# =====================================================================
+
+pids/
+run/
+
+*.pid
+*.pid.lock
+*.sock
+
+.pm2/
+pm2-data/
+
+# Local process manager configuration
+ecosystem.config.local.*
+ecosystem.local.config.*
+
+
+# =====================================================================
+# CRASH DUMPS AND PERFORMANCE PROFILES
+# =====================================================================
+
+core
+core.*
+*.core
+
+*.heapsnapshot
+*.cpuprofile
+*.heapprofile
+
+heapdump-*
+isolate-*.log
+crash.log
+crash-reports/
+
+
+# =====================================================================
+# TESTING AND CODE COVERAGE
+# =====================================================================
+
+coverage/
+.nyc_output/
+.jest-cache/
+
+test-results/
+test-results.json
+junit.xml
+junit-*.xml
+
+# Playwright
+playwright-report/
+blob-report/
+playwright/.cache/
+test-results/
+
+# Cypress generated files
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
+
+# Other testing tools
+allure-results/
+allure-report/
+mochawesome-report/
+jest-stare/
+vitest-report/
+vitest-results/
+
+
+# =====================================================================
+# LINTER, FORMATTER AND TOOL CACHES
+# =====================================================================
+
+.eslintcache
+.stylelintcache
+.prettiercache
+.prettier-cache
+.lintcache
+
+.cache/
+.cache-loader/
+.node_repl_history
+
+
+# =====================================================================
+# TEMPORARY FILES
+# =====================================================================
+
+tmp/
+temp/
+.tmp/
+.temp/
+
+*.tmp
+*.temp
+*.cache
+
+*.swp
+*.swo
+*.swn
+
+*~
+.#*
+\#*\#
+
+# Merge and patch leftovers
+*.orig
+*.rej
+
+
+# =====================================================================
+# BACKUPS AND LOCAL EXPORTS
+# =====================================================================
+
+backups/
+backup/
+local-backups/
+database-backups/
+
+*.bak
+*.backup
+*.old
+*.save
+
+# Generated compressed packages
+*.tgz
+
+
+# =====================================================================
+# IDE AND EDITOR FILES
+# =====================================================================
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Visual Studio
+.vs/
+
+# VS Code
+.vscode/*
+
+# Shared VS Code files allowed in the repository
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# Uncomment only after verifying they contain no local paths or secrets:
+# !.vscode/settings.json
+# !.vscode/launch.json
+
+# Eclipse
+.project
+.classpath
+.settings/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Fleet
+.fleet/
+
+# Local editor history
+.history/
+
+# Vim
+*.swp
+*.swo
+
+# Development agent local state
+.agents/
+.codex/
+.claude/settings.local.json
+.aider*
+.continue/cache/
+.cursor/index/
+
+# Private planning and pre-publication audit material
+/plan.md
+/z-limpiar.md
+/docs/internal/
+
+
+# =====================================================================
+# OPERATING SYSTEM FILES
+# =====================================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+
+# Linux
+.directory
+.Trash-*
+.fuse_hidden*
+.nfs*
+
+
+# =====================================================================
+# CLOUD AND DEPLOYMENT LOCAL STATE
+# =====================================================================
+
+# Vercel
+.vercel/
+
+# Netlify
+.netlify/
+
+# Firebase
+.firebase/
+
+# Serverless Framework
+.serverless/
+
+# SST
+.sst/
+
+# Cloudflare Wrangler
+.wrangler/
+
+# Railway CLI local metadata
+.railway/
+
+# AWS SAM and CDK outputs
+.aws-sam/
+cdk.out/
+
+
+# =====================================================================
+# TERRAFORM LOCAL STATE
+# =====================================================================
+# Keep .terraform.lock.hcl tracked.
+# =====================================================================
+
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Terraform variable files may contain credentials
+*.tfvars
+*.tfvars.json
+
+# Allow safe templates
+!*.tfvars.example
+!*.tfvars.json.example
+!*.example.tfvars
+!*.example.tfvars.json
+
+# Local Terraform overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# =====================================================================
+# DOCKER LOCAL OVERRIDES AND VOLUMES
+# =====================================================================
+
+.docker/
+
+docker-compose.local.yml
+docker-compose.local.yaml
+compose.local.yml
+compose.local.yaml
+
+docker-volumes/
+container-data/
+
+
+# =====================================================================
+# LOCAL EMAIL, MESSAGE AND NOTIFICATION TEST OUTPUTS
+# =====================================================================
+
+mail-output/
+email-output/
+message-output/
+notification-output/
+
+mail-preview/
+email-preview/
+
+
+# =====================================================================
+# GENERATED API AND APPLICATION ARTIFACTS
+# =====================================================================
+
+artifacts/generated/
+artifacts/runtime/
+artifacts/private/
+
+api-cache/
+response-cache/
+request-cache/
+
+generated/
+.generated/
+
+# Uncomment only when the entire generated directory is reproducible:
+# generated/**
+
+
+# =====================================================================
+# END OF FILE
+# =====================================================================

@@ -1,0 +1,8 @@
+packages:
+  - client
+
+onlyBuiltDependencies:
+  - baileys
+  - cap
+  - esbuild
+  - protobufjs
