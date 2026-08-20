@@ -30,10 +30,29 @@ Maintainer guidance:
 
 > Changes in this section are part of the development branch and are not included in the current stable release.
 
+### Added
+
+- Added durable case-scoped tracking sessions with operator, authorization, probe method, lifecycle status, and per-JID active-session enforcement.
+- Added Redis-backed atomic rate limiting for public Check-In submissions, shared health reporting, fail-closed production behavior, Docker AOF persistence, and an Ubuntu/VPS operations runbook.
+- Added a single-operator account stored in MongoDB, memory-hard scrypt password hashing, opaque Redis sessions, persistent login rate limits, secure cookie authentication, origin protection, authentication audit events, and an Account screen for credential rotation.
+- Added automated coverage for authentication services/routes, password policy, Redis, capture lifecycle/permissions, rate limiting, tracker signals, session provenance, analytics, and critical flows.
+
+### Fixed
+
+- Isolated presence and receipt attribution per tracked JID (including scoped LIDs), prevented initial empty tracker updates from being persisted, replaced timeout-as-offline claims with the inconclusive `NO_ACK` state, and separated calibration/unknown samples from Standby statistics while preserving legacy API compatibility.
+- Scoped new RTT measurements and observed activity events to their case and tracking session so case evidence statistics no longer mix observations from other cases.
+- Scoped persisted call analyses by both case and call ID, and blocked closing/deactivating cases that still have active tracking sessions.
+- Removed tracker-specific Baileys listeners when tracking stops, preventing stopped/reactivated contacts from accumulating duplicate handlers.
+- Evidence packages now resolve the running package version instead of falling back to the stale `2.9.1` label.
+- Restored the declared `qa:report-fixture` command with synthetic, non-production JSON/HTML/PDF/ZIP artifacts and integrity validation.
+- Ensured Docker builds copy the tracked `cap` Node.js 24 compatibility patch before frozen pnpm installation; the static frontend build now skips unrelated backend lifecycle scripts instead of attempting to compile `cap`.
+
 ### Changed
 
 - Standardized backend and frontend dependency management on a single root **pnpm workspace** and root lockfile.
-- Pinned the Baileys dependency to a tested Git commit and declared `@hapi/boom` as a direct dependency.
+- Migrated the supported runtime to Node.js `24.19.x` and pnpm `11.22.0`, including an enforced runtime check and reproducible Debian-based Docker builds.
+- Migrated the frontend from Create React App/Jest to Vite/Vitest and retained production build, typecheck, lint, and component-test gates.
+- Migrated Baileys to the tested `7.0.0-rc14` package and declared `@hapi/boom` as a direct dependency.
 - Restricted dependency lifecycle scripts to the known build requirements for Baileys, `cap`, `esbuild`, and `protobufjs`.
 - Updated Docker builds and public setup instructions to use reproducible pnpm installations.
 - Refreshed the public web manifest metadata for WP MONITOR.
@@ -52,16 +71,28 @@ Maintainer guidance:
 - Removed the legacy WhatsApp CLI and its terminal QR dependencies. The supported entry point is now the web backend in `src/server.ts`.
 - Removed unused Create React App sample assets, stale Web Vitals wiring, and the obsolete sample test.
 - Removed startup warnings for Redis, Groq, and Resend because those integrations are not implemented product capabilities.
+- Removed shared Bearer-token authentication and browser token persistence. `DASHBOARD_TOKEN` remains only as a local first-start migration fallback and is never accepted by protected HTTP or Socket.IO contracts.
 
 ### Verification
 
-- Added a frontend login smoke test.
+- Backend tests: 108/108 passed.
+- Frontend tests: 4/4 passed.
+- Backend/frontend typechecks, frontend lint, and production builds passed.
+- Full and production-only pnpm audits reported no known vulnerabilities.
+- Runtime authentication checks covered trusted/untrusted origins, login, session lookup, protected HTTP, logout/revocation, Socket.IO authentication/disconnection, cookie flags, MongoDB hash/index state, and Redis session cleanup.
+- Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, and per-artifact SHA-256 metadata.
+- Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set.
+- Documentation relative-link validation passed across 55 Markdown files.
 
 ### Migration Notes
 
 - The next release changes dependency management from the historical split workflow to a single root pnpm workspace.
 - Contributor, CI, Docker, and deployment commands should use the root workspace and its lockfile after this release is published.
 - The legacy CLI is no longer a supported application entry point; use the web backend and dashboard workflow.
+- Existing local installations may bootstrap the first `admin` operator from the old `DASHBOARD_TOKEN`; sign in once, rotate username/password from Account, then remove the legacy value. Fresh/production deployments must use explicit `INITIAL_ADMIN_USERNAME`, `INITIAL_ADMIN_PASSWORD`, and `AUTH_IDENTITY_SECRET` secrets.
+- Existing measurements and activity events have no case/session provenance and remain available only through legacy contact-wide views; case evidence exports intentionally include only newly scoped observations.
+- Existing call analyses without `caseId` remain available in contact-wide history but are intentionally excluded from case evidence exports.
+- Existing active contacts without a durable `tracking_sessions` record are not auto-restored and must be reactivated with case, operator, and authorization metadata.
 
 ---
 

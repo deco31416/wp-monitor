@@ -5,11 +5,9 @@ Matriz inspirada en ISO/IEC 25010. No representa certificacion.
 ## Comandos oficiales
 
 ```powershell
-pnpm run test:unit
-pnpm run test:client
-pnpm run build
-pnpm --dir client run build
-pnpm run build:all
+pnpm run qa
+pnpm audit
+pnpm audit --prod
 pnpm run qa:report-fixture
 ```
 
@@ -18,7 +16,8 @@ pnpm run qa:report-fixture
 | Area | Pruebas |
 | --- | --- |
 | Validacion | Case ID, JID, limites y entradas |
-| Runtime | modos, captura, token y proxy |
+| Runtime | modos, captura, cuenta/sesion, Redis y proxy |
+| Autenticacion | password scrypt, bootstrap, rate limit, cookies, origen, revocacion y Socket.IO |
 | Runtime routes | health y capacidades |
 | Scoring | candidatas y coherencia telefonica |
 | GeoIP | proveedor principal/fallback y contradicciones |
@@ -37,7 +36,7 @@ pnpm run qa:report-fixture
 | Compatibilidad | Builds Node/React y pruebas Windows/local |
 | Usabilidad | QA 360, 390, 1366 y 1440 px |
 | Fiabilidad | Health, estados degradados, reinicio y restauracion |
-| Seguridad | Token, CORS, proxy, validacion y revision de secretos |
+| Seguridad | Cuenta/sesion, CORS/origin, proxy, rate limits, validacion y revision de secretos |
 | Mantenibilidad | TypeScript, modulos, tests y docs por contrato |
 | Portabilidad | Local, Docker y Railway con capacidades explicitas |
 

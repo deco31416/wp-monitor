@@ -23,6 +23,12 @@ import geoipModule from 'geoip-lite';
 import os from 'os';
 import { isMetaIP, isKnownRelayIP, isPrivateIP, classifyIP } from './meta-ip-ranges.js';
 import {
+    lookupNetworkIntelligence,
+    scoreCandidate,
+} from './call-scoring.js';
+import { closeCaptureSessionIfOpened } from './capture-lifecycle.js';
+import { hasPacketCapturePrivileges } from './capture-permissions.js';
+import type {
     CandidateConfidence,
     CandidateCorrelation,
     CandidateDirection,
@@ -30,8 +36,6 @@ import {
     CandidateReasonCode,
     NetworkCategory,
     NetworkIntelligence,
-    lookupNetworkIntelligence,
-    scoreCandidate,
 } from './call-scoring.js';
 import type { IpEnrichment } from './ip-enrichment.js';
 
@@ -200,7 +204,12 @@ export function startCallCapture(
         console.log('[CALL-ANALYZER] Already capturing, stop first');
         return false;
     }
+    if (!hasPacketCapturePrivileges()) {
+        console.error('[CALL-ANALYZER] Capture requires CAP_NET_RAW on Linux');
+        return false;
+    }
 
+    let captureOpened = false;
     try {
         capSession = new Cap();
         currentCallId = callId;
@@ -228,6 +237,7 @@ export function startCallCapture(
         const buffer = Buffer.alloc(snapLen);
 
         capSession.open(device, bpfFilter, bufSize, buffer);
+        captureOpened = true;
         capSession.setMinBytes && capSession.setMinBytes(0);
 
         const linkType = capSession.linkType;
@@ -296,9 +306,7 @@ export function startCallCapture(
         return true;
     } catch (err) {
         console.error('[CALL-ANALYZER] Failed to start capture:', err);
-        try {
-            capSession?.close();
-        } catch {}
+        closeCaptureSessionIfOpened(capSession, captureOpened);
         resetCaptureState();
         return false;
     }
@@ -479,7 +487,7 @@ function analyzePackets(
             ports,
             durationSec,
             targetJid,
-            observedCountryCode: geo?.country,
+            observedCountryCode: geo?.country ?? null,
         });
 
         candidates.push({
@@ -575,5 +583,5 @@ export function getCallAnalysisHistory(jid: string): CallAnalysisResult[] {
 export function getLatestCallAnalysis(jid: string): CallAnalysisResult | null {
     const history = analysisHistory.get(jid);
     if (!history || history.length === 0) return null;
-    return history[history.length - 1];
+    return history[history.length - 1] ?? null;
 }

@@ -5,8 +5,15 @@ import clsx from 'clsx';
 export interface StatsData {
     online: number;
     standby: number;
+    calibrating?: number;
+    noAck?: number;
+    unknown?: number;
+    /** Compatibility alias returned by older backend versions. */
     offline: number;
     totalMeasurements: number;
+    conclusiveMeasurements?: number;
+    inconclusiveMeasurements?: number;
+    acknowledgedRttMeasurements?: number;
     firstSeen: string | null;
     lastSeen: string | null;
     lastOnline: string | null;
@@ -51,6 +58,9 @@ interface PeriodInsight {
     key: 'last24h' | 'last7d' | 'last30d';
     label: string;
     totalMeasurements: number;
+    conclusiveMeasurements?: number;
+    inconclusiveMeasurements?: number;
+    acknowledgedRttMeasurements?: number;
     onlineMeasurements: number;
     onlinePct: number;
     avgRtt: number;
@@ -60,12 +70,14 @@ interface PeriodInsight {
 interface DailyCoverageInsight {
     date: string;
     totalMeasurements: number;
+    conclusiveMeasurements?: number;
+    conclusivePct?: number;
     onlinePct: number;
     coverageScore: number;
 }
 
 export interface PatternsData {
-    hourly: Array<{ hour: number; total: number; online: number; pct: number }>;
+    hourly: Array<{ hour: number; total: number; conclusive?: number; online: number; pct: number }>;
     peakHour: number;
     avgSessionLength: number;
     totalOnlineMinutes: number;
@@ -119,7 +131,7 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
 
                 <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                     <MetricTile icon={<Database size={15} />} label="Mediciones" value={stats.totalMeasurements.toLocaleString()} />
-                    <MetricTile icon={<TrendingUp size={15} />} label="RTT promedio" value={`${stats.avgRtt} ms`} />
+                    <MetricTile icon={<TrendingUp size={15} />} label="RTT con ACK" value={`${stats.avgRtt} ms`} />
                     <MetricTile icon={<History size={15} />} label="Ventana observada" value={observation.label} />
                     <MetricTile icon={<Radio size={15} />} label="Densidad" value={`${density.toFixed(1)}/h`} />
                 </div>
@@ -262,7 +274,9 @@ function PeriodTrendPanel({ periods }: { periods: PeriodInsight[] }) {
                             </span>
                         </div>
                         <p className="text-xl font-bold text-txt-primary">{period.onlinePct}%</p>
-                        <p className="text-[10px] text-txt-dim mt-1">{period.totalMeasurements.toLocaleString()} mediciones</p>
+                        <p className="text-[10px] text-txt-dim mt-1">
+                            {(period.conclusiveMeasurements ?? period.totalMeasurements).toLocaleString()} concluyentes / {period.totalMeasurements.toLocaleString()} intentos
+                        </p>
                         <p className="text-[10px] text-txt-muted mt-1">RTT {period.avgRtt || 0} ms</p>
                     </div>
                 ))}
@@ -272,7 +286,7 @@ function PeriodTrendPanel({ periods }: { periods: PeriodInsight[] }) {
 }
 
 function CoveragePanel({ dailyCoverage }: { dailyCoverage: DailyCoverageInsight[] }) {
-    const activeDays = dailyCoverage.filter(day => day.totalMeasurements > 0).length;
+    const activeDays = dailyCoverage.filter(day => (day.conclusiveMeasurements ?? day.totalMeasurements) > 0).length;
 
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
@@ -281,7 +295,7 @@ function CoveragePanel({ dailyCoverage }: { dailyCoverage: DailyCoverageInsight[
             </h6>
             <div className="flex items-end gap-1.5 h-20">
                 {dailyCoverage.map(day => (
-                    <div key={day.date} className="flex-1 h-full flex flex-col justify-end gap-1" title={`${day.date}: ${day.totalMeasurements} mediciones`}>
+                    <div key={day.date} className="flex-1 h-full flex flex-col justify-end gap-1" title={`${day.date}: ${day.conclusiveMeasurements ?? day.totalMeasurements} concluyentes / ${day.totalMeasurements} intentos`}>
                         <div
                             className={clsx(
                                 'rounded-t-sm min-h-[3px]',
@@ -294,17 +308,20 @@ function CoveragePanel({ dailyCoverage }: { dailyCoverage: DailyCoverageInsight[
             </div>
             <div className="flex items-center justify-between mt-3">
                 <span className="text-[10px] text-txt-dim">Ultimos 14 dias</span>
-                <span className="text-[10px] font-semibold text-txt-secondary">{activeDays}/14 dias con datos</span>
+                <span className="text-[10px] font-semibold text-txt-secondary">{activeDays}/14 dias concluyentes</span>
             </div>
         </div>
     );
 }
 
 function StateDistribution({ stats }: { stats: StatsData }) {
+    const noAck = stats.noAck ?? stats.offline;
     const segments = [
         { label: 'Online', value: stats.online, color: 'bg-success', text: 'text-success' },
         { label: 'Standby', value: stats.standby, color: 'bg-warning', text: 'text-warning' },
-        { label: 'Offline', value: stats.offline, color: 'bg-danger', text: 'text-danger' },
+        { label: 'Calibrando', value: stats.calibrating ?? 0, color: 'bg-accent', text: 'text-accent' },
+        { label: 'Sin ACK', value: noAck, color: 'bg-orange-500', text: 'text-orange-400' },
+        { label: 'Sin clasificar', value: stats.unknown ?? 0, color: 'bg-txt-dim', text: 'text-txt-dim' },
     ];
 
     return (
@@ -320,7 +337,7 @@ function StateDistribution({ stats }: { stats: StatsData }) {
                     )
                 ))}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
                 {segments.map(segment => (
                     <div key={segment.label} className="rounded-lg border border-surface-border bg-surface-hover p-3">
                         <div className="flex items-center gap-1.5 mb-1">

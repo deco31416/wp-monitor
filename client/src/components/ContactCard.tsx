@@ -2,9 +2,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { Square, Activity, Wifi, Smartphone, Monitor, Clock, Database, BarChart3, History, TrendingUp, User, Briefcase, Globe, FileDown, Pencil, Check, X, Brain, Phone } from 'lucide-react';
 import clsx from 'clsx';
-import { socket } from '../App';
+import { socket } from '../socket';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
-import { CallAnalysisResult, CallCaptureStarted, CallEvent } from '../types';
+import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type TrackerDeviceInfo } from '../types';
 import { ActivityJournalPanel } from './ActivityJournalPanel';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
@@ -20,13 +20,6 @@ interface TrackerData {
     state: string;
     timestamp: number;
 }
-interface DeviceInfo {
-    jid: string;
-    state: string;
-    rtt: number;
-    avg: number;
-}
-
 interface LiveState {
     state: string;
     label: string;
@@ -40,6 +33,14 @@ interface ActivityEntry {
     state: string;
     timestamp: string;
     rtt: number;
+}
+
+function isNoAckState(value: string): boolean {
+    return value === 'NO_ACK' || value === 'OFFLINE' || value === 'Sin ACK';
+}
+
+function formatProbeState(value: string): string {
+    return isNoAckState(value) ? 'Sin ACK' : value;
 }
 
 interface ProfileData {
@@ -162,14 +163,14 @@ interface ContactCardProps {
     customName: string | null;
     pushName: string | null;
     data: TrackerData[];
-    devices: DeviceInfo[];
+    devices: TrackerDeviceInfo[];
     deviceCount: number;
     presence: string | null;
     profilePic: string | null;
-    connectionType?: 'wifi' | 'cellular' | 'unknown';
-    typingState?: 'composing' | 'recording' | null;
-    liveState?: LiveState | null;
-    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[];
+    connectionType?: 'wifi' | 'cellular' | 'unknown' | undefined;
+    typingState?: 'composing' | 'recording' | null | undefined;
+    liveState?: LiveState | null | undefined;
+    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[] | undefined;
     onRemove: () => void;
     privacyMode?: boolean;
 }
@@ -195,7 +196,8 @@ export function ContactCard({
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [patterns, setPatterns] = useState<PatternsData | null>(null);
-    const [activePanel, setActivePanel] = useState<'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call'>('chart');
+    type DetailPanel = 'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call';
+    const [activePanel, setActivePanel] = useState<DetailPanel>('chart');
     const [profileLoading, setProfileLoading] = useState(false);
 
     // Privacy score
@@ -237,15 +239,15 @@ export function ContactCard({
     useEffect(() => {
         fetch(`${API_URL}/api/runtime-capabilities`)
             .then(r => r.json())
-            .then(data => setCallTrafficAvailable(data.callTrafficAnalysis !== false))
-            .catch(() => setCallTrafficAvailable(true));
+            .then((data: { callTrafficAnalysis?: boolean }) => {
+                const available = data.callTrafficAnalysis !== false;
+                setCallTrafficAvailable(available);
+                if (!available) {
+                    setActivePanel(current => current === 'call' ? 'chart' : current);
+                }
+            })
+            .catch(() => setCallTrafficAvailable(false));
     }, []);
-
-    useEffect(() => {
-        if (!callTrafficAvailable && activePanel === 'call') {
-            setActivePanel('chart');
-        }
-    }, [callTrafficAvailable, activePanel]);
 
     // ── Call traffic analysis state ──
     const [callAnalysis, setCallAnalysis] = useState<CallAnalysisResult | null>(null);
@@ -411,24 +413,18 @@ export function ContactCard({
     const liveStatus = liveState && liveState.state !== 'unknown' && liveState.confidence !== 'none'
         ? liveState.label
         : null;
-    const deviceStatus = devices.length > 0
-        ? (devices.find(d => d.state.includes('Online'))?.state ||
-            devices.find(d => d.state === 'Standby')?.state ||
-            devices.find(d => d.state !== 'OFFLINE')?.state ||
-            devices.find(d => d.state === 'OFFLINE')?.state ||
-            devices[0].state)
-        : 'Unknown';
+    const rawDeviceStatus = selectPrimaryTrackerDevice(devices)?.state || 'Unknown';
+    const deviceStatus = formatProbeState(rawDeviceStatus);
     const currentStatus = liveStatus || presenceStatus || deviceStatus;
 
     const blurredNumber = privacyMode ? displayNumber.replace(/\d/g, '•') : displayNumber;
 
-    const statusColor = currentStatus === 'OFFLINE' ? 'danger'
+    const statusColor = isNoAckState(currentStatus) ? 'warning'
         : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'call' ? 'success'
         : currentStatus === 'Standby' ? 'warning' : 'neutral';
 
     const statusConfig = {
         success: { badge: 'badge-success', dot: 'bg-success', glow: 'glow-success' },
-        danger: { badge: 'badge-danger', dot: 'bg-danger', glow: 'glow-danger' },
         warning: { badge: 'badge-warning', dot: 'bg-warning', glow: '' },
         neutral: { badge: 'badge-neutral', dot: 'bg-txt-dim', glow: '' },
     }[statusColor];
@@ -452,22 +448,19 @@ export function ContactCard({
     }, [jid]);
 
     const fetchProfile = useCallback(() => {
-        setProfileLoading(true);
         authFetch(`${API_URL}/api/profile/${encodeURIComponent(jid)}`)
             .then(r => r.json())
             .then((data) => {
                 setProfile(data);
                 // Sync custom name from DB if we don't have one yet
-                if (data.customName && !customName) {
-                    setCustomName(data.customName);
-                }
+                setCustomName(current => data.customName && !current ? data.customName : current);
                 setProfileLoading(false);
             })
             .catch((err) => {
                 console.error(err);
                 setProfileLoading(false);
             });
-    }, [jid, customName]);
+    }, [jid]);
 
     const fetchPatterns = useCallback(() => {
         authFetch(`${API_URL}/api/patterns/${encodeURIComponent(jid)}`)
@@ -488,7 +481,6 @@ export function ContactCard({
     }, [fetchStats, fetchActivity]);
 
     const fetchIntel = useCallback(() => {
-        setIntelLoading(true);
         authFetch(`${API_URL}/api/intel/${encodeURIComponent(jid)}?days=14`)
             .then(r => r.json())
             .then((data) => { setIntel(data); setIntelLoading(false); })
@@ -528,6 +520,20 @@ export function ContactCard({
         }
     }, [activePanel, fetchProfile, fetchPatterns, fetchIntel, fetchPrivacyScore, fetchAnomalies, fetchCallHistory]);
 
+    const selectPanel = (panel: DetailPanel) => {
+        if (panel === activePanel) return;
+        if (panel === 'profile') setProfileLoading(true);
+        if (panel === 'intel') setIntelLoading(true);
+        setActivePanel(panel);
+    };
+
+    const [currentTime, setCurrentTime] = useState(Date.now);
+
+    useEffect(() => {
+        const interval = window.setInterval(() => setCurrentTime(Date.now()), 60_000);
+        return () => window.clearInterval(interval);
+    }, []);
+
     const formatTime = (ts: string | null) => {
         if (!ts) return '—';
         return new Date(ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -544,7 +550,7 @@ export function ContactCard({
             case 'available':
                 return 'Online';
             case 'unavailable':
-                return 'Desconectado';
+                return 'No disponible';
             case 'composing':
                 return 'Escribiendo';
             case 'recording':
@@ -556,7 +562,7 @@ export function ContactCard({
 
     const timeAgo = (ts: string | null) => {
         if (!ts) return '—';
-        const diff = Date.now() - new Date(ts).getTime();
+        const diff = currentTime - new Date(ts).getTime();
         const mins = Math.floor(diff / 60000);
         if (mins < 1) return 'Justo ahora';
         if (mins < 60) return `hace ${mins}m`;
@@ -709,7 +715,6 @@ export function ContactCard({
                                 <div className={clsx(
                                     "w-24 h-24 rounded-2xl overflow-hidden bg-surface-hover border-2",
                                     statusColor === 'success' ? 'border-success/30' :
-                                    statusColor === 'danger' ? 'border-danger/30' :
                                     statusColor === 'warning' ? 'border-warning/30' : 'border-surface-border'
                                 )}>
                                     {profilePicSrc ? (
@@ -825,12 +830,18 @@ export function ContactCard({
                                     {stats.standby > 0 && (
                                         <div className="bg-warning h-full transition-all" style={{ width: `${stats.standby}%` }} />
                                     )}
-                                    {stats.offline > 0 && (
-                                        <div className="bg-danger h-full transition-all" style={{ width: `${stats.offline}%` }} />
+                                    {(stats.calibrating ?? 0) > 0 && (
+                                        <div className="bg-accent h-full transition-all" style={{ width: `${stats.calibrating ?? 0}%` }} />
+                                    )}
+                                    {(stats.noAck ?? stats.offline) > 0 && (
+                                        <div className="bg-orange-500 h-full transition-all" style={{ width: `${stats.noAck ?? stats.offline}%` }} />
+                                    )}
+                                    {(stats.unknown ?? 0) > 0 && (
+                                        <div className="bg-txt-dim h-full transition-all" style={{ width: `${stats.unknown ?? 0}%` }} />
                                     )}
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-1 text-center text-[10px]">
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 text-center text-[10px]">
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-success mx-auto mb-1" />
                                         <span className="text-success font-bold">{stats.online}%</span>
@@ -842,9 +853,19 @@ export function ContactCard({
                                         <p className="text-txt-dim">Standby</p>
                                     </div>
                                     <div>
-                                        <div className="w-2 h-2 rounded-full bg-danger mx-auto mb-1" />
-                                        <span className="text-danger font-bold">{stats.offline}%</span>
-                                        <p className="text-txt-dim">Offline</p>
+                                        <div className="w-2 h-2 rounded-full bg-accent mx-auto mb-1" />
+                                        <span className="text-accent font-bold">{stats.calibrating ?? 0}%</span>
+                                        <p className="text-txt-dim">Calibrando</p>
+                                    </div>
+                                    <div>
+                                        <div className="w-2 h-2 rounded-full bg-orange-500 mx-auto mb-1" />
+                                        <span className="text-orange-400 font-bold">{stats.noAck ?? stats.offline}%</span>
+                                        <p className="text-txt-dim">Sin ACK</p>
+                                    </div>
+                                    <div>
+                                        <div className="w-2 h-2 rounded-full bg-txt-dim mx-auto mb-1" />
+                                        <span className="text-txt-dim font-bold">{stats.unknown ?? 0}%</span>
+                                        <p className="text-txt-dim">Sin clasificar</p>
                                     </div>
                                 </div>
 
@@ -863,7 +884,7 @@ export function ContactCard({
                                 <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3">Devices</h5>
                                 <div className="space-y-1.5">
                                     {devices.map((device, idx) => {
-                                        const dColor = device.state === 'OFFLINE' ? 'danger'
+                                        const dColor = isNoAckState(device.state) ? 'warning'
                                             : device.state.includes('Online') ? 'success'
                                             : device.state === 'Standby' ? 'warning' : 'neutral';
                                         return (
@@ -873,7 +894,7 @@ export function ContactCard({
                                                     <span className="text-xs text-txt-secondary">Device {idx + 1}</span>
                                                 </div>
                                                 <span className={`badge-${dColor} !text-[10px] !py-0.5 !px-2`}>
-                                                    {device.state}
+                                                    {formatProbeState(device.state)}
                                                 </span>
                                             </div>
                                         );
@@ -922,7 +943,7 @@ export function ContactCard({
                             ] as const).map(tab => (
                                 <button
                                     key={tab.key}
-                                    onClick={() => setActivePanel(tab.key)}
+                                    onClick={() => selectPanel(tab.key)}
                                     className={clsx(
                                         "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5",
                                         activePanel === tab.key

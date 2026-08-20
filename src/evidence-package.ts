@@ -1,7 +1,19 @@
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
 import { getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getStateDistribution } from './db.js';
 
-const SOFTWARE_VERSION = process.env.npm_package_version || '2.9.1';
+function resolveSoftwareVersion(): string {
+    if (process.env.npm_package_version) return process.env.npm_package_version;
+    try {
+        const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+        if (typeof manifest.version === 'string' && manifest.version.trim()) return manifest.version.trim();
+    } catch {
+        // Keep evidence generation available if packaging omits package.json.
+    }
+    return 'unknown';
+}
+
+const SOFTWARE_VERSION = resolveSoftwareVersion();
 
 export function hashJson(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(value, null, 2)).digest('hex');
@@ -62,11 +74,11 @@ export async function buildEvidencePackage(caseId: string) {
         .filter(link => link.type === 'call_analysis')
         .map(link => link.refId);
     const callIds = Array.from(new Set([...extractCallIdsFromAudit(auditEvents), ...directCallIds]));
-    const callAnalyses = await getCallAnalysesByCallIds(callIds);
+    const callAnalyses = await getCallAnalysesByCallIds(callIds, caseId);
     const targetJids = extractTargetJids(auditEvents, evidenceLinks);
     const activityStats = await Promise.all(targetJids.map(async targetJid => ({
         targetJid,
-        stats: await getStateDistribution(targetJid),
+        stats: await getStateDistribution(targetJid, caseId),
     })));
     const networkSummary = buildNetworkSummary(auditEvents);
     const generatedAt = new Date().toISOString();
@@ -193,13 +205,23 @@ function summarizeActivityStats(activityStats: any[]) {
         const last7d = getPeriodMetric(stats, 'last7d');
         const last30d = getPeriodMetric(stats, 'last30d');
         const coverage = stats.insights?.dailyCoverage || [];
-        const activeDays = coverage.filter((day: any) => day.totalMeasurements > 0).length;
+        const activeDays = coverage.filter((day: any) => (
+            (day.conclusiveMeasurements ?? day.totalMeasurements ?? 0) > 0
+        )).length;
+        const noAckPct = stats.noAck ?? stats.offline ?? 0;
         return {
             targetJid: entry.targetJid,
             totalMeasurements: stats.totalMeasurements || 0,
+            conclusiveMeasurements: stats.conclusiveMeasurements || 0,
+            inconclusiveMeasurements: stats.inconclusiveMeasurements || 0,
+            acknowledgedRttMeasurements: stats.acknowledgedRttMeasurements || 0,
             onlinePct: stats.online || 0,
             standbyPct: stats.standby || 0,
-            offlinePct: stats.offline || 0,
+            calibratingPct: stats.calibrating || 0,
+            noAckPct,
+            unknownPct: stats.unknown || 0,
+            // Compatibility alias for previously generated JSON consumers.
+            offlinePct: noAckPct,
             avgRtt: stats.avgRtt || 0,
             firstSeen: stats.firstSeen || null,
             lastSeen: stats.lastSeen || null,
@@ -349,7 +371,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         ? report.findings.activityStats.map((item: any) => `
             <tr>
                 <td><code>${escapeHtml(item.targetJid)}</code></td>
-                <td>${escapeHtml(item.totalMeasurements)}</td>
+                <td>${escapeHtml(item.conclusiveMeasurements)} / ${escapeHtml(item.totalMeasurements)}</td>
                 <td>${escapeHtml(item.onlinePct)}%</td>
                 <td>${escapeHtml(item.last24h?.onlinePct ?? '-')}% <span class="muted">(${escapeHtml(formatStatsChange(item.last24h?.changeOnlinePct))})</span></td>
                 <td>${escapeHtml(item.last7d?.onlinePct ?? '-')}% <span class="muted">(${escapeHtml(formatStatsChange(item.last7d?.changeOnlinePct))})</span></td>
@@ -581,7 +603,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Target</th><th>Mediciones</th><th>Online total</th><th>24h</th><th>7d</th><th>30d</th><th>Cobertura</th><th>Confiabilidad</th></tr></thead>
+        <thead><tr><th>Target</th><th>Concluyentes / intentos</th><th>Online / intentos</th><th>Online / concl. 24h</th><th>Online / concl. 7d</th><th>Online / concl. 30d</th><th>Cobertura</th><th>Confiabilidad</th></tr></thead>
         <tbody>${activityRows}</tbody>
       </table>
     </div>
@@ -837,8 +859,8 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     } else {
         pdf.ensure(28);
         pdf.text(pdf.margin, pdf.y, 'Target', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 150, pdf.y, 'Total', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 205, pdf.y, 'Online', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 150, pdf.y, 'Concl./int.', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 205, pdf.y, 'Online/int.', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 260, pdf.y, '24h', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 315, pdf.y, '7d', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 370, pdf.y, '30d', 8, 'F2', '64748B');
@@ -850,7 +872,7 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
         for (const item of activityStats) {
             pdf.ensure(22);
             pdf.text(pdf.margin, pdf.y, item.targetJid, 7, 'F3', '334155');
-            pdf.text(pdf.margin + 150, pdf.y, String(item.totalMeasurements), 7, 'F1', '334155');
+            pdf.text(pdf.margin + 150, pdf.y, `${item.conclusiveMeasurements}/${item.totalMeasurements}`, 7, 'F1', '334155');
             pdf.text(pdf.margin + 205, pdf.y, `${item.onlinePct}%`, 7, 'F1', '334155');
             pdf.text(pdf.margin + 260, pdf.y, `${item.last24h?.onlinePct ?? '-'}%`, 7, 'F1', '334155');
             pdf.text(pdf.margin + 315, pdf.y, `${item.last7d?.onlinePct ?? '-'}%`, 7, 'F1', '334155');
@@ -982,7 +1004,7 @@ const CRC32_TABLE = (() => {
 function crc32(buffer: Buffer): number {
     let crc = 0xffffffff;
     for (const byte of buffer) {
-        crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+        crc = (CRC32_TABLE[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
     }
     return (crc ^ 0xffffffff) >>> 0;
 }
@@ -1199,7 +1221,7 @@ function buildCsvAnnexes(
         item.totalMeasurements,
         item.onlinePct,
         item.standbyPct,
-        item.offlinePct,
+        item.noAckPct,
         item.avgRtt,
         item.firstSeen || '',
         item.lastSeen || '',
@@ -1213,6 +1235,11 @@ function buildCsvAnnexes(
         item.reliability?.score ?? '',
         item.reliability?.label ?? '',
         item.reliability?.reasonCodes?.join('|') || '',
+        item.calibratingPct,
+        item.unknownPct,
+        item.conclusiveMeasurements,
+        item.inconclusiveMeasurements,
+        item.acknowledgedRttMeasurements,
     ]);
 
     const annexes = [
@@ -1261,7 +1288,7 @@ function buildCsvAnnexes(
         {
             name: 'annexes/activity-stats.csv',
             data: toCsv(
-                ['targetJid', 'totalMeasurements', 'onlinePct', 'standbyPct', 'offlinePct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes'],
+                ['targetJid', 'totalMeasurements', 'onlinePct', 'standbyPct', 'noAckPct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes', 'calibratingPct', 'unknownPct', 'conclusiveMeasurements', 'inconclusiveMeasurements', 'acknowledgedRttMeasurements'],
                 activityRows
             ),
         },

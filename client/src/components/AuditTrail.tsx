@@ -69,8 +69,8 @@ export function AuditTrail() {
     const [caseId, setCaseId] = useState('');
     const [manualCaseId, setManualCaseId] = useState('');
     const [events, setEvents] = useState<AuditEvent[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [casesLoading, setCasesLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [casesLoading, setCasesLoading] = useState(true);
     const [searchedCase, setSearchedCase] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
@@ -80,7 +80,6 @@ export function AuditTrail() {
     const [pageSize, setPageSize] = useState(8);
 
     const fetchCases = useCallback(async () => {
-        setCasesLoading(true);
         try {
             const res = await authFetch(`${API_URL}/api/cases?limit=100`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -89,9 +88,12 @@ export function AuditTrail() {
             setCases(list);
             if (!caseId && list[0]?.caseId) {
                 setCaseId(list[0].caseId);
+            } else if (!caseId) {
+                setLoading(false);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load cases');
+            setLoading(false);
         } finally {
             setCasesLoading(false);
         }
@@ -101,8 +103,6 @@ export function AuditTrail() {
         const selected = (requestedCaseId || caseId || manualCaseId).trim();
         if (!selected) return;
 
-        setLoading(true);
-        setError(null);
         try {
             const res = await authFetch(`${API_URL}/api/audit/${encodeURIComponent(selected)}?limit=500`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -112,6 +112,7 @@ export function AuditTrail() {
             setScopeFilter('all');
             setActionFilter('all');
             setQuery('');
+            setPage(1);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load audit events');
             setEvents([]);
@@ -122,13 +123,23 @@ export function AuditTrail() {
     }, [caseId, manualCaseId]);
 
     useEffect(() => {
-        fetchCases();
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) void fetchCases();
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [fetchCases]);
 
     useEffect(() => {
-        if (!searchedCase && caseId) {
-            fetchAudit(caseId);
-        }
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled && !searchedCase && caseId) void fetchAudit(caseId);
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [caseId, fetchAudit, searchedCase]);
 
     const selectedCase = useMemo(
@@ -174,25 +185,42 @@ export function AuditTrail() {
     const lastEvent = events[0];
     const operators = Array.from(new Set(events.map(event => event.operatorName).filter(Boolean)));
 
-    useEffect(() => {
-        setPage(1);
-    }, [scopeFilter, actionFilter, query, searchedCase, pageSize]);
-
-    useEffect(() => {
-        if (actionFilter !== 'all' && !actionOptions.includes(actionFilter)) {
-            setActionFilter('all');
-        }
-    }, [actionFilter, actionOptions]);
+    const startAuditFetch = (requestedCaseId: string) => {
+        setLoading(true);
+        setError(null);
+        void fetchAudit(requestedCaseId);
+    };
 
     const onSubmit = (event: React.FormEvent) => {
         event.preventDefault();
-        fetchAudit(manualCaseId || caseId);
+        startAuditFetch(manualCaseId || caseId);
     };
 
     const chooseCase = (value: string) => {
         setCaseId(value);
         setManualCaseId('');
-        if (value) fetchAudit(value);
+        if (value) startAuditFetch(value);
+    };
+
+    const updateScopeFilter = (value: ScopeFilter) => {
+        setScopeFilter(value);
+        setActionFilter('all');
+        setPage(1);
+    };
+
+    const updateActionFilter = (value: string) => {
+        setActionFilter(value);
+        setPage(1);
+    };
+
+    const updateQuery = (value: string) => {
+        setQuery(value);
+        setPage(1);
+    };
+
+    const updatePageSize = (value: number) => {
+        setPageSize(value);
+        setPage(1);
     };
 
     const downloadAuditExport = useCallback(async () => {
@@ -266,7 +294,7 @@ export function AuditTrail() {
                     </div>
                     <button
                         type="button"
-                        onClick={() => fetchAudit(searchedCase || caseId)}
+                        onClick={() => startAuditFetch(searchedCase || caseId)}
                         disabled={loading || (!searchedCase && !caseId)}
                         className="btn-ghost flex items-center justify-center gap-2"
                     >
@@ -365,7 +393,7 @@ export function AuditTrail() {
                             <span>Filtros de auditoria</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1">
-                            <select value={scopeFilter} onChange={event => setScopeFilter(event.target.value as ScopeFilter)} className="select-field">
+                            <select value={scopeFilter} onChange={event => updateScopeFilter(event.target.value as ScopeFilter)} className="select-field">
                                 <option value="all">Todos los alcances</option>
                                 <option value="system">Sistema</option>
                                 <option value="contact">Contacto</option>
@@ -373,12 +401,12 @@ export function AuditTrail() {
                                 <option value="network">Red</option>
                                 <option value="report">Reporte</option>
                             </select>
-                            <select value={actionFilter} onChange={event => setActionFilter(event.target.value)} className="select-field">
+                            <select value={actionFilter} onChange={event => updateActionFilter(event.target.value)} className="select-field">
                                 <option value="all">Todas las acciones</option>
                                 {actionOptions.map(action => <option key={action} value={action}>{labelAction(action)}</option>)}
                             </select>
-                            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar operador, target, hash, IP..." className="input-field" />
-                            <select value={pageSize} onChange={event => setPageSize(Number(event.target.value))} className="select-field">
+                            <input value={query} onChange={event => updateQuery(event.target.value)} placeholder="Buscar operador, target, hash, IP..." className="input-field" />
+                            <select value={pageSize} onChange={event => updatePageSize(Number(event.target.value))} className="select-field">
                                 <option value={6}>6 por pagina</option>
                                 <option value={8}>8 por pagina</option>
                                 <option value={12}>12 por pagina</option>

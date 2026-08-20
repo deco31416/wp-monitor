@@ -65,7 +65,7 @@ flowchart TB
     subgraph Client[client/ - React 19]
       App[App y navegacion]
       Views[Cases, Tracker, Network, Check-In, Audit]
-      Auth[authFetch y token]
+      Auth[Login, cookie y authFetch]
       Socket[Socket.IO client]
     end
 
@@ -81,6 +81,7 @@ flowchart TB
 
     subgraph State[Estado]
       Mongo[(MongoDB)]
+      Redis[(Redis)]
       AuthFiles[(auth_info_baileys)]
       Uploads[(public/uploads)]
       Memory[(Estado efimero)]
@@ -140,13 +141,13 @@ flowchart LR
     Capture[Interfaz local privilegiada]
 
     Public --> Proxy --> API
-    Browser -->|Bearer token y Socket auth| API
+    Browser -->|Cookie HttpOnly y origen confiable| API
     API --> Session
     API --> Mongo
     API --> Capture
 ```
 
-`DASHBOARD_TOKEN` protege API y Socket.IO cuando esta configurado. La landing publica de Check-In utiliza un token de solicitud y controles de tasa separados. La sesion Baileys, MongoDB y los privilegios de captura son activos de mayor sensibilidad.
+La cuenta unica vive en MongoDB y sus sesiones opacas con TTL viven en Redis. REST y Socket.IO exigen la cookie de sesion; las mutaciones y el socket tambien validan el origen. La landing publica de Check-In utiliza un token de solicitud distinto y controles de tasa compartidos en Redis. La sesion Baileys, MongoDB, Redis, credenciales y privilegios de captura son activos de mayor sensibilidad.
 
 ## Modos de despliegue
 
@@ -159,7 +160,7 @@ Consulta [Deployment modes](../operations/deployment-modes.md). La regla central
 
 - `server.ts` conserva una responsabilidad de composicion amplia; los dominios nuevos deben preferir rutas y servicios separados.
 - Baileys es una integracion no oficial y puede cambiar por comportamiento upstream.
-- El rate limit publico usa memoria y no se comparte entre replicas.
+- Redis comparte sesiones, limites de login y rate limit publico entre replicas; la coordinacion de trackers y capturas sigue siendo de instancia unica.
 - Una instancia controla como maximo una captura general y una captura de llamada activas.
 - La sesion y los uploads necesitan volumenes separados en infraestructura efimera.
 

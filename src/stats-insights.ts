@@ -1,3 +1,9 @@
+import {
+    hasAcknowledgedTrackerRtt,
+    isConclusiveTrackerState,
+    isOnlineTrackerState,
+} from './tracker-signals.js';
+
 export interface MeasurementSample {
     state: string;
     rtt: number;
@@ -8,6 +14,9 @@ export interface PeriodInsight {
     key: 'last24h' | 'last7d' | 'last30d';
     label: string;
     totalMeasurements: number;
+    conclusiveMeasurements: number;
+    inconclusiveMeasurements: number;
+    acknowledgedRttMeasurements: number;
     onlineMeasurements: number;
     onlinePct: number;
     avgRtt: number;
@@ -17,6 +26,8 @@ export interface PeriodInsight {
 export interface DailyCoverageInsight {
     date: string;
     totalMeasurements: number;
+    conclusiveMeasurements: number;
+    conclusivePct: number;
     onlinePct: number;
     coverageScore: number;
 }
@@ -58,7 +69,7 @@ export function buildStatsInsights(samples: MeasurementSample[], now = new Date(
         const previous = normalized.filter(sample => sample.timestamp >= previousStart && sample.timestamp < currentStart);
         const currentSummary = summarizeWindow(current);
         const previousSummary = summarizeWindow(previous);
-        const changeOnlinePct = previousSummary.totalMeasurements > 0
+        const changeOnlinePct = currentSummary.conclusiveMeasurements > 0 && previousSummary.conclusiveMeasurements > 0
             ? currentSummary.onlinePct - previousSummary.onlinePct
             : null;
 
@@ -78,13 +89,28 @@ export function buildStatsInsights(samples: MeasurementSample[], now = new Date(
 
 function summarizeWindow(samples: MeasurementSample[]) {
     const totalMeasurements = samples.length;
-    const onlineMeasurements = samples.filter(sample => isOnlineState(sample.state)).length;
-    const onlinePct = totalMeasurements > 0 ? Math.round((onlineMeasurements / totalMeasurements) * 100) : 0;
-    const avgRtt = totalMeasurements > 0
-        ? Math.round(samples.reduce((sum, sample) => sum + (Number.isFinite(sample.rtt) ? sample.rtt : 0), 0) / totalMeasurements)
+    const conclusiveSamples = samples.filter(sample => isConclusiveTrackerState(sample.state));
+    const acknowledgedRttSamples = samples.filter(sample => (
+        hasAcknowledgedTrackerRtt(sample.state) && Number.isFinite(sample.rtt)
+    ));
+    const conclusiveMeasurements = conclusiveSamples.length;
+    const inconclusiveMeasurements = totalMeasurements - conclusiveMeasurements;
+    const acknowledgedRttMeasurements = acknowledgedRttSamples.length;
+    const onlineMeasurements = conclusiveSamples.filter(sample => isOnlineTrackerState(sample.state)).length;
+    const onlinePct = conclusiveMeasurements > 0 ? Math.round((onlineMeasurements / conclusiveMeasurements) * 100) : 0;
+    const avgRtt = acknowledgedRttMeasurements > 0
+        ? Math.round(acknowledgedRttSamples.reduce((sum, sample) => sum + sample.rtt, 0) / acknowledgedRttMeasurements)
         : 0;
 
-    return { totalMeasurements, onlineMeasurements, onlinePct, avgRtt };
+    return {
+        totalMeasurements,
+        conclusiveMeasurements,
+        inconclusiveMeasurements,
+        acknowledgedRttMeasurements,
+        onlineMeasurements,
+        onlinePct,
+        avgRtt,
+    };
 }
 
 function buildDailyCoverage(samples: MeasurementSample[], now: Date, days: number): DailyCoverageInsight[] {
@@ -97,8 +123,12 @@ function buildDailyCoverage(samples: MeasurementSample[], now: Date, days: numbe
         return {
             date: dayStart.toISOString().slice(0, 10),
             totalMeasurements: summary.totalMeasurements,
+            conclusiveMeasurements: summary.conclusiveMeasurements,
+            conclusivePct: summary.totalMeasurements > 0
+                ? Math.round((summary.conclusiveMeasurements / summary.totalMeasurements) * 100)
+                : 0,
             onlinePct: summary.onlinePct,
-            coverageScore: Math.min(100, Math.round((summary.totalMeasurements / 120) * 100)),
+            coverageScore: Math.min(100, Math.round((summary.conclusiveMeasurements / 120) * 100)),
         };
     });
 }
@@ -106,7 +136,7 @@ function buildDailyCoverage(samples: MeasurementSample[], now: Date, days: numbe
 function buildReliability(periods: PeriodInsight[], dailyCoverage: DailyCoverageInsight[]): ReliabilityInsight {
     const last7d = periods.find(period => period.key === 'last7d');
     const last24h = periods.find(period => period.key === 'last24h');
-    const activeDays = dailyCoverage.filter(day => day.totalMeasurements > 0).length;
+    const activeDays = dailyCoverage.filter(day => day.conclusiveMeasurements > 0).length;
     const avgDailyCoverage = dailyCoverage.length > 0
         ? dailyCoverage.reduce((sum, day) => sum + day.coverageScore, 0) / dailyCoverage.length
         : 0;
@@ -114,7 +144,7 @@ function buildReliability(periods: PeriodInsight[], dailyCoverage: DailyCoverage
     let score = 0;
     const reasonCodes: string[] = [];
 
-    if ((last7d?.totalMeasurements || 0) >= 500) {
+    if ((last7d?.conclusiveMeasurements || 0) >= 500) {
         score += 30;
         reasonCodes.push('ENOUGH_7D_VOLUME');
     }
@@ -126,7 +156,7 @@ function buildReliability(periods: PeriodInsight[], dailyCoverage: DailyCoverage
         score += 20;
         reasonCodes.push('HEALTHY_DAILY_DENSITY');
     }
-    if ((last24h?.totalMeasurements || 0) > 0) {
+    if ((last24h?.conclusiveMeasurements || 0) > 0) {
         score += 15;
         reasonCodes.push('RECENT_SIGNAL');
     }
@@ -140,10 +170,6 @@ function buildReliability(periods: PeriodInsight[], dailyCoverage: DailyCoverage
     if (reasonCodes.length === 0) reasonCodes.push('INSUFFICIENT_SAMPLE');
 
     return { score: boundedScore, label, reasonCodes };
-}
-
-function isOnlineState(state: string): boolean {
-    return /online/i.test(state);
 }
 
 function startOfUtcDay(date: Date): Date {

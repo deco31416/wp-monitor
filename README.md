@@ -8,7 +8,7 @@
   <a href="CHANGELOG.md">
     <img src="https://img.shields.io/badge/version-2.9.4-2563EB?style=flat-square" alt="Version 2.9.4" />
   </a>
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 20+" />
+  <img src="https://img.shields.io/badge/Node.js-24.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24.19" />
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.7+" />
   <img src="https://img.shields.io/badge/Express-5-000000?style=flat-square&logo=express&logoColor=white" alt="Express 5" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=111827" alt="React 19" />
@@ -53,7 +53,7 @@ The RTT research foundation follows the paper **“Careless Whisper: Exploiting 
 
 | Area | Capability |
 |---|---|
-| Activity analysis | Measures delivery-receipt round-trip time and derives heuristic `online`, `standby`, and `offline` states |
+| Activity analysis | Measures delivery-receipt round-trip time and derives heuristic `online` and `standby` states; a missing receipt is reported as inconclusive `NO_ACK` |
 | Activity log | Converts technical state transitions into a paginated, human-readable bitácora with local and UTC timestamps |
 | Behavior intelligence | Calculates routines, availability probability, session statistics, weekly heatmaps, habit profiles, and multi-contact correlations |
 | Presence and device signals | Observes supported presence states, recording/typing indicators, device changes, and RTT-based connection-type inference |
@@ -314,22 +314,23 @@ Candidate scoring is deliberately limited by sample size, directionality, infras
 
 | Layer | Technology |
 |---|---|
-| Runtime | Node.js 20+ (Node.js 22 recommended), TypeScript 5.7 |
+| Runtime | Node.js 24.19.x, TypeScript 5.9 |
 | Backend | Express 5, Socket.IO 4.8 |
 | Frontend | React 19, Tailwind CSS 3.4, Recharts 3.5, Lucide React |
 | Database | MongoDB 7.1, local or Atlas |
-| WhatsApp integration | `@whiskeysockets/baileys` from GitHub |
+| Shared counters | Redis 8 with official `@redis/client` |
+| WhatsApp integration | Baileys 7 release candidate |
 | Packet capture | `cap` 0.2.1 with Npcap/libpcap |
 | Offline geolocation | `geoip-lite` 2.0 |
 | Optional IP enrichment | DB-IP with `ip-api` complement |
-| Package manager | pnpm 10 workspace for backend and frontend |
+| Package manager | pnpm 11.22 workspace for backend and frontend |
 | Packaging and deployment | Docker Compose, local runtime, Railway dashboard mode |
 
 ### Dependency audit status
 
-The project keeps backend and frontend lockfiles and uses compatible overrides for patched transitive dependencies. The frontend production audit is clean in the documented hardening pass; remaining frontend development advisories are associated with Create React App development tooling and should be resolved through a controlled Vite migration rather than an incompatible forced upgrade.
+The repository uses one root pnpm lockfile, a Vite/Vitest frontend toolchain, allowlisted native build scripts, and a local patch for `cap` compatibility on Node.js 24. The documented final audit runs both full and production-only dependency scans from the workspace root.
 
-The backend retains upstream/transitive risk through the WhatsApp dependency chain, including Baileys-related libraries. Upgrades should be tested on a compatibility branch with QR authentication, contact restoration, call capture, reporting, Railway mode, and local packet-capture smoke tests before promotion.
+Baileys remains an unofficial upstream integration. Dependency upgrades must be tested with QR authentication, contact restoration, call-event handling, reports, dashboard mode, and local packet-capture smoke tests before promotion. Commercial or closed-source distribution must also review the licenses of transitive Baileys/libsignal components.
 
 ---
 
@@ -337,9 +338,10 @@ The backend retains upstream/transitive risk through the WhatsApp dependency cha
 
 ### Prerequisites
 
-- Node.js `20+`
-- pnpm `10+`
+- Node.js `24.19.x` (the repository rejects other major/minimum versions)
+- pnpm `11.22.0` through Corepack
 - MongoDB, local or Atlas
+- Redis for shared login sessions and rate limits (required at every application startup)
 - A WhatsApp account for QR authentication
 - Npcap on Windows when using Network Monitor or local call analysis
 - Administrator/root permissions for packet capture
@@ -352,7 +354,8 @@ On Windows, install Npcap with **WinPcap API-compatible Mode** enabled.
 git clone https://github.com/deco31416/wp-monitor.git
 cd wp-monitor
 
-pnpm install
+corepack enable
+pnpm install --frozen-lockfile
 
 cp .env.example .env
 ```
@@ -432,13 +435,24 @@ PUBLIC_BASE_URL=http://127.0.0.1:4000
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=device-tracker
 
+# Redis: required for operator sessions and shared limits
+REDIS_URL=redis://127.0.0.1:6379
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-development
+
+# First-start single-operator account. Change it later from Account.
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=use-a-unique-password-with-15-plus-characters
+
+# Unique server-side HMAC secret; use 32+ random characters.
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
+AUTH_SESSION_TTL_SECONDS=28800
+AUTH_PASSWORD_VERIFY_CONCURRENCY=1
+
 # Runtime mode
 NODE_ENV=development
 DEPLOYMENT_MODE=local-full
 LOCAL_CAPTURE_ENABLED=true
-
-# Optional locally; required in production. Use at least 32 characters.
-# DASHBOARD_TOKEN=change-this-long-random-token-with-32-plus-chars
 
 # Client IP handling
 # Local default: false
@@ -507,8 +521,15 @@ NODE_ENV=production
 PORT=4000
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB=activity-tracker
+REDIS_URL=rediss://USERNAME:PASSWORD@REDIS_HOST:PORT
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-production
+INITIAL_ADMIN_USERNAME=choose-a-non-default-username
+INITIAL_ADMIN_PASSWORD=store-a-unique-15-plus-character-password-in-a-secret-manager
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
+AUTH_SESSION_TTL_SECONDS=28800
+AUTH_PASSWORD_VERIFY_CONCURRENCY=1
 ALLOWED_ORIGINS=https://your-frontend.up.railway.app
-DASHBOARD_TOKEN=change-this-long-random-token-with-32-plus-chars
 TRUST_PROXY=1
 PUBLIC_BASE_URL=https://your-backend.up.railway.app
 ```
@@ -532,7 +553,7 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 
 1. Confirm written or otherwise valid authorization for the account, device, traffic, or case.
 2. Start `local-full` when local packet metadata is required, or `railway-dashboard` for remote dashboard and reporting functions.
-3. Open the dashboard and provide the configured `DASHBOARD_TOKEN` when enabled.
+3. Open the dashboard and sign in with the single-operator username and password.
 4. Authenticate the project session through the WhatsApp QR flow.
 5. Create or select a case and provide `caseId`, `operatorName`, and `authorizationNote` before manual capture.
 6. Add an authorized contact and review RTT measurements, state history, profile data, statistics, and behavior analytics.
@@ -541,14 +562,14 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 9. Export contact reports, final case reports, audit data, or evidence packages as required.
 10. Stop tracking and close or archive the case when the authorized work is complete.
 
-### Production authentication
+### Single-operator authentication
 
-When `DASHBOARD_TOKEN` is set:
-
-- REST requests require `Authorization: Bearer <token>`.
-- Socket.IO clients must send the same token in the authentication payload.
-- Dashboard access and protected download links use the same control.
-- `DASHBOARD_TOKEN` is required when `NODE_ENV=production`.
+- The first successful startup creates exactly one operator in MongoDB from `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD`.
+- Passwords are stored as salted, memory-hard `scrypt` hashes; plaintext credentials are never stored in MongoDB or browser storage.
+- Login creates an opaque Redis-backed session in an `HttpOnly`, `SameSite=Strict` cookie. Production uses a `Secure` `__Host-` cookie and therefore requires HTTPS.
+- REST and Socket.IO validate the same server-side session. State-changing API calls also require an exact trusted `Origin`.
+- The operator can change username and password from **Account**. The change increments the credential version and revokes every previous HTTP/Socket session.
+- Bootstrap environment values do not reset or overwrite an existing operator. `DASHBOARD_TOKEN` is accepted only as a one-time local migration fallback and is never accepted as Bearer/API authentication.
 
 ---
 
@@ -591,7 +612,7 @@ When `DASHBOARD_TOKEN` is set:
 | `GET` | `/api/contacts/history` | Lists active and inactive saved contacts |
 | `GET` | `/api/history/:jid` | Returns RTT measurement history |
 | `GET` | `/api/activity/:jid` | Returns state transition history |
-| `GET` | `/api/stats/:jid` | Returns online, standby, and offline distribution |
+| `GET` | `/api/stats/:jid` | Returns online, standby, calibrating, inconclusive no-ACK, and unknown distribution (`offline` remains a legacy alias of `noAck`) |
 | `GET` | `/api/profile/:jid` | Returns stored and live profile data |
 | `GET` | `/api/patterns/:jid` | Returns hourly activity patterns |
 | `GET` | `/api/report/:jid` | Generates the comprehensive contact report |
@@ -834,11 +855,12 @@ wp-monitor/
 
 ## Security and Data Handling
 
-- Use `DASHBOARD_TOKEN` for every production deployment.
+- Use unique bootstrap credentials and a separate 32+ character `AUTH_IDENTITY_SECRET` for every deployment.
 - Restrict `ALLOWED_ORIGINS` to the actual frontend origins.
 - Configure `TRUST_PROXY` only for the known reverse-proxy topology.
 - Use HTTPS for every public deployment and every externally shared Authorized Check-In URL.
-- Keep MongoDB credentials, dashboard tokens, DB-IP keys, and other secrets outside version control.
+- Keep MongoDB/Redis credentials, bootstrap passwords, identity secrets, DB-IP keys, and other secrets outside version control.
+- Never expose Redis port `6379` publicly; use loopback, a private network or TLS and ACLs.
 - Never commit `auth_info_baileys/`, packet captures, generated reports, audit exports, uploaded check-in assets, or evidence packages.
 - Run local packet capture only with the minimum required OS privileges and only on an authorized interface.
 - Treat SHA-256 values as integrity references, not proof that collected information is accurate or legally admissible.
@@ -858,13 +880,13 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 | Problem | Resolution |
 |---|---|
 | WhatsApp session does not connect | Remove the stale `auth_info_baileys/` directory and scan a new QR code |
-| Baileys returns HTTP 405 | Install the documented GitHub version rather than an incompatible npm release |
+| Baileys fails after an upgrade | Restore the lockfile version and repeat the QR/session compatibility smoke tests |
 | Packet capture does not start | Run with administrator/root privileges and verify Npcap WinPcap compatibility mode on Windows |
 | Network Monitor is hidden | Confirm `DEPLOYMENT_MODE=local-full` and `LOCAL_CAPTURE_ENABLED=true` |
-| API returns `401 Unauthorized` | Provide the configured `DASHBOARD_TOKEN` in the dashboard or Bearer header |
+| API returns `401 Unauthorized` | Sign in again; verify the operator account, Redis connectivity, cookie scope and HTTPS/origin configuration |
 | Call analysis contains no useful packets | Confirm the WhatsApp Web/Desktop interaction runs on the same host and selected interface |
 | Railway captures no local traffic | Expected behavior; Railway mode has no access to the operator’s local adapter |
-| Dependency installation is inconsistent | Use pnpm 10 and run `pnpm install` from the repository root so the workspace installs backend and frontend together |
+| Dependency installation is inconsistent | Use Node.js 24.19.x and pnpm 11.22.0, then run `pnpm install --frozen-lockfile` from the repository root |
 | MongoDB connection fails | Validate `MONGODB_URI`, credentials, network access, and Atlas allow-list settings |
 | Contact does not auto-restore | Confirm the contact remained active rather than being manually stopped before restart |
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, normalizeCheckInSubmission, renderCheckInPage } from '../src/check-in.js';
+import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, hasValidCheckInLocation, normalizeCheckInSubmission, renderCheckInPage } from '../src/check-in.js';
 import type { CheckInDoc } from '../src/db.js';
 
 function fixture(): CheckInDoc {
@@ -65,6 +65,27 @@ test('normalizes check-in submission safely', () => {
     assert.equal(normalized.browser?.screen?.width, 390);
     assert.equal(normalized.location?.permission, 'granted');
     assert.equal(normalized.location?.lat, 19.4326);
+    assert.equal(hasValidCheckInLocation(normalized.location), true);
+});
+
+test('rejects invalid GPS evidence and malformed capture timestamps', () => {
+    const normalized = normalizeCheckInSubmission({
+        consentAccepted: true,
+        location: {
+            permission: 'granted',
+            lat: 91,
+            lon: -181,
+            accuracy: -10,
+            capturedAt: 'not-a-date',
+        },
+    });
+
+    assert.equal(normalized.location?.permission, 'granted');
+    assert.equal(normalized.location?.lat, undefined);
+    assert.equal(normalized.location?.lon, undefined);
+    assert.equal(normalized.location?.accuracy, undefined);
+    assert.equal(normalized.location?.capturedAt, undefined);
+    assert.equal(hasValidCheckInLocation(normalized.location), false);
 });
 
 test('renders explicit consent page without raw script injection', () => {
@@ -72,6 +93,17 @@ test('renders explicit consent page without raw script injection', () => {
     assert.match(html, /Check-in autorizado/);
     assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<div class="value"><script>alert/);
+});
+
+test('serializes configurable script values without allowing a closing script injection', () => {
+    const payload = '</script><script>globalThis.compromised=true</script>';
+    const html = renderCheckInPage({
+        ...fixture(),
+        content: { successMessage: payload },
+    });
+
+    assert.doesNotMatch(html, /<\/script><script>globalThis\.compromised/);
+    assert.match(html, /\\u003c\/script\\u003e\\u003cscript\\u003e/);
 });
 
 test('renders custom landing labels, button, and minimum disclosure', () => {

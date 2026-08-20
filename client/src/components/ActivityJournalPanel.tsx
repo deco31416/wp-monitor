@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Code, Download, FileDown, FileText, Globe } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -28,6 +28,10 @@ interface ActivityJournalPanelProps {
 }
 
 const LOG_PAGE_SIZE = 15;
+
+function isNoAckState(value: string): boolean {
+    return value === 'NO_ACK' || value === 'OFFLINE';
+}
 
 export function ActivityJournalPanel({
     activity,
@@ -166,9 +170,9 @@ export function ActivityJournalPanel({
 function JournalRow({ entry }: { entry: JournalEntry }) {
     const rowColor = entry.state.includes('Online') ? 'text-success'
         : entry.state === 'Standby' ? 'text-warning'
-        : entry.state === 'OFFLINE' ? 'text-danger' : 'text-txt-secondary';
+        : isNoAckState(entry.state) ? 'text-warning' : 'text-txt-secondary';
     const bgHover = entry.state.includes('Online') ? 'hover:bg-success/5'
-        : entry.state === 'OFFLINE' ? 'hover:bg-danger/5'
+        : isNoAckState(entry.state) ? 'hover:bg-warning/5'
         : 'hover:bg-surface-hover';
 
     return (
@@ -278,21 +282,21 @@ function toDateStr(ts: string | number) {
 function describeState(state: string, rtt: number): string {
     if (state.includes('Online')) return `El contacto se CONECTO - Dispositivo activo (respuesta: ${rtt}ms)`;
     if (state === 'Standby') return `El contacto paso a ESPERA - App abierta en segundo plano (respuesta: ${rtt}ms)`;
-    if (state === 'OFFLINE') return 'El contacto se DESCONECTO - No hay actividad detectada';
+    if (isNoAckState(state)) return 'No se recibio ACK del probe; resultado no concluyente';
     return `Estado cambiado a ${state} (respuesta: ${rtt}ms)`;
 }
 
 function describeStateShort(state: string): string {
     if (state.includes('Online')) return 'CONECTADO';
     if (state === 'Standby') return 'EN ESPERA';
-    if (state === 'OFFLINE') return 'DESCONECTADO';
+    if (isNoAckState(state)) return 'SIN ACK';
     return state;
 }
 
 function stateColor(state: string, print = false): string {
     if (state.includes('Online')) return print ? '#1faa59' : '#25d366';
     if (state === 'Standby') return print ? '#ca8a04' : '#eab308';
-    if (state === 'OFFLINE') return print ? '#dc2626' : '#ef4444';
+    if (isNoAckState(state)) return print ? '#ca8a04' : '#eab308';
     return print ? '#64748b' : '#94a3b8';
 }
 
@@ -371,8 +375,8 @@ function buildActivityReportHtml(
     <section class="meta-grid" aria-label="Distribucion">
       <div class="metric"><span>Conectado</span><strong>${summary.online}</strong></div>
       <div class="metric"><span>En espera</span><strong>${summary.standby}</strong></div>
-      <div class="metric"><span>Desconectado</span><strong>${summary.offline}</strong></div>
-      <div class="metric"><span>RTT promedio</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
+      <div class="metric"><span>Sin ACK</span><strong>${summary.noAck}</strong></div>
+      <div class="metric"><span>RTT con ACK</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
     </section>
     <p class="note">Lectura tecnica: estos eventos describen actividad observada por RTT y cambios de estado. No sustituyen corroboracion externa ni prueban por si solos identidad, ubicacion exacta o titularidad del dispositivo.</p>
     <section class="table-wrap">
@@ -393,13 +397,19 @@ function buildActivityReportHtml(
 function buildActivitySummary(entries: JournalEntry[]) {
     const online = entries.filter(entry => entry.state.includes('Online')).length;
     const standby = entries.filter(entry => entry.state === 'Standby').length;
-    const offline = entries.filter(entry => entry.state === 'OFFLINE').length;
-    const rtts = entries.map(entry => entry.rtt).filter(value => value > 0);
+    const noAck = entries.filter(entry => isNoAckState(entry.state)).length;
+    const rtts = entries
+        .filter(entry => {
+            const state = entry.state.trim().toUpperCase();
+            return state.startsWith('ONLINE') || state === 'STANDBY' || state.startsWith('CALIBRATING');
+        })
+        .map(entry => entry.rtt)
+        .filter(value => value > 0);
     const averageRtt = rtts.length ? Math.round(rtts.reduce((sum, value) => sum + value, 0) / rtts.length) : 0;
     const last = entries[0];
     const first = entries[entries.length - 1];
     const range = first && last ? `${first.date} ${first.local} - ${last.date} ${last.local}` : '-';
-    return { online, standby, offline, averageRtt, range };
+    return { online, standby, noAck, averageRtt, range };
 }
 
 function escapeHtml(value: unknown): string {

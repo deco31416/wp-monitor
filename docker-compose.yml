@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        - NODE_VERSION=${NODE_VERSION:-24.19.0}
         - PORT=${BACKEND_PORT:-4000}
     extra_hosts:
       - "localhost:host-gateway"
@@ -14,6 +15,12 @@ services:
     environment:
       - PORT=${BACKEND_PORT:-4000}
       - NODE_ENV=${NODE_ENV:-production}
+      - REDIS_URL=redis://redis:6379
+      - REDIS_REQUIRED=true
+      - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-wp-monitor}
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       # Persist WhatsApp auth state
       - baileys_auth:/app/auth_info_baileys
@@ -21,6 +28,22 @@ services:
       - checkin_uploads:/app/public/uploads
     networks:
       - app-network
+      - data-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.10.1-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - redis_data:/data
+    networks:
+      - data-network
     restart: unless-stopped
 
   client:
@@ -28,8 +51,9 @@ services:
       context: .
       dockerfile: client/Dockerfile
       args:
+        - NODE_VERSION=${NODE_VERSION:-24.19.0}
         - PORT=${CLIENT_PORT:-4001}
-        - REACT_APP_API_URL=${BACKEND_URL:-http://localhost:4000}
+        - VITE_API_URL=${BACKEND_URL:-http://localhost:4000}
     ports:
       - "${CLIENT_PORT:-4001}:${CLIENT_PORT:-4001}"
     environment:
@@ -45,7 +69,12 @@ volumes:
     driver: local
   checkin_uploads:
     driver: local
+  redis_data:
+    driver: local
 
 networks:
   app-network:
     driver: bridge
+  data-network:
+    driver: bridge
+    internal: true

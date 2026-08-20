@@ -1,9 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Eye, EyeOff, Plus, Trash2, Zap, Settings, History, RotateCcw, User } from 'lucide-react';
-import { socket, ConnectionState } from '../App';
+import type { ConnectionState } from '../App';
 import { ContactCard } from './ContactCard';
 import { Login } from './Login';
 import { API_URL, authFetch } from '../auth';
+import { selectPrimaryTrackerDevice, type TrackerDeviceInfo } from '../types';
+import { socket } from '../socket';
 
 type ProbeMethod = 'delete' | 'reaction';
 
@@ -34,11 +36,24 @@ interface TrackerData {
     timestamp: number;
 }
 
-interface DeviceInfo {
+interface HistoricalTrackerMeasurement {
+    rtt?: number;
+    avg?: number;
+    median?: number;
+    threshold?: number;
+    state?: string;
+    timestamp: string | number;
+}
+
+interface TrackerUpdateEvent {
     jid: string;
-    state: string;
-    rtt: number;
-    avg: number;
+    sampleKind: 'initial' | 'probe';
+    devices: TrackerDeviceInfo[];
+    deviceCount: number;
+    presence: string | null;
+    connectionType: 'wifi' | 'cellular' | 'unknown' | null;
+    median: number;
+    threshold: number;
 }
 
 interface LiveState {
@@ -58,14 +73,14 @@ interface ContactInfo {
     customName: string | null;
     pushName: string | null;
     data: TrackerData[];
-    devices: DeviceInfo[];
+    devices: TrackerDeviceInfo[];
     deviceCount: number;
     presence: string | null;
     profilePic: string | null;
-    connectionType?: 'wifi' | 'cellular' | 'unknown';
-    typingState?: 'composing' | 'recording' | null;
-    liveState?: LiveState | null;
-    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[];
+    connectionType?: 'wifi' | 'cellular' | 'unknown' | undefined;
+    typingState?: 'composing' | 'recording' | null | undefined;
+    liveState?: LiveState | null | undefined;
+    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[] | undefined;
 }
 
 export function Dashboard({ connectionState }: DashboardProps) {
@@ -121,7 +136,6 @@ export function Dashboard({ connectionState }: DashboardProps) {
     }, [mergeSavedContacts]);
 
     const fetchHistory = useCallback(() => {
-        setHistoryLoading(true);
         authFetch(`${API_URL}/api/contacts/history`)
             .then(r => r.json())
             .then((data: SavedContact[]) => {
@@ -139,7 +153,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
     }, [fetchActiveContacts]);
 
     useEffect(() => {
-        function onTrackerUpdate(update: any) {
+        function onTrackerUpdate(update: TrackerUpdateEvent) {
             const { jid, ...data } = update;
             if (!jid) return;
 
@@ -159,17 +173,18 @@ export function Dashboard({ connectionState }: DashboardProps) {
                     if (data.devices !== undefined) {
                         updatedContact.devices = data.devices;
                     }
-                    if (data.connectionType !== undefined) {
+                    if (data.connectionType !== null) {
                         updatedContact.connectionType = data.connectionType;
                     }
 
                     if (data.median !== undefined && data.devices && data.devices.length > 0) {
+                        const primaryDevice = selectPrimaryTrackerDevice(data.devices)!;
                         const newDataPoint: TrackerData = {
-                            rtt: data.devices[0].rtt,
-                            avg: data.devices[0].avg,
+                            rtt: primaryDevice.rtt,
+                            avg: primaryDevice.avg,
                             median: data.median,
                             threshold: data.threshold,
-                            state: data.devices.find((d: DeviceInfo) => d.state.includes('Online'))?.state || data.devices[0].state,
+                            state: primaryDevice.state,
                             timestamp: Date.now(),
                         };
                         updatedContact.data = [...updatedContact.data, newDataPoint];
@@ -248,7 +263,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
                 const next = new Map(prev);
                 trackedJids.forEach((id) => {
                     if (!next.has(id)) {
-                        const displayNumber = id.split('@')[0];
+                        const displayNumber = id.split('@')[0] ?? id;
                         next.set(id, {
                             jid: id,
                             displayNumber,
@@ -271,15 +286,15 @@ export function Dashboard({ connectionState }: DashboardProps) {
             trackedJids.forEach((id) => {
                 authFetch(`${API_URL}/api/history/${encodeURIComponent(id)}?limit=200`)
                     .then(r => r.json())
-                    .then((history: any[]) => {
+                    .then((history: HistoricalTrackerMeasurement[]) => {
                         if (history.length === 0) return;
-                        const historicalData: TrackerData[] = history.map((m: any) => ({
-                            rtt: m.rtt ?? 0,
-                            avg: m.avg ?? 0,
-                            median: m.median ?? 0,
-                            threshold: m.threshold ?? 0,
-                            state: m.state ?? 'Unknown',
-                            timestamp: new Date(m.timestamp).getTime(),
+                        const historicalData: TrackerData[] = history.map((measurement) => ({
+                            rtt: measurement.rtt ?? 0,
+                            avg: measurement.avg ?? 0,
+                            median: measurement.median ?? 0,
+                            threshold: measurement.threshold ?? 0,
+                            state: measurement.state ?? 'Unknown',
+                            timestamp: new Date(measurement.timestamp).getTime(),
                         }));
                         setContacts(prev => {
                             const next = new Map(prev);
@@ -447,21 +462,37 @@ export function Dashboard({ connectionState }: DashboardProps) {
     };
 
     const handleRemove = (jid: string) => {
-        socket.emit('remove-contact', jid);
+        socket.emit('remove-contact', { jid, stopReason: 'Stopped from dashboard' });
     };
 
     const handleReactivate = (jid: string) => {
-        socket.emit('reactivate-contact', jid);
+        if (!caseId.trim() || !operatorName.trim() || !authorizationNote.trim()) {
+            setError('Case ID, operador y autorizacion son requeridos para reactivar');
+            setTimeout(() => setError(null), 3000);
+            return;
+        }
+        socket.emit('reactivate-contact', {
+            jid,
+            caseId: caseId.trim(),
+            operatorName: operatorName.trim(),
+            authorizationNote: authorizationNote.trim(),
+        });
     };
 
     const handleProbeMethodChange = (method: ProbeMethod) => {
         socket.emit('set-probe-method', method);
     };
 
-    // Load history when panel is opened
-    useEffect(() => {
-        if (showHistory) fetchHistory();
-    }, [showHistory, fetchHistory]);
+    const refreshHistory = () => {
+        setHistoryLoading(true);
+        fetchHistory();
+    };
+
+    const toggleHistory = () => {
+        const nextVisible = !showHistory;
+        setShowHistory(nextVisible);
+        if (nextVisible) refreshHistory();
+    };
 
     return (
         <div className="space-y-6">
@@ -480,7 +511,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
                             {showConnections ? 'Hide' : 'Connections'}
                         </button>
                         <button
-                            onClick={() => setShowHistory(!showHistory)}
+                            onClick={toggleHistory}
                             className={`btn-ghost flex items-center gap-1.5 !py-1.5 !px-3 !text-xs ${
                                 showHistory ? '!bg-accent/15 !text-accent !border-accent/25' : ''
                             }`}
@@ -605,7 +636,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
                             Contact History
                             <span className="badge-neutral !text-[10px]">{savedContacts.length}</span>
                         </h3>
-                        <button onClick={fetchHistory} className="btn-ghost !text-xs !py-1 !px-2.5 flex items-center gap-1">
+                        <button onClick={refreshHistory} className="btn-ghost !text-xs !py-1 !px-2.5 flex items-center gap-1">
                             <RotateCcw size={12} /> Refresh
                         </button>
                     </div>

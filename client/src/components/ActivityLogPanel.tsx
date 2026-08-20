@@ -1,4 +1,3 @@
-import React from 'react';
 import clsx from 'clsx';
 import { History } from 'lucide-react';
 
@@ -11,6 +10,10 @@ interface ActivityEntry {
 interface ActivityLogPanelProps {
     activity: ActivityEntry[];
     formatDateTime: (value: string | null) => string;
+}
+
+function isNoAckState(value: string): boolean {
+    return value === 'NO_ACK' || value === 'OFFLINE';
 }
 
 export function ActivityLogPanel({ activity, formatDateTime }: ActivityLogPanelProps) {
@@ -32,7 +35,7 @@ export function ActivityLogPanel({ activity, formatDateTime }: ActivityLogPanelP
                 <div className="text-center py-8">
                     <History size={32} className="mx-auto text-txt-dim mb-2" />
                     <p className="text-txt-muted text-sm">Sin cambios de estado registrados</p>
-                    <p className="text-txt-dim text-xs mt-1">Los cambios apareceran cuando el dispositivo cambie entre Online/Standby/Offline</p>
+                    <p className="text-txt-dim text-xs mt-1">Los cambios apareceran cuando el dispositivo cambie entre Online, Standby o Sin ACK</p>
                 </div>
             )}
         </div>
@@ -50,14 +53,13 @@ function ActivityTimelineRow({
 }) {
     const tone = entry.state.includes('Online')
         ? 'success'
-        : entry.state === 'OFFLINE'
-            ? 'danger'
+        : isNoAckState(entry.state)
+            ? 'warning'
             : entry.state === 'Standby'
                 ? 'warning'
                 : 'neutral';
     const dotColor = {
         success: 'bg-success',
-        danger: 'bg-danger',
         warning: 'bg-warning',
         neutral: 'bg-txt-dim',
     }[tone];
@@ -73,10 +75,9 @@ function ActivityTimelineRow({
                     <span className={clsx(
                         "text-xs font-semibold",
                         tone === 'success' ? 'text-success' :
-                        tone === 'danger' ? 'text-danger' :
                         tone === 'warning' ? 'text-warning' : 'text-txt-secondary'
                     )}>
-                        {entry.state}
+                        {isNoAckState(entry.state) ? 'Sin ACK' : entry.state}
                     </span>
                     <span className="text-[10px] text-txt-dim ml-2">RTT: {entry.rtt}ms</span>
                 </div>

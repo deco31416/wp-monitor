@@ -49,7 +49,7 @@ flowchart LR
 
 El paquete puede incluir manifiesto, caso, enlaces de evidencia, auditoria, analisis de llamada, resumen de red, JSON, CSV e informes. Cada seccion o archivo recibe hash para detectar cambios posteriores.
 
-El paquete no debe incluir `DASHBOARD_TOKEN`, `.env`, sesion Baileys, credenciales MongoDB ni payload privado.
+El paquete no debe incluir contrasenas, `AUTH_IDENTITY_SECRET`, cookies/tokens de sesion, `.env`, sesion Baileys, credenciales MongoDB/Redis ni payload privado.
 
 ## Verificacion
 

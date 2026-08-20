@@ -6,9 +6,10 @@ Esta guia instala WP MONITOR desde un clon limpio y valida backend, frontend, Mo
 
 | Componente | Requisito | Proposito |
 | --- | --- | --- |
-| Node.js | 20 o superior | Backend, frontend y herramientas |
-| Corepack/pnpm | pnpm 10.12.1 recomendado | Workspace y lockfile oficial |
+| Node.js | 24.19.x | Backend, frontend, modulo nativo y herramientas |
+| Corepack/pnpm | pnpm 11.22.0 | Workspace y lockfile oficial |
 | MongoDB | Local o Atlas | Persistencia de casos, actividad y auditoria |
+| Redis | Local, Docker o administrado | Sesiones y limites compartidos |
 | Git | Version vigente | Clon, ramas y verificacion de cambios |
 | Npcap | Windows, opcional | Captura local con compatibilidad WinPcap |
 | libpcap | Linux, opcional | Captura local con permisos adecuados |
@@ -46,6 +47,12 @@ PUBLIC_BASE_URL=http://127.0.0.1:4000
 ALLOWED_ORIGINS=http://127.0.0.1:4001,http://localhost:4001
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=device-tracker-development
+REDIS_URL=redis://127.0.0.1:6379
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-development
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=use-a-unique-password-with-15-plus-characters
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
 TRUST_PROXY=false
 ENABLE_SWAGGER=false
 ```
@@ -86,27 +93,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Sta
 
 ## 6. Interpretar health
 
-`/api/health` devuelve `200` cuando MongoDB configurado y WhatsApp estan conectados. Antes del QR puede devolver `503 degraded` con `whatsapp_disconnected`; esto demuestra que el backend responde, no que el proceso haya fallado.
+`/api/health` devuelve `200` cuando MongoDB, Redis y WhatsApp estan conectados. Antes del QR puede devolver `503 degraded` con `whatsapp_disconnected`; esto demuestra que el backend responde, no que el proceso haya fallado.
 
 Comprueba por separado:
 
 1. frontend compilado en `4001`;
 2. backend accesible en `4000`;
-3. MongoDB `connected: true`;
+3. MongoDB y Redis `connected: true`;
 4. URLs del navegador apuntando a `4000`, no a puertos antiguos;
 5. Socket.IO conectado;
 6. QR visible o sesion restaurada.
 
-## 7. Vincular WhatsApp
+## 7. Iniciar sesion y vincular WhatsApp
 
 Utiliza una cuenta propia o de laboratorio:
 
-1. abre WP MONITOR;
-2. espera el QR;
-3. en WhatsApp abre **Dispositivos vinculados**;
-4. escanea el codigo;
-5. espera la transicion a `Connected`;
-6. refresca el dashboard y confirma que la sesion se reconstruye.
+1. abre WP MONITOR e ingresa el usuario/contrasena iniciales;
+2. cambia las credenciales desde **Account** si son de bootstrap o migracion;
+3. espera el QR;
+4. en WhatsApp abre **Dispositivos vinculados**;
+5. escanea el codigo;
+6. espera la transicion a `Connected`;
+7. refresca el dashboard y confirma que ambas sesiones se reconstruyen.
 
 La carpeta `auth_info_baileys` contiene credenciales de sesion. No la compartas ni la publiques. Un cierre `401/loggedOut` confirmado requiere una nueva vinculacion; no borres sesiones por un warning temporal.
 
@@ -126,6 +134,7 @@ Continua con la [Guia de usuario](../user-guide/README.md). Para habilitar captu
 - Tests y builds ejecutados o bloqueos documentados.
 - Backend y frontend en `4000/4001`.
 - MongoDB conectado.
+- Redis conectado y sesion de operador validada.
 - Cuenta propia vinculada o QR diagnosticado.
 - Caso sintetico creado y visible en auditoria.
 - Ningun secreto agregado a Git.

@@ -6,10 +6,22 @@ Visualizar relaciones logicas. MongoDB no aplica claves foraneas; la aplicacion 
 
 ```mermaid
 erDiagram
+    OPERATOR_USER {
+      string id PK
+      string username
+      string normalizedUsername UK
+      string passwordHash
+      number credentialVersion
+      date credentialsUpdatedAt
+    }
     CASE_RECORD ||--o{ AUDIT_EVENT : caseId
     CASE_RECORD ||--o{ EVIDENCE_LINK : caseId
     CASE_RECORD ||--o{ CHECK_IN : caseId
     CASE_RECORD ||--o{ CALL_ANALYSIS : caseId
+    CASE_RECORD ||--o{ TRACKING_SESSION : caseId
+    TRACKING_SESSION ||--o{ MEASUREMENT : trackingSessionId
+    TRACKING_SESSION ||--o{ ACTIVITY_EVENT : trackingSessionId
+    CONTACT ||--o{ TRACKING_SESSION : jid
     CONTACT ||--o{ MEASUREMENT : jid
     CONTACT ||--o{ ACTIVITY_EVENT : jid
     CONTACT ||--o{ CALL_ANALYSIS : targetJid
@@ -28,15 +40,29 @@ erDiagram
       string jid PK
       string number
       string customName
-      date trackingStartedAt
+      date addedAt
+      boolean isActive
+    }
+    TRACKING_SESSION {
+      string trackingSessionId PK
+      string caseId
+      string jid
+      string operatorName
+      string status
+      date startedAt
+      date stoppedAt
     }
     MEASUREMENT {
+      string caseId
+      string trackingSessionId
       string jid
       number rtt
-      string status
+      string state
       date timestamp
     }
     ACTIVITY_EVENT {
+      string caseId
+      string trackingSessionId
       string jid
       string source
       string type
@@ -73,4 +99,4 @@ erDiagram
 
 ## Retencion
 
-Mediciones tienen TTL de 30 dias; actividad y analisis de llamada, 90 dias. Casos, auditoria, contactos, enlaces y Check-Ins requieren politica explicita de retencion.
+Mediciones tienen TTL de 30 dias; actividad y analisis de llamada, 90 dias. Operador, casos, sesiones de tracking, auditoria, contactos, enlaces y Check-Ins requieren politica explicita de retencion. Solo existe `primary-operator`; `normalizedUsername` tambien es unico y `passwordHash` nunca contiene texto plano. Los documentos historicos previos al modelo por caso pueden no contener `caseId` o `trackingSessionId` y se excluyen de evidencia por caso.

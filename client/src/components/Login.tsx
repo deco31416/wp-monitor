@@ -1,4 +1,3 @@
-import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ConnectionState } from '../App';
 import { CheckCircle, Smartphone } from 'lucide-react';

@@ -10,6 +10,7 @@ Validar imagenes reproducibles de backend/frontend y persistencia local. Docker 
 | --- | --- | --- | --- |
 | backend | `Dockerfile` | `${BACKEND_PORT:-4000}` | `baileys_auth`, `checkin_uploads`, Mongo externo |
 | client | `client/Dockerfile` con contexto raiz | `${CLIENT_PORT:-4001}` | Build estatico |
+| redis | imagen oficial `redis:8.10.1-alpine` | Solo red interna | `redis_data` con AOF |
 
 ## Preflight
 
@@ -18,7 +19,7 @@ docker version
 docker compose config
 ```
 
-Confirma que Docker Desktop/daemon esta activo, `.env` existe, MongoDB es alcanzable desde el contenedor y los puertos estan libres.
+Confirma que Docker Desktop/daemon esta activo, `.env` existe, MongoDB es alcanzable desde el contenedor y los puertos estan libres. Redis no publica `6379`; el backend lo alcanza mediante `redis://redis:6379` en `data-network`.
 
 `127.0.0.1` dentro del backend apunta al propio contenedor. Para MongoDB en el host utiliza un nombre/ruta compatible con tu plataforma, o un servicio Mongo dedicado.
 
@@ -28,7 +29,7 @@ Confirma que Docker Desktop/daemon esta activo, `.env` existe, MongoDB es alcanz
 docker compose build --pull
 ```
 
-El frontend necesita el contexto raiz porque copia `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` y `client/package.json`. `REACT_APP_API_URL` queda embebida durante build.
+El frontend necesita el contexto raiz porque copia `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` y `client/package.json`. `VITE_API_URL` queda embebida durante build.
 
 ## Inicio y verificacion
 
@@ -56,9 +57,11 @@ flowchart LR
     Backend[Backend container]
     Auth[(baileys_auth)]
     Uploads[(checkin_uploads)]
+    Redis[(redis_data / AOF)]
     Mongo[(MongoDB externo)]
     Backend <--> Auth
     Backend <--> Uploads
+    Backend <--> Redis
     Backend <--> Mongo
 ```
 
@@ -80,11 +83,11 @@ No montes un volumen sobre `/app` completo: ocultaria el codigo de la imagen. Lo
 docker compose down
 ```
 
-No agregues `-v` salvo que pretendas eliminar los volumenes y hayas verificado el objetivo. `down -v` destruye persistencia local de sesion/uploads.
+No agregues `-v` salvo que pretendas eliminar los volumenes y hayas verificado el objetivo. `down -v` destruye persistencia local de sesion Baileys, uploads y Redis.
 
 ## Limitaciones
 
 - La imagen backend instala `libpcap-dev`, pero el acceso a interfaces del host depende de plataforma, red y privilegios.
 - Para captura confiable en Windows usa el runbook local fuera de Docker.
-- Compose no incluye MongoDB; debes proporcionarlo.
+- Compose incluye Redis con AOF, healthcheck y volumen, pero no incluye MongoDB; debes proporcionarlo.
 - No existe healthcheck Docker declarado en el compose actual; utiliza endpoints como smoke externo.

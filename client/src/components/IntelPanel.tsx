@@ -16,6 +16,7 @@ interface IntelSession {
 
 interface IntelAvailability {
     hourly: number[];
+    hourlyConclusiveDays?: number[];
     activeHours: number[];
     inactiveHours: number[];
     globalScore: number;
@@ -24,11 +25,13 @@ interface IntelAvailability {
 
 interface IntelHeatmap {
     matrix: number[][];
+    conclusiveMatrix?: number[][];
     dayLabels: string[];
     peakDay: number;
     peakHour: number;
     peakScore: number;
     totalDataPoints: number;
+    totalAttempts?: number;
     weeksAnalyzed: number;
 }
 
@@ -180,7 +183,8 @@ function WeeklyHeatmapCard({ heatmap }: { heatmap: IntelHeatmap }) {
             <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4 flex items-center gap-1.5">
                 <CalendarDays size={13} /> Heatmap Semanal
                 <span className="text-[9px] font-normal text-txt-dim ml-auto">
-                    {heatmap.weeksAnalyzed} semanas · {heatmap.totalDataPoints.toLocaleString()} datos
+                    {heatmap.weeksAnalyzed} semanas · {heatmap.totalDataPoints.toLocaleString()} concluyentes
+                    {typeof heatmap.totalAttempts === 'number' && ` / ${heatmap.totalAttempts.toLocaleString()} intentos`}
                 </span>
             </h5>
             <div className="overflow-x-auto">
@@ -200,16 +204,20 @@ function WeeklyHeatmapCard({ heatmap }: { heatmap: IntelHeatmap }) {
                             </div>
                             {row.map((value, hour) => {
                                 const isPeak = dayIndex === heatmap.peakDay && hour === heatmap.peakHour;
+                                const conclusiveSamples = heatmap.conclusiveMatrix?.[dayIndex]?.[hour];
+                                const hasConclusiveData = conclusiveSamples === undefined || conclusiveSamples > 0;
                                 return (
                                     <div
                                         key={hour}
                                         className={clsx("flex-1 h-5 rounded-[2px] mx-[0.5px] transition-colors", isPeak && "ring-1 ring-accent")}
                                         style={{
-                                            backgroundColor: value > 0
+                                            backgroundColor: hasConclusiveData && value > 0
                                                 ? `rgba(37,211,102,${Math.min(value * 1.2, 1)})`
-                                                : 'rgba(17,27,33,0.55)'
+                                                : hasConclusiveData ? 'rgba(17,27,33,0.55)' : 'rgba(100,116,139,0.12)'
                                         }}
-                                        title={`${heatmap.dayLabels[dayIndex]} ${hour}:00 - ${Math.round(value * 100)}% online`}
+                                        title={hasConclusiveData
+                                            ? `${heatmap.dayLabels[dayIndex]} ${hour}:00 - ${Math.round(value * 100)}% online · ${conclusiveSamples ?? 'N/D'} concluyentes`
+                                            : `${heatmap.dayLabels[dayIndex]} ${hour}:00 - sin datos concluyentes`}
                                     />
                                 );
                             })}

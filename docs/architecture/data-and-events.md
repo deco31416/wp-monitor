@@ -6,16 +6,26 @@ Vistas independientes: [modelo MongoDB](../diagrams/11-mongodb-data-model.md), [
 
 | Entidad | Indice principal | Retencion implementada |
 | --- | --- | --- |
-| Mediciones RTT | `jid + timestamp` | TTL 30 dias |
-| Eventos de actividad | `jid + timestamp`, `source + type` | TTL 90 dias |
+| Operador unico | `normalizedUsername` unico, ID fijo `primary-operator` | Sin TTL automatico |
+| Mediciones RTT | `caseId + jid + timestamp`, `trackingSessionId + timestamp` | TTL 30 dias |
+| Eventos de actividad | `caseId + jid + timestamp`, `trackingSessionId + timestamp` | TTL 90 dias |
 | Contactos | `jid` unico | Sin TTL automatico |
-| Analisis de llamada | `callId`, `targetJid + startTime` | TTL 90 dias |
+| Sesiones de tracking | `trackingSessionId` unico, un `jid` activo | Sin TTL automatico |
+| Analisis de llamada | `caseId + callId` unico, `targetJid + startTime` | TTL 90 dias |
 | Eventos de auditoria | `caseId + timestamp`, `scope + action` | Sin TTL automatico |
 | Casos | `caseId` unico, `status + updatedAt` | Sin TTL automatico |
 | Enlaces de evidencia | `caseId + type + refId` unico | Sin TTL automatico |
 | Check-Ins | `token` unico, `caseId + createdAt` | Estado/expiracion controlados por aplicacion |
 
 Los TTL son comportamiento del codigo vigente y no sustituyen una politica institucional de retencion. La organizacion debe definir conservacion, borrado, respaldo y excepciones legales.
+
+MongoDB conserva solo el hash scrypt salado del operador y una `credentialVersion`. Redis conserva sesiones opacas con TTL; las claves usan una huella HMAC, no el token crudo. Cambiar credenciales incrementa la version y revoca las sesiones anteriores.
+
+`contacts` conserva el perfil global conocido del JID. La autorizacion y el ciclo operativo viven en `tracking_sessions`: cada sesion pertenece a un solo caso, operador y nota de autorizacion. Las mediciones y eventos previos a este modelo no tienen esos campos y no se incorporan silenciosamente a un paquete de evidencia filtrado por caso.
+
+Los analisis de llamada nuevos tambien conservan `caseId`; el paquete de evidencia exige coincidencia de caso y `callId`, evitando que un identificador manual reutilizado sobrescriba o incorpore el analisis de otro caso.
+
+Una sesion pasa de `active` a `stopped`, `interrupted` o `failed`. Solo puede existir una sesion `active` por JID en una instancia de datos. Las reconexiones de WhatsApp y reinicios normales del proceso reanudan la misma sesion autorizada; detener desde el dashboard la cierra. Si al restaurar el caso ya no esta activo, la sesion queda `interrupted`.
 
 ## Estados de caso
 
@@ -103,6 +113,6 @@ sequenceDiagram
 
 - El backend almacena marcas de tiempo en UTC.
 - La interfaz puede presentar hora local, pero los informes deben conservar UTC.
-- Los eventos deben incluir caso y operador cuando la operacion lo exige.
+- Las observaciones de tracking deben incluir `caseId` y `trackingSessionId`; el operador y la autorizacion pertenecen a la sesion durable.
 - Un hash se calcula sobre una representacion canonica o archivo concreto; cualquier regeneracion produce un nuevo hash.
 - La procedencia debe viajar con el dato, no depender de memoria del operador.

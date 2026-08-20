@@ -2,20 +2,27 @@
 
 Base local: `http://127.0.0.1:4000`.
 
-Cuando `DASHBOARD_TOKEN` esta configurado, las rutas protegidas usan:
+La API administrativa siempre exige la sesion del operador unico. `POST /api/auth/login` entrega una cookie opaca `HttpOnly` respaldada por Redis; el navegador debe enviar solicitudes con credenciales. En produccion la cookie es `Secure`, usa el prefijo `__Host-` y requiere HTTPS. Los metodos que modifican estado tambien validan que `Origin` coincida exactamente con `ALLOWED_ORIGINS`.
 
-```http
-Authorization: Bearer <token>
-```
+Los errores de validacion responden `400`; autenticacion `401`; recurso ausente `404`; capacidad local deshabilitada `403`; conflicto operativo puede responder `409`; persistencia o rate-limit requerido no disponible `503`; fallo inesperado `500`.
 
-Los errores de validacion responden `400`; autenticacion `401`; recurso ausente `404`; capacidad local deshabilitada `403`; conflicto operativo puede responder `409`; fallo inesperado `500`.
+## Autenticacion
+
+| Metodo | Ruta | Uso |
+| --- | --- | --- |
+| POST | `/api/auth/login` | Valida usuario/contrasena, aplica limites Redis y crea sesion |
+| GET | `/api/auth/session` | Consulta la sesion y expiracion actuales |
+| POST | `/api/auth/logout` | Revoca la sesion actual y borra la cookie |
+| PUT | `/api/auth/credentials` | Cambia usuario/contrasena, rota cookie y revoca todas las sesiones previas |
+
+`GET /api/runtime-capabilities`, `GET /api/health`, la landing `/checkin/:token` y su submit publico son las excepciones no administrativas. Un antiguo Bearer `DASHBOARD_TOKEN` no autentica ninguna ruta ni Socket.IO.
 
 ## Runtime
 
 | Metodo | Ruta | Uso |
 | --- | --- | --- |
 | GET | `/api/runtime-capabilities` | Modo y funciones disponibles |
-| GET | `/api/health` | Estado de MongoDB, WhatsApp y captura |
+| GET | `/api/health` | Estado de MongoDB, Redis, WhatsApp y captura |
 | GET | `/docs` | Swagger solo fuera de produccion y con flag |
 | GET | `/docs/openapi.json` | Especificacion OpenAPI bajo la misma condicion |
 
@@ -56,6 +63,8 @@ Creacion minima:
 | GET | `/api/patterns/:jid` |
 | PUT | `/api/contact/:jid/custom-name` |
 
+`GET /api/stats/:jid` informa `online`, `standby`, `calibrating`, `noAck` y `unknown` como porcentajes separados. `offline` se conserva unicamente como alias de compatibilidad de `noAck`.
+
 ## Inteligencia e informes de contacto
 
 | Metodo | Ruta |
@@ -83,6 +92,8 @@ Creacion minima:
 | DELETE | `/api/checkins/:token` | Eliminar registro |
 | GET | `/checkin/:token` | Landing publica HTML |
 | POST | `/public/checkin/:token/submit` | Envio publico consentido |
+
+El submit consume en Redis los limites por IP y token/IP. Devuelve `429` con `Retry-After` cuando supera un limite y `503` cuando el store compartido configurado no esta disponible.
 
 ## Red y llamadas
 
@@ -116,10 +127,10 @@ Las rutas de captura responden `403` en `railway-dashboard`.
 ## Socket.IO: cliente a servidor
 
 - `get-tracked-contacts`
-- `add-contact`
-- `remove-contact`
+- `add-contact` con `{ number, customName?, caseId, operatorName, authorizationNote }`
+- `remove-contact` con `{ jid, stopReason? }`
 - `set-custom-name`
-- `reactivate-contact`
+- `reactivate-contact` con `{ jid, caseId, operatorName, authorizationNote }`
 - `network-start`, `network-stop`, `network-filter`, `network-get-status`
 - `set-probe-method`
 - `start-call-capture`, `stop-call-capture`, `get-call-capture-status`
@@ -135,3 +146,5 @@ Las rutas de captura responden `403` en `railway-dashboard`.
 - `checkins-changed`, `device-alert`, `probe-method`, `error`
 
 Los payloads son contratos internos TypeScript. Antes de integrarlos externamente revisa `client/src/types.ts` y el emisor vigente; no existe garantia semantica para consumidores de terceros sin versionado adicional.
+
+Agregar o reactivar un contacto crea una sesion durable en `tracking_sessions`. Cada medicion y evento observado nuevo conserva `caseId` y `trackingSessionId`. Detener tracking cierra primero esa sesion en MongoDB; si no puede persistirse el cierre, el backend no finge que la operacion termino.

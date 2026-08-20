@@ -127,8 +127,14 @@ function sampleEvidencePackage(): any {
                     stats: {
                         online: 42,
                         standby: 18,
-                        offline: 40,
+                        calibrating: 5,
+                        noAck: 30,
+                        offline: 30,
+                        unknown: 5,
                         totalMeasurements: 1200,
+                        conclusiveMeasurements: 720,
+                        inconclusiveMeasurements: 480,
+                        acknowledgedRttMeasurements: 780,
                         firstSeen: new Date('2026-06-17T00:00:00.000Z'),
                         lastSeen: new Date('2026-06-18T00:00:00.000Z'),
                         lastOnline: new Date('2026-06-17T23:30:00.000Z'),
@@ -182,14 +188,28 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(report.summary.nonConclusiveIpObservationCount, 1);
     assert.equal(report.summary.activityStatsCount, 1);
     assert.equal(report.summary.highestCandidateScore, 55);
-    assert.equal(report.findings.activityStats[0].reliability.score, 85);
-    assert.equal(report.findings.candidateIps[0].networkIntelligence.org, 'Google');
-    assert.equal(report.findings.nonConclusiveIpObservations[0].networkIntelligence.org, 'Akamai');
+    const [activityStats] = report.findings.activityStats;
+    const [candidateIp] = report.findings.candidateIps;
+    const [nonConclusiveIp] = report.findings.nonConclusiveIpObservations;
+    assert.ok(activityStats);
+    assert.ok(candidateIp);
+    assert.ok(nonConclusiveIp);
+    assert.equal(activityStats.reliability.score, 85);
+    assert.equal(activityStats.calibratingPct, 5);
+    assert.equal(activityStats.noAckPct, 30);
+    assert.equal(activityStats.unknownPct, 5);
+    assert.equal(activityStats.conclusiveMeasurements, 720);
+    assert.equal(activityStats.inconclusiveMeasurements, 480);
+    assert.equal(activityStats.acknowledgedRttMeasurements, 780);
+    assert.equal(candidateIp.networkIntelligence.org, 'Google');
+    assert.equal(nonConclusiveIp.networkIntelligence.org, 'Akamai');
     assert.match(report.integrity.reportHash, /^[a-f0-9]{64}$/);
 
     const html = renderFinalCaseReportHtml(report);
     assert.match(html, /ASN\/ORG/);
     assert.match(html, /Estadisticas de Actividad Observada/);
+    assert.match(html, /720 \/ 1200/);
+    assert.match(html, /Online \/ concl\. 24h/);
     assert.match(html, /85\/100/);
     assert.match(html, /No prueban identidad/);
     assert.match(html, /Observaciones No Concluyentes/);

@@ -110,6 +110,30 @@ export interface CallCaptureStarted {
     targetJid: string;
 }
 
+export interface TrackerDeviceInfo {
+    jid: string;
+    state: string;
+    rtt: number;
+    avg: number;
+}
+
+function trackerStatePriority(state: string): number {
+    const normalized = state.trim().toUpperCase();
+    if (normalized.startsWith('ONLINE')) return 0;
+    if (normalized === 'STANDBY') return 1;
+    if (normalized.startsWith('CALIBRATING')) return 2;
+    if (normalized === 'NO_ACK' || normalized === 'OFFLINE' || normalized === 'SIN ACK') return 3;
+    return 4;
+}
+
+export function selectPrimaryTrackerDevice<T extends TrackerDeviceInfo>(devices: readonly T[]): T | undefined {
+    return devices.reduce<T | undefined>((selected, device) => (
+        !selected || trackerStatePriority(device.state) < trackerStatePriority(selected.state)
+            ? device
+            : selected
+    ), undefined);
+}
+
 export interface AuditEvent {
     _id?: string;
     caseId: string;

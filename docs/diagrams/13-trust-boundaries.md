@@ -9,12 +9,14 @@ flowchart TB
     Internet[Internet no confiable]
     Proxy[Railway/reverse proxy]
     PublicRoute[Landing y submit publicos]
-    Guard[Bearer y Socket guard]
+    Guard[Cookie/session/origin guard]
     Protected[API protegida]
     Validation[Validacion y normalizacion]
 
     subgraph Secrets[Zona de secretos]
-      DashboardToken[DASHBOARD_TOKEN]
+      BootstrapPassword[Credencial bootstrap]
+      IdentitySecret[AUTH_IDENTITY_SECRET]
+      RedisCredentials[Credencial Redis]
       MongoUri[MONGODB_URI]
       BaileysSession[auth_info_baileys]
       ProviderKeys[Keys externas]
@@ -29,7 +31,9 @@ flowchart TB
     Internet --> Proxy
     Proxy --> PublicRoute --> Validation
     Proxy --> Guard --> Protected --> Validation
-    DashboardToken --> Guard
+    BootstrapPassword --> Protected
+    IdentitySecret --> Guard
+    RedisCredentials --> Guard
     MongoUri --> Mongo
     BaileysSession --> Protected
     ProviderKeys --> Protected
@@ -43,6 +47,8 @@ flowchart TB
 
 - CORS controla navegadores, no reemplaza autenticacion.
 - `TRUST_PROXY` limita que cabeceras de IP se consideran confiables.
-- Rate limit publico reduce abuso, pero memoria local no escala entre replicas.
+- Rate limits de login y Check-In se comparten atomicamente en Redis y fallan cerrados.
+- La cookie es `HttpOnly` y `SameSite=Strict`; produccion exige HTTPS para `Secure`/`__Host-`.
+- Cambiar credenciales revoca sesiones HTTP y Socket.IO anteriores.
 - Validacion se aplica antes de persistir o abrir captura.
 - Los reportes minimizan y excluyen secretos.

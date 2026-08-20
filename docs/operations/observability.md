@@ -6,7 +6,7 @@ Definir que senales existen hoy, como leerlas y que falta antes de operar a mayo
 
 ## Logs de arranque
 
-El backend informa entorno, puerto, MongoDB configurado, integraciones opcionales, Swagger, CORS, token, modo, proxy y captura. Los logs deben decir `configured/connected/enabled` sin imprimir valores.
+El backend informa entorno, puerto, MongoDB/Redis configurados, Swagger, CORS, autenticacion, modo, proxy y captura. Los logs deben decir `configured/connected/enabled` sin imprimir credenciales, cookies ni valores secretos.
 
 El launcher guarda:
 
@@ -25,6 +25,7 @@ Estos archivos son locales, rotables y no deben publicarse. Pueden contener iden
 - `generatedAt` UTC;
 - capacidades de runtime;
 - MongoDB configurado/conectado;
+- Redis configurado/requerido/conectado;
 - WhatsApp conectado;
 - captura habilitada;
 - razones de degradacion.
@@ -37,7 +38,7 @@ El endpoint devuelve `503` cuando existe una razon degradada. Un monitor debe le
 
 ## IDs de correlacion
 
-Actualmente los dominios usan `caseId`, `jid`, `callId`, token y timestamp. Para una operacion madura se recomienda agregar un `requestId` no sensible a HTTP/Socket y propagarlo a auditoria/logs.
+Actualmente los dominios usan `caseId`, `trackingSessionId`, `jid`, `callId`, token de Check-In y timestamp. Para una operacion madura se recomienda agregar un `requestId` no sensible a HTTP/Socket y propagarlo a auditoria/logs.
 
 ## Metricas recomendadas
 
@@ -49,6 +50,7 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 | Latencia P50/P95/P99 | Rendimiento API |
 | Socket clients/reconnects | Salud tiempo real |
 | Mongo latency/errors | Persistencia |
+| Redis latency/errors | Sesiones y rate limits compartidos |
 | WhatsApp reconnect/401 | Estabilidad upstream |
 | Tracking contacts/probes | Carga funcional |
 | Packet rate/drop | Captura |
@@ -59,6 +61,7 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 
 - backend no responde durante 2-5 minutos;
 - MongoDB desconectado de manera sostenida;
+- Redis desconectado, login o submits publicos respondiendo `503`;
 - repeticion de `401/loggedOut`;
 - volumen >80%;
 - errores de exportacion consecutivos;
@@ -68,7 +71,7 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 
 ## Privacidad de logs
 
-No registrar tokens, URI, contenido de sesion, payload de mensajes, coordenadas completas innecesarias ni reportes completos. Cuando un JID/IP sea necesario para diagnostico, limita acceso, retencion y exportacion.
+No registrar contrasenas, tokens, cookies, URI, contenido de sesion, payload de mensajes, coordenadas completas innecesarias ni reportes completos. Cuando un JID/IP sea necesario para diagnostico, limita acceso, retencion y exportacion.
 
 ## Runbook corto
 

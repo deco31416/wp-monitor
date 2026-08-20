@@ -9,59 +9,71 @@ const REQUIRED_DISCLOSURE_NO_GPS = 'Aviso tecnico minimo: este envio registra IP
 export interface CheckInSubmission {
     consentAccepted: boolean;
     browser?: {
-        timezone?: string;
-        language?: string;
-        languages?: string[];
-        platform?: string;
+        timezone?: string | undefined;
+        language?: string | undefined;
+        languages?: string[] | undefined;
+        platform?: string | undefined;
         userAgentData?: {
-            platform?: string;
-            mobile?: boolean;
-            brands?: Array<{ brand?: string; version?: string }>;
-        };
+            platform?: string | undefined;
+            mobile?: boolean | undefined;
+            brands?: Array<{ brand?: string | undefined; version?: string | undefined }> | undefined;
+        } | undefined;
         device?: {
-            type?: 'mobile' | 'tablet' | 'desktop' | 'unknown';
-            os?: string;
-            browser?: string;
-            engine?: string;
-            isTouch?: boolean;
-            maxTouchPoints?: number;
-            hardwareConcurrency?: number;
-            deviceMemoryGb?: number;
-        };
+            type?: 'mobile' | 'tablet' | 'desktop' | 'unknown' | undefined;
+            os?: string | undefined;
+            browser?: string | undefined;
+            engine?: string | undefined;
+            isTouch?: boolean | undefined;
+            maxTouchPoints?: number | undefined;
+            hardwareConcurrency?: number | undefined;
+            deviceMemoryGb?: number | undefined;
+        } | undefined;
         viewport?: {
-            width?: number;
-            height?: number;
-        };
+            width?: number | undefined;
+            height?: number | undefined;
+        } | undefined;
         screen?: {
-            width?: number;
-            height?: number;
-            pixelRatio?: number;
-            colorDepth?: number;
-            orientation?: string;
-        };
+            width?: number | undefined;
+            height?: number | undefined;
+            pixelRatio?: number | undefined;
+            colorDepth?: number | undefined;
+            orientation?: string | undefined;
+        } | undefined;
         network?: {
-            online?: boolean;
-            effectiveType?: string;
-            downlink?: number;
-            rtt?: number;
-            saveData?: boolean;
-        };
+            online?: boolean | undefined;
+            effectiveType?: string | undefined;
+            downlink?: number | undefined;
+            rtt?: number | undefined;
+            saveData?: boolean | undefined;
+        } | undefined;
         privacy?: {
-            cookiesEnabled?: boolean;
-            doNotTrack?: string | null;
-        };
-    };
+            cookiesEnabled?: boolean | undefined;
+            doNotTrack?: string | null | undefined;
+        } | undefined;
+    } | undefined;
     location?: {
-        permission?: 'granted' | 'denied' | 'unavailable' | 'unsupported';
-        lat?: number;
-        lon?: number;
-        accuracy?: number;
-        altitude?: number | null;
-        altitudeAccuracy?: number | null;
-        heading?: number | null;
-        speed?: number | null;
-        capturedAt?: string;
-    };
+        permission?: 'granted' | 'denied' | 'unavailable' | 'unsupported' | undefined;
+        lat?: number | undefined;
+        lon?: number | undefined;
+        accuracy?: number | undefined;
+        altitude?: number | null | undefined;
+        altitudeAccuracy?: number | null | undefined;
+        heading?: number | null | undefined;
+        speed?: number | null | undefined;
+        capturedAt?: string | undefined;
+    } | undefined;
+}
+
+export function hasValidCheckInLocation(location: CheckInSubmission['location'] | null | undefined): boolean {
+    return location?.permission === 'granted'
+        && typeof location.lat === 'number'
+        && Number.isFinite(location.lat)
+        && location.lat >= -90
+        && location.lat <= 90
+        && typeof location.lon === 'number'
+        && Number.isFinite(location.lon)
+        && location.lon >= -180
+        && location.lon <= 180;
 }
 
 export interface CheckInConsistency {
@@ -217,6 +229,8 @@ export function normalizeCheckInSubmission(input: unknown): CheckInSubmission {
     const permission = ['granted', 'denied', 'unavailable', 'unsupported'].includes(location.permission)
         ? location.permission
         : 'unavailable';
+    const latitude = boundedNumberOrUndefined(location.lat, -90, 90);
+    const longitude = boundedNumberOrUndefined(location.lon, -180, 180);
 
     return {
         consentAccepted: data.consentAccepted === true,
@@ -234,7 +248,7 @@ export function normalizeCheckInSubmission(input: unknown): CheckInSubmission {
                     ? userAgentData.brands.slice(0, 8).map((item: any) => ({
                         brand: clean(item?.brand, 80),
                         version: clean(item?.version, 30),
-                    })).filter((item: { brand?: string; version?: string }) => item.brand || item.version)
+                    })).filter((item: { brand: string | undefined; version: string | undefined }) => item.brand || item.version)
                     : undefined,
             },
             device: {
@@ -272,14 +286,14 @@ export function normalizeCheckInSubmission(input: unknown): CheckInSubmission {
         },
         location: {
             permission,
-            lat: numberOrUndefined(location.lat),
-            lon: numberOrUndefined(location.lon),
-            accuracy: numberOrUndefined(location.accuracy),
+            lat: latitude,
+            lon: longitude,
+            accuracy: nonNegativeNumberOrUndefined(location.accuracy),
             altitude: numberOrNull(location.altitude),
-            altitudeAccuracy: numberOrNull(location.altitudeAccuracy),
-            heading: numberOrNull(location.heading),
-            speed: numberOrNull(location.speed),
-            capturedAt: clean(location.capturedAt, 80),
+            altitudeAccuracy: nonNegativeNumberOrNull(location.altitudeAccuracy),
+            heading: boundedNumberOrNull(location.heading, 0, 360),
+            speed: nonNegativeNumberOrNull(location.speed),
+            capturedAt: isoTimestampOrUndefined(location.capturedAt),
         },
     };
 }
@@ -389,8 +403,8 @@ export function renderCheckInPage(doc: CheckInDoc, options: { status?: 'ready' |
   </main>
   ${isReady ? `<script>
     const REQUEST_GPS = ${requestGps ? 'true' : 'false'};
-    const REDIRECT_URL = ${JSON.stringify(redirectUrl || '')};
-    const SUCCESS_MESSAGE = ${JSON.stringify(successMessage)};
+    const REDIRECT_URL = ${serializeInlineScriptValue(redirectUrl || '')};
+    const SUCCESS_MESSAGE = ${serializeInlineScriptValue(successMessage)};
     const consent = document.getElementById('consent');
     const button = document.getElementById('send');
     const statusBox = document.getElementById('status');
@@ -548,14 +562,40 @@ function clean(value: unknown, max: number): string | undefined {
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
+    if (typeof value === 'string' && !value.trim()) return undefined;
     const n = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(n) ? n : undefined;
+}
+
+function boundedNumberOrUndefined(value: unknown, minimum: number, maximum: number): number | undefined {
+    const number = numberOrUndefined(value);
+    return number !== undefined && number >= minimum && number <= maximum ? number : undefined;
+}
+
+function nonNegativeNumberOrUndefined(value: unknown): number | undefined {
+    const number = numberOrUndefined(value);
+    return number !== undefined && number >= 0 ? number : undefined;
 }
 
 function numberOrNull(value: unknown): number | null {
     if (value === null) return null;
     const n = numberOrUndefined(value);
     return n === undefined ? null : n;
+}
+
+function boundedNumberOrNull(value: unknown, minimum: number, maximum: number): number | null {
+    return boundedNumberOrUndefined(value, minimum, maximum) ?? null;
+}
+
+function nonNegativeNumberOrNull(value: unknown): number | null {
+    return nonNegativeNumberOrUndefined(value) ?? null;
+}
+
+function isoTimestampOrUndefined(value: unknown): string | undefined {
+    const text = clean(value, 80);
+    if (!text) return undefined;
+    const timestamp = Date.parse(text);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
 }
 
 function booleanOrUndefined(value: unknown): boolean | undefined {
@@ -577,7 +617,7 @@ function buildConsentParts(customText: unknown, requestGps: boolean): { primary:
     const minimum = requestGps ? REQUIRED_DISCLOSURE_GPS : REQUIRED_DISCLOSURE_NO_GPS;
     const fallback = requestGps ? CHECK_IN_CONSENT_TEXT : CHECK_IN_CONSENT_TEXT_NO_GPS;
     if (!custom) return { primary: fallback, disclosure: minimum };
-    const [primary] = custom.split(/Aviso tecnico minimo:/i);
+    const [primary = ''] = custom.split(/Aviso tecnico minimo:/i);
     return { primary: primary.trim() || fallback, disclosure: minimum };
 }
 
@@ -594,6 +634,15 @@ function safeRedirectUrl(value: unknown): string {
 
 function escapeCssUrl(value: string): string {
     return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\)/g, '\\)');
+}
+
+function serializeInlineScriptValue(value: unknown): string {
+    return JSON.stringify(String(value ?? ''))
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
 }
 
 function stringValue(value: unknown): string {

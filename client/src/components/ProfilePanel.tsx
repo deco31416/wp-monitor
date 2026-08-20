@@ -293,8 +293,8 @@ function ActivityPatternsCard({ patterns }: { patterns: PatternsData }) {
                         />
                         <YAxis tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
                         <Tooltip
-                            formatter={(value: any, name: any) => [value, name === 'online' ? 'Online' : 'Total']}
-                            labelFormatter={(label: any) => `${formatHour(Number(label))} - ${formatHour((Number(label) + 1) % 24)}`}
+                            formatter={(value, name) => [value, name === 'online' ? 'Online' : 'Total']}
+                            labelFormatter={(label) => `${formatHour(Number(label))} - ${formatHour((Number(label) + 1) % 24)}`}
                             contentStyle={{
                                 backgroundColor: '#0f1629',
                                 border: '1px solid #1e2545',
@@ -429,7 +429,7 @@ function buildPrivacyExplanation(privacyScore: PrivacyScore): string {
     return `El calculo parte de 100 puntos y descuenta ${exposureCount} senal(es) observable(s): ${reasons}${extra}. ${interpretation}`;
 }
 
-function ProfileItem({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function ProfileItem({ label, value, accent = false }: { label: string; value: string; accent?: boolean | undefined }) {
     return (
         <div>
             <p className="text-[10px] text-txt-muted uppercase tracking-wider mb-0.5">{label}</p>

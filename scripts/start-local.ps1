@@ -1,6 +1,5 @@
 param(
     [switch]$Start,
-    [switch]$NoBrowser,
     [switch]$Restart,
     [switch]$Status
 )
@@ -149,16 +148,13 @@ Write-Host '[WP MONITOR Backend] Log: $backendLog' -ForegroundColor DarkCyan;
 pnpm run dev 2>&1 | Tee-Object -FilePath '$backendLog';
 "@
 
-$browserValue = if ($NoBrowser) { "none" } else { "" }
 $frontendCommand = @"
 `$Host.UI.RawUI.WindowTitle = 'WP MONITOR Frontend 4001';
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new();
 Set-Location '$root';
 `$env:PORT='4001';
 `$env:CLIENT_PORT='4001';
-`$env:REACT_APP_API_URL='http://127.0.0.1:4000';
-`$env:BROWSER='$browserValue';
-`$env:NODE_OPTIONS='--no-deprecation';
+`$env:VITE_API_URL='http://127.0.0.1:4000';
 Write-Host '[WP MONITOR Frontend] http://127.0.0.1:4001' -ForegroundColor Green;
 Write-Host '[WP MONITOR Frontend] Log: $frontendLog' -ForegroundColor DarkCyan;
 pnpm --dir client start 2>&1 | Tee-Object -FilePath '$frontendLog';

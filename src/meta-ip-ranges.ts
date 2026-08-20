@@ -121,14 +121,28 @@ interface ParsedCIDR {
     maskInt: number;
 }
 
+type IPv4Parts = [number, number, number, number];
+
+function parseIPv4Parts(ip: string): IPv4Parts | null {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+        return null;
+    }
+    return [parts[0]!, parts[1]!, parts[2]!, parts[3]!];
+}
+
 /**
  * Parse a CIDR string (e.g. "192.168.1.0/24") into network and mask integers
  */
 function parseCIDR(cidr: string): ParsedCIDR {
     const [ip, prefixStr] = cidr.split('/');
-    const prefix = parseInt(prefixStr, 10);
-    const parts = ip.split('.').map(Number);
-    const ipInt = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    const prefix = Number(prefixStr);
+    const parts = ip ? parseIPv4Parts(ip) : null;
+    if (!parts || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+        throw new Error(`Invalid internal CIDR range: ${cidr}`);
+    }
+    const [a, b, c, d] = parts;
+    const ipInt = ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
     const maskInt = prefix === 0 ? 0 : ((0xFFFFFFFF << (32 - prefix)) >>> 0);
     return {
         networkInt: (ipInt & maskInt) >>> 0,
@@ -139,9 +153,11 @@ function parseCIDR(cidr: string): ParsedCIDR {
 /**
  * Convert an IPv4 address string to a 32-bit unsigned integer
  */
-function ipToInt(ip: string): number {
-    const parts = ip.split('.').map(Number);
-    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+function ipToInt(ip: string): number | null {
+    const parts = parseIPv4Parts(ip);
+    if (!parts) return null;
+    const [a, b, c, d] = parts;
+    return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
 }
 
 // Pre-parse all CIDR ranges for fast lookup
@@ -151,6 +167,7 @@ const cloudflareParsed: ParsedCIDR[] = CLOUDFLARE_CIDRS.map(parseCIDR);
 
 function matchesCIDRList(ip: string, parsed: ParsedCIDR[]): boolean {
     const ipInt = ipToInt(ip);
+    if (ipInt === null) return false;
     for (const { networkInt, maskInt } of parsed) {
         if (((ipInt & maskInt) >>> 0) === networkInt) return true;
     }
@@ -201,16 +218,17 @@ export function classifyIP(ip: string): 'meta' | 'google' | 'cloudflare' | 'unkn
  * Check if an IP is a private/local address
  */
 export function isPrivateIP(ip: string): boolean {
-    const parts = ip.split('.').map(Number);
-    if (parts.length !== 4 || parts.some(part => Number.isNaN(part) || part < 0 || part > 255)) return true;
-    const isPrivate172 = parts.length === 4 && parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31;
-    const isCarrierNat = parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
-    const isBenchmark = parts[0] === 198 && (parts[1] === 18 || parts[1] === 19);
+    const parts = parseIPv4Parts(ip);
+    if (!parts) return true;
+    const [a, b, c] = parts;
+    const isPrivate172 = a === 172 && b >= 16 && b <= 31;
+    const isCarrierNat = a === 100 && b >= 64 && b <= 127;
+    const isBenchmark = a === 198 && (b === 18 || b === 19);
     const isDocumentation =
-        (parts[0] === 192 && parts[1] === 0 && parts[2] === 2) ||
-        (parts[0] === 198 && parts[1] === 51 && parts[2] === 100) ||
-        (parts[0] === 203 && parts[1] === 0 && parts[2] === 113);
-    const isMulticastOrReserved = parts[0] >= 224;
+        (a === 192 && b === 0 && c === 2) ||
+        (a === 198 && b === 51 && c === 100) ||
+        (a === 203 && b === 0 && c === 113);
+    const isMulticastOrReserved = a >= 224;
     return (
         ip.startsWith('10.') ||
         isCarrierNat ||

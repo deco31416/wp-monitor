@@ -161,7 +161,7 @@ Esto solo confirma configuracion; todavia no prueba driver o privilegios.
 Invoke-RestMethod http://127.0.0.1:4000/api/network/interfaces
 ```
 
-Con `DASHBOARD_TOKEN`, agrega la cabecera Bearer. Debe aparecer al menos la interfaz activa con una direccion que coincida con la red del equipo.
+Ejecuta la consulta desde el dashboard autenticado o con una cookie de sesion obtenida por el flujo de login. Debe aparecer al menos la interfaz activa con una direccion que coincida con la red del equipo.
 
 ### 3. Prueba de primer paquete
 
@@ -180,7 +180,7 @@ No uses una llamada hasta superar esta prueba. Si la captura general no ve paque
 
 | Sintoma | Causa probable | Accion |
 | --- | --- | --- |
-| `cap` no carga | Binding/DLL/Node incompatible | Reinstalar deps, `pnpm rebuild cap`, revisar Node 20 x64 |
+| `cap` no carga | Binding/DLL/Node incompatible | Reinstalar deps, `pnpm rebuild cap`, revisar Node 24.19 x64 y el parche local |
 | Interfaces vacias | Driver ausente o permiso | Verificar Npcap/libpcap y ejecutar elevado |
 | Interfaz aparece, cero paquetes | NIC incorrecta, VPN o firewall | Comparar IP local y probar otra interfaz |
 | Access denied | Restriccion admin/capability | Elevar solo proceso autorizado |

@@ -5,6 +5,7 @@ import {
     listCases,
     updateCase,
     closeCase,
+    getActiveTrackingSessions,
     getCaseEvidenceLinks,
     saveAuditEvent,
 } from '../db.js';
@@ -20,6 +21,13 @@ import {
 } from '../validation.js';
 
 export function registerCaseRoutes(app: express.Express) {
+
+    async function activeTrackingState(caseId: string, nextStatus?: string): Promise<'allowed' | 'conflict' | 'unavailable'> {
+        if (!nextStatus || nextStatus === 'active') return 'allowed';
+        const activeSessions = await getActiveTrackingSessions(caseId);
+        if (activeSessions === null) return 'unavailable';
+        return activeSessions.length > 0 ? 'conflict' : 'allowed';
+    }
 
     app.get('/api/cases', async (req, res) => {
         const limit = parseLimit(req.query.limit, 50, 200);
@@ -101,6 +109,19 @@ export function registerCaseRoutes(app: express.Express) {
         const status = parseCaseStatus(body.status);
         if (status) patch.status = status;
 
+        const trackingState = await activeTrackingState(caseIdResult.value!, patch.status);
+        if (trackingState === 'unavailable') {
+            res.status(503).json({ error: 'Tracking session persistence is unavailable' });
+            return;
+        }
+        if (trackingState === 'conflict') {
+            res.status(409).json({
+                error: 'Case status cannot change while it has active tracking sessions',
+                caseId: caseIdResult.value!,
+            });
+            return;
+        }
+
         const updated = await updateCase(caseIdResult.value!, patch);
         if (!updated) {
             res.status(404).json({ error: 'Case not found or database unavailable' });
@@ -126,6 +147,19 @@ export function registerCaseRoutes(app: express.Express) {
             validationError(res, caseIdResult.errors || []);
             return;
         }
+        const trackingState = await activeTrackingState(caseIdResult.value!, 'closed');
+        if (trackingState === 'unavailable') {
+            res.status(503).json({ error: 'Tracking session persistence is unavailable' });
+            return;
+        }
+        if (trackingState === 'conflict') {
+            res.status(409).json({
+                error: 'Case cannot be closed while it has active tracking sessions',
+                caseId: caseIdResult.value!,
+            });
+            return;
+        }
+
         const updated = await closeCase(caseIdResult.value!);
         if (!updated) {
             res.status(404).json({ error: 'Case not found or database unavailable' });

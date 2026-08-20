@@ -1,8 +1,27 @@
 packages:
   - client
 
-onlyBuiltDependencies:
-  - baileys
-  - cap
-  - esbuild
-  - protobufjs
+nodeVersion: 24.19.0
+engineStrict: true
+
+overrides:
+  '@babel/core': ^7.29.6
+  flatted: ^3.4.2
+  nanoid: 3.3.18
+  path-to-regexp: ^8.4.0
+  picomatch: ^4.0.4
+  postcss: ^8.5.10
+  qs: ^6.15.2
+  rolldown: 1.2.4
+  socket.io-parser: ^4.2.6
+  ws: ^8.21.0
+  yaml: ^1.10.3
+
+allowBuilds:
+  baileys: true
+  cap: true
+  esbuild: true
+  protobufjs: true
+
+patchedDependencies:
+  cap@0.2.1: patches/cap@0.2.1.patch

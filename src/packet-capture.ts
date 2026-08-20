@@ -19,6 +19,8 @@ import {
     type CandidateProvider,
     type NetworkIntelligenceCategory,
 } from './call-scoring.js';
+import { closeCaptureSessionIfOpened } from './capture-lifecycle.js';
+import { hasPacketCapturePrivileges } from './capture-permissions.js';
 
 const geoip = (geoipModule as any)?.default ?? geoipModule as any;
 
@@ -115,12 +117,12 @@ const dstIpCounts = new Map<string, number>();
 // Callback for emitting packets
 let onPacket: ((packet: PacketMeta) => void) | null = null;
 
-function resetCaptureState() {
-    try {
-        capSession?.close();
-    } catch (err) {
-        console.error('[CAPTURE] Error closing capture session:', err);
-    }
+function resetCaptureState(closeOpenedSession = true) {
+    closeCaptureSessionIfOpened(
+        capSession,
+        closeOpenedSession,
+        err => console.error('[CAPTURE] Error closing capture session:', err),
+    );
     capSession = null;
     isCapturing = false;
     onPacket = null;
@@ -360,7 +362,12 @@ export function startCapture(
         console.log('[CAPTURE] Already capturing, stop first');
         return false;
     }
+    if (!hasPacketCapturePrivileges()) {
+        console.error('[CAPTURE] Capture requires CAP_NET_RAW on Linux');
+        return false;
+    }
 
+    let captureOpened = false;
     try {
         capSession = new Cap();
         captureFilter = filter;
@@ -391,7 +398,7 @@ export function startCapture(
         const device = findDevice(interfaceAddress);
         if (!device) {
             console.error('[CAPTURE] Could not find network device for:', interfaceAddress);
-            resetCaptureState();
+            resetCaptureState(false);
             return false;
         }
 
@@ -400,6 +407,7 @@ export function startCapture(
         const buffer = Buffer.alloc(snapLen);
 
         capSession.open(device, bpfFilter, bufSize, buffer);
+        captureOpened = true;
         capSession.setMinBytes && capSession.setMinBytes(0);
 
         const linkType = capSession.linkType;
@@ -477,7 +485,7 @@ export function startCapture(
         return true;
     } catch (err) {
         console.error('[CAPTURE] Failed to start:', err);
-        resetCaptureState();
+        resetCaptureState(captureOpened);
         return false;
     }
 }

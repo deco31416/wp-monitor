@@ -1,34 +1,40 @@
-export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
-
-const TOKEN_KEY = 'dat_dashboard_token';
-
-export function getDashboardToken(): string {
-    return localStorage.getItem(TOKEN_KEY) || '';
+function resolveDefaultApiUrl(): string {
+    if (typeof window === 'undefined') return 'http://localhost:4000';
+    return `${window.location.protocol}//${window.location.hostname}:4000`;
 }
 
-export function setDashboardToken(token: string) {
-    const trimmed = token.trim();
-    if (trimmed) localStorage.setItem(TOKEN_KEY, trimmed);
-    else localStorage.removeItem(TOKEN_KEY);
+export const API_URL = (import.meta.env.VITE_API_URL || resolveDefaultApiUrl()).replace(/\/+$/, '');
+export const AUTH_UNAUTHORIZED_EVENT = 'wp-monitor:auth-unauthorized';
+
+export interface AuthSessionResponse {
+    authenticated: boolean;
+    username?: string;
+    expiresAt?: string;
+    error?: string;
+    code?: string;
 }
 
-export function clearDashboardToken() {
-    localStorage.removeItem(TOKEN_KEY);
+export function clearLegacyDashboardToken(): void {
+    localStorage.removeItem('dat_dashboard_token');
 }
 
-export function authHeaders(headers?: HeadersInit): HeadersInit {
-    const token = getDashboardToken();
-    return {
-        ...(headers || {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-}
-
-export function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-    return fetch(input, {
+export async function sessionFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`${API_URL}${path}`, {
         ...init,
-        headers: authHeaders(init.headers),
+        credentials: 'include',
+        cache: 'no-store',
     });
+}
+
+export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+    const response = await fetch(input, {
+        ...init,
+        credentials: 'include',
+    });
+    if (response.status === 401) {
+        window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    }
+    return response;
 }
 
 export async function downloadAuthenticatedFile(url: string, fallbackFilename: string): Promise<void> {

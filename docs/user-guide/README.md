@@ -11,6 +11,13 @@ Esta guia describe el recorrido operativo de WP MONITOR. Antes de utilizar datos
 | Network Monitor | Captura local, filtros, estadisticas e IP Tracker | [Red y llamadas](network-and-calls.md) |
 | Check-In | Solicitud consentida de datos tecnicos y GPS opcional | [Check-In, auditoria e informes](checkins-audit-reports.md) |
 | Audit Trail | Linea de tiempo, filtros y paquete de evidencia | [Check-In, auditoria e informes](checkins-audit-reports.md) |
+| Account | Cambiar usuario y/o contrasena del operador unico | Esta guia |
+
+## Acceso y cuenta
+
+La primera instalacion crea una sola cuenta desde los secretos de bootstrap. Inicia sesion con usuario y contrasena; el navegador no guarda la contrasena ni un token reutilizable en `localStorage`.
+
+En **Account** puedes cambiar usuario, contrasena o ambos. Debes confirmar la contrasena actual. Al guardar, todas las sesiones HTTP y Socket.IO anteriores quedan revocadas y la sesion actual recibe una cookie nueva. Los valores `INITIAL_ADMIN_*` no restablecen posteriormente la cuenta.
 
 ## Secuencia operativa recomendada
 
@@ -31,7 +38,7 @@ flowchart LR
 
 ## Reglas de lectura
 
-- `Online`, `Standby` y `Offline` son clasificaciones sobre muestras RTT.
+- `Online` y `Standby` son clasificaciones heuristicas sobre muestras RTT; `Calibrando` indica que aun no hay historial suficiente; `Sin ACK` significa que el probe no obtuvo confirmacion y no prueba que el contacto este desconectado; `Sin clasificar` conserva estados historicos o inesperados sin contarlos falsamente como Standby.
 - `Escribiendo`, `Grabando` y estados de llamada son eventos efimeros disponibles para la sesion, no una vigilancia continua garantizada.
 - El prefijo telefonico indica numeracion, no ubicacion actual.
 - Una IP candidata conserva un score tecnico y limitaciones; no identifica por si sola al contacto.

@@ -25,6 +25,21 @@ stateDiagram-v2
     revoked --> [*]
 ```
 
+## Sesion de tracking
+
+```mermaid
+stateDiagram-v2
+    [*] --> active: autorizacion persistida
+    active --> stopped: operador detiene
+    active --> interrupted: caso deja de ser valido al restaurar
+    active --> failed: tracker no inicia o no puede restaurarse
+    stopped --> [*]
+    interrupted --> [*]
+    failed --> [*]
+```
+
+Un caso con una sesion `active` no puede cerrarse ni pasar a un estado no activo. Una nueva reactivacion crea otra sesion con metadata de autorizacion vigente.
+
 ## Captura
 
 ```mermaid

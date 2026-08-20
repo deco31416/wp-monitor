@@ -24,6 +24,7 @@ flowchart TB
 
     subgraph Persistence[Persistencia]
       Mongo[(MongoDB)]
+      Redis[(Redis sessions y counters)]
       Session[(Sesion Baileys)]
       Uploads[(Uploads publicos)]
     end
@@ -37,6 +38,8 @@ flowchart TB
     SocketServer --> Capture
     Baileys --> Tracking
     Tracking --> Mongo
+    Express --> Redis
+    SocketServer --> Redis
     Reporting --> Mongo
     Baileys <--> Session
     Express <--> Uploads
@@ -46,7 +49,7 @@ flowchart TB
 
 - REST reconstruye estado durable y ejecuta CRUD/exportaciones.
 - Socket.IO reduce latencia de QR, presencia, llamadas, captura y Check-In.
-- MongoDB conserva entidades; Socket.IO no reemplaza persistencia.
+- MongoDB conserva entidades e identidad; Redis conserva sesiones y contadores; Socket.IO no reemplaza persistencia.
 - Sesion y uploads necesitan volumenes separados en filesystem efimero.
 
 ## Riesgo arquitectonico

@@ -1,9 +1,9 @@
 {
   "name": "@deco31416/wp-monitor",
   "version": "2.9.4",
-  "packageManager": "pnpm@10.12.1",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=24.19.0 <25"
   },
   "type": "module",
   "description": "WP MONITOR: authorized WhatsApp activity research, network metadata analysis, case auditing, and evidence reporting",
@@ -34,20 +34,28 @@
   },
   "homepage": "https://github.com/deco31416/wp-monitor#readme",
   "scripts": {
+    "check:runtime": "node scripts/verify-node-version.mjs",
+    "preinstall": "node scripts/verify-node-version.mjs",
     "build": "tsc",
     "build:all": "pnpm run build && pnpm --dir client run build",
+    "typecheck": "tsc --noEmit && pnpm --dir client run typecheck",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "test": "pnpm run test:unit && pnpm run test:client",
     "test:unit": "tsx --test test/*.test.ts",
-    "test:client": "pnpm --dir client exec react-scripts test --watchAll=false",
+    "test:client": "pnpm --dir client run test",
+    "lint": "pnpm --dir client run lint",
+    "qa": "pnpm run typecheck && pnpm run typecheck:test && pnpm run lint && pnpm run test && pnpm run build:all",
     "qa:report-fixture": "tsx scripts/generate-report-fixture.ts",
     "start": "node dist/server.js",
-    "start:server": "npx tsx src/server.ts",
+    "start:server": "pnpm exec tsx src/server.ts",
     "start:client": "pnpm --dir client start",
-    "dev": "npx tsx src/server.ts",
-    "dev:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Start -NoBrowser"
+    "dev": "pnpm exec tsx src/server.ts",
+    "dev:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Start"
   },
   "dependencies": {
     "@hapi/boom": "9.1.4",
-    "@whiskeysockets/baileys": "github:WhiskeySockets/Baileys#0af2386292907f7d9742d8d41f830d8c48208fa1",
+    "@redis/client": "6.2.1",
+    "baileys": "7.0.0-rc14",
     "cap": "^0.2.1",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
@@ -64,39 +72,6 @@
     "tailwindcss": "^3.4.18",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2"
-  },
-  "pnpm": {
-    "overrides": {
-      "@babel/core": "^7.29.6",
-      "@babel/plugin-transform-modules-systemjs": "^7.29.4",
-      "@tootallnate/once": "^2.0.1",
-      "brace-expansion": "^2.0.2",
-      "fast-uri": "^3.1.2",
-      "flatted": "^3.4.2",
-      "follow-redirects": "^1.16.0",
-      "form-data": "^3.0.5",
-      "http-proxy-middleware": "^2.0.10",
-      "jsonpath": "^1.3.0",
-      "js-yaml": "^4.2.0",
-      "launch-editor": "^2.14.1",
-      "lodash": "^4.18.1",
-      "node-forge": "^1.3.4",
-      "nth-check": "^2.0.1",
-      "path-to-regexp": "^8.4.0",
-      "picomatch": "^4.0.4",
-      "postcss": "^8.5.10",
-      "qs": "^6.15.2",
-      "serialize-javascript": "^7.0.3",
-      "shell-quote": "^1.8.4",
-      "socket.io-parser": "^4.2.6",
-      "tar": "^7.5.11",
-      "underscore": "^1.13.8",
-      "uuid": "^11.1.1",
-      "webpack-dev-server": "^4.15.2",
-      "ws": "^8.21.0",
-      "yaml": "^1.10.3",
-      "resolve-url-loader>postcss": "^8.5.10"
-    }
   },
   "private": true
 }

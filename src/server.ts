@@ -13,24 +13,41 @@ import { createServer } from 'http';
 import { existsSync, readFileSync } from 'fs';
 import { mkdir, rename, rm, writeFile } from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import makeWASocket, { DisconnectReason, getAllBinaryNodeChildren, useMultiFileAuthState, type BinaryNode } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, getAllBinaryNodeChildren, useMultiFileAuthState, type BinaryNode } from 'baileys';
 import { pino } from 'pino';
 import { Boom } from '@hapi/boom';
-import { WhatsAppTracker, ProbeMethod } from './tracker.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActiveContacts, getActivityHistory, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, CheckInDoc } from './db.js';
-import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV, CaptureFilter, PacketMeta } from './packet-capture.js';
+import { WhatsAppTracker } from './tracker.js';
+import type { ProbeMethod } from './tracker.js';
+import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import type { CheckInDoc, TrackingSessionDoc } from './db.js';
+import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
+import type { CaptureFilter, PacketMeta } from './packet-capture.js';
 import { initAnalytics, getFullIntelligence, getDailyRoutine, getAvailabilityProfile, getSessionStats, getWeeklyHeatmap, getHabitProfile, getCorrelation } from './analytics.js';
 import { startCallCapture, stopCallCapture, getCallCaptureStatus, getCallAnalysisHistory, getLatestCallAnalysis, autoDetectInterface } from './call-analyzer.js';
 import { enrichCallAnalysis, lookupIpEnrichment } from './ip-enrichment.js';
-import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, normalizeCheckInSubmission, renderCheckInPage } from './check-in.js';
+import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, hasValidCheckInLocation, normalizeCheckInSubmission, renderCheckInPage } from './check-in.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerCaseRoutes } from './routes/cases.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerRuntimeRoutes, sendCaptureUnavailableIfNeeded } from './routes/runtime.js';
-import { buildRuntimeConfig, resolveTrustProxy, validateProductionSecurity } from './runtime.js';
+import {
+    buildCapturePrivilegeUnavailablePayload,
+    buildRuntimeConfig,
+    resolveTrustProxy,
+    validateProductionSecurity,
+} from './runtime.js';
+import { hasPacketCapturePrivileges } from './capture-permissions.js';
 import { CASE_STATUSES, cleanText, normalizeOptionalJid, parseLimit, socketValidationError, validateCaseId, validateJid, validateRequiredText, validationError } from './validation.js';
+import { MemoryFixedWindowRateLimitStore, RedisFixedWindowRateLimitStore } from './rate-limit.js';
+import { buildRedisConfig, RedisService } from './redis.js';
+import { createPublicCheckInSubmitRateLimitGuard, getClientIp } from './check-in-rate-limit.js';
+import { extractCookieValue, getSessionCookieName, isTrustedRequestOrigin } from './access-control.js';
+import { OperatorAuthService } from './operator-auth.js';
+import { createApiOriginGuard, createApiSessionGuard, registerAuthRoutes } from './routes/auth.js';
 
 const originalConsoleLog = console.log.bind(console);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -102,17 +119,59 @@ const PORT = parsePositiveInteger(process.env.PORT || process.env.BACKEND_PORT, 
 const RUNTIME_CONFIG = buildRuntimeConfig(process.env);
 const DEPLOYMENT_MODE = RUNTIME_CONFIG.deploymentMode;
 const LOCAL_CAPTURE_ENABLED = RUNTIME_CONFIG.localCaptureEnabled;
-const DASHBOARD_TOKEN = (process.env.DASHBOARD_TOKEN || '').trim();
+const LEGACY_DASHBOARD_TOKEN = (process.env.DASHBOARD_TOKEN || '').trim();
 const ENABLE_SWAGGER = process.env.ENABLE_SWAGGER === 'true' && NODE_ENV !== 'production';
 const TRUST_PROXY = resolveTrustProxy(process.env);
 const APP_VERSION = process.env.npm_package_version || '2.9.1';
 const CHECKIN_SUBMIT_RATE_WINDOW_MS = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_WINDOW_MS, 10 * 60_000, 60_000);
 const CHECKIN_SUBMIT_RATE_MAX_PER_IP = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_MAX_PER_IP, 60);
 const CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP, 8);
+const REDIS_CONFIG = buildRedisConfig(process.env);
+const AUTH_IDENTITY_SECRET = (process.env.AUTH_IDENTITY_SECRET || LEGACY_DASHBOARD_TOKEN || `${REDIS_CONFIG.keyPrefix}:development-only-auth-identity-secret`).trim();
+const INITIAL_ADMIN_USERNAME = (process.env.INITIAL_ADMIN_USERNAME || 'admin').trim();
+const INITIAL_ADMIN_PASSWORD = process.env.INITIAL_ADMIN_PASSWORD || LEGACY_DASHBOARD_TOKEN;
+const AUTH_SESSION_TTL_SECONDS = Math.min(7 * 24 * 3600, parsePositiveInteger(process.env.AUTH_SESSION_TTL_SECONDS, 8 * 3600, 300));
+const AUTH_PASSWORD_VERIFY_CONCURRENCY = Math.min(4, parsePositiveInteger(process.env.AUTH_PASSWORD_VERIFY_CONCURRENCY, 1));
+const AUTH_LOGIN_RATE_WINDOW_MS = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_WINDOW_MS, 15 * 60_000, 60_000);
+const AUTH_LOGIN_RATE_MAX_PER_IP = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_IP, 50);
+const AUTH_LOGIN_RATE_MAX_PER_USERNAME = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_USERNAME, 50);
+const AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP, 10);
+const SECURE_AUTH_COOKIES = NODE_ENV === 'production';
+const RATE_LIMIT_IDENTITY_SECRET = AUTH_IDENTITY_SECRET;
+const redisService = new RedisService(REDIS_CONFIG);
+const publicCheckInRateLimitStore = REDIS_CONFIG.configured
+    ? new RedisFixedWindowRateLimitStore(redisService, REDIS_CONFIG.keyPrefix)
+    : new MemoryFixedWindowRateLimitStore();
+const enforcePublicCheckInSubmitRateLimit = createPublicCheckInSubmitRateLimitGuard({
+    store: publicCheckInRateLimitStore,
+    identitySecret: RATE_LIMIT_IDENTITY_SECRET,
+    windowMs: CHECKIN_SUBMIT_RATE_WINDOW_MS,
+    maxPerIp: CHECKIN_SUBMIT_RATE_MAX_PER_IP,
+    maxPerTokenIp: CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP,
+});
+const operatorAuthService = new OperatorAuthService({
+    getPrimaryOperator,
+    findOperatorByNormalizedUsername,
+    createPrimaryOperator,
+    updatePrimaryOperatorCredentials,
+    recordPrimaryOperatorLogin,
+}, redisService, new RedisFixedWindowRateLimitStore(redisService, REDIS_CONFIG.keyPrefix), {
+    keyPrefix: REDIS_CONFIG.keyPrefix,
+    identitySecret: AUTH_IDENTITY_SECRET,
+    sessionTtlSeconds: AUTH_SESSION_TTL_SECONDS,
+    passwordVerifyConcurrency: AUTH_PASSWORD_VERIFY_CONCURRENCY,
+    loginRateLimit: {
+        windowMs: AUTH_LOGIN_RATE_WINDOW_MS,
+        maxPerIp: AUTH_LOGIN_RATE_MAX_PER_IP,
+        maxPerUsername: AUTH_LOGIN_RATE_MAX_PER_USERNAME,
+        maxPerUsernameIp: AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP,
+    },
+});
 
 const SERVICE_TAG = '[WP-MONITOR]';
 let dbAvailableForStartupAudit = false;
 let serverListeningForStartupAudit = false;
+let startupInitializationComplete = false;
 let startupAuditRecorded = false;
 
 function bootLog(level: 'ok' | 'warn' | 'error' | 'info', message: string) {
@@ -141,17 +200,40 @@ function logStartupConfiguration() {
         isConfigured(process.env.MONGODB_URI)
             ? 'MongoDB: configured'
             : 'MONGODB_URI missing - persistence disabled');
+    bootLog(REDIS_CONFIG.configured ? 'ok' : 'error',
+        REDIS_CONFIG.configured
+            ? 'Redis: configured for sessions and shared rate limiting'
+            : 'REDIS_URL missing - authentication cannot start');
     bootLog(ENABLE_SWAGGER ? 'warn' : 'ok',
         ENABLE_SWAGGER ? 'Swagger: enabled at /docs' : 'Swagger: disabled');
     bootLog('ok', `CORS origins loaded: ${ALLOWED_ORIGINS.length}`);
-    bootLog(DASHBOARD_TOKEN ? 'ok' : NODE_ENV === 'production' ? 'error' : 'warn',
-        DASHBOARD_TOKEN
-            ? 'Internal API guard: enabled'
-            : 'DASHBOARD_TOKEN missing - dashboard/API guard disabled');
+    bootLog('ok', 'Single-operator authentication: enabled');
+    bootLog(SECURE_AUTH_COOKIES ? 'ok' : 'warn',
+        SECURE_AUTH_COOKIES
+            ? 'Authentication cookies: Secure, HttpOnly, SameSite=Strict'
+            : 'Authentication cookies: local HTTP development mode');
     bootLog('info', `Deployment mode: ${DEPLOYMENT_MODE}`);
     bootLog('info', `Trust proxy: ${String(TRUST_PROXY)}`);
     bootLog(LOCAL_CAPTURE_ENABLED ? 'warn' : 'ok',
         LOCAL_CAPTURE_ENABLED ? 'Local capture: enabled' : 'Local capture: disabled');
+    if (LOCAL_CAPTURE_ENABLED) {
+        bootLog(hasPacketCapturePrivileges() ? 'ok' : 'warn',
+            hasPacketCapturePrivileges()
+                ? 'Packet capture privileges: available'
+                : 'Packet capture privileges: missing CAP_NET_RAW');
+    }
+}
+
+async function initializeRedis(): Promise<boolean> {
+    if (!REDIS_CONFIG.configured) return false;
+    try {
+        await redisService.ping();
+        bootLog('ok', 'Redis connected');
+        return true;
+    } catch {
+        bootLog('error', 'Redis unavailable - authentication and public Check-In submissions fail closed');
+        return false;
+    }
 }
 
 const startupSecurityErrors = validateProductionSecurity(process.env);
@@ -164,7 +246,7 @@ if (startupSecurityErrors.length > 0) {
 }
 
 async function tryRecordStartupAudit() {
-    if (startupAuditRecorded || !serverListeningForStartupAudit) return;
+    if (startupAuditRecorded || !serverListeningForStartupAudit || !startupInitializationComplete) return;
     startupAuditRecorded = true;
 
     if (!dbAvailableForStartupAudit) {
@@ -187,7 +269,7 @@ async function tryRecordStartupAudit() {
                 localCapture: LOCAL_CAPTURE_ENABLED,
                 swaggerEnabled: ENABLE_SWAGGER,
                 corsOriginsLoaded: ALLOWED_ORIGINS.length,
-                dashboardGuardEnabled: !!DASHBOARD_TOKEN,
+                authenticationMode: 'single-operator-session',
                 developedBy: 'WP MONITOR',
             },
         });
@@ -201,19 +283,17 @@ logStartupBanner();
 
 const app = express();
 app.set('trust proxy', TRUST_PROXY);
-app.use(cors({ origin: ALLOWED_ORIGINS }));
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    next();
+});
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '3mb' }));
 app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
-
-function extractAuthToken(req: express.Request): string {
-    const auth = req.headers.authorization || '';
-    if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
-    return '';
-}
-
-function isAuthorizedToken(token: string): boolean {
-    return !DASHBOARD_TOKEN || token === DASHBOARD_TOKEN;
-}
 
 function buildOpenApiDocument() {
     return {
@@ -225,6 +305,7 @@ function buildOpenApiDocument() {
         },
         servers: [{ url: `http://localhost:${PORT}` }],
         tags: [
+            { name: 'Authentication' },
             { name: 'Runtime' },
             { name: 'Cases' },
             { name: 'Audit' },
@@ -237,14 +318,84 @@ function buildOpenApiDocument() {
         ],
         components: {
             securitySchemes: {
-                bearerAuth: {
-                    type: 'http',
-                    scheme: 'bearer',
+                sessionCookie: {
+                    type: 'apiKey',
+                    in: 'cookie',
+                    name: getSessionCookieName(SECURE_AUTH_COOKIES),
                 },
             },
         },
-        security: DASHBOARD_TOKEN ? [{ bearerAuth: [] }] : [],
+        security: [{ sessionCookie: [] }],
         paths: {
+            '/api/auth/login': {
+                post: {
+                    tags: ['Authentication'],
+                    summary: 'Create an opaque single-operator session',
+                    security: [],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['username', 'password'],
+                                    properties: {
+                                        username: { type: 'string', minLength: 3, maxLength: 64 },
+                                        password: { type: 'string', format: 'password', minLength: 15, maxLength: 128 },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': { description: 'Secure session cookie created' },
+                        '401': { description: 'Invalid credentials' },
+                        '429': { description: 'Too many login attempts' },
+                        '503': { description: 'Authentication dependency unavailable' },
+                    },
+                },
+            },
+            '/api/auth/session': {
+                get: {
+                    tags: ['Authentication'],
+                    summary: 'Validate the current operator session',
+                    responses: { '200': { description: 'Session is valid' }, '401': { description: 'Session is absent, expired, or revoked' } },
+                },
+            },
+            '/api/auth/logout': {
+                post: {
+                    tags: ['Authentication'],
+                    summary: 'Revoke the current operator session',
+                    responses: { '204': { description: 'Session revoked' }, '403': { description: 'Untrusted request origin' } },
+                },
+            },
+            '/api/auth/credentials': {
+                put: {
+                    tags: ['Authentication'],
+                    summary: 'Change the single operator username and optionally the password',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['username', 'currentPassword'],
+                                    properties: {
+                                        username: { type: 'string', minLength: 3, maxLength: 64 },
+                                        currentPassword: { type: 'string', format: 'password' },
+                                        newPassword: { type: 'string', format: 'password', minLength: 15, maxLength: 128 },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': { description: 'Credentials updated, previous sessions revoked, and replacement cookie created' },
+                        '400': { description: 'Credential validation failed' },
+                        '401': { description: 'Session is stale or unauthorized' },
+                    },
+                },
+            },
             '/api/runtime-capabilities': {
                 get: {
                     tags: ['Runtime'],
@@ -446,7 +597,7 @@ function buildOpenApiDocument() {
                     summary: 'Submit explicit-consent check-in evidence',
                     security: [],
                     parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
-                    responses: { '200': { description: 'Check-in receipt' }, '400': { description: 'Consent required' }, '410': { description: 'Expired or revoked' }, '429': { description: 'Too many submit attempts' } },
+                    responses: { '200': { description: 'Check-in receipt' }, '400': { description: 'Consent required' }, '410': { description: 'Expired or revoked' }, '429': { description: 'Too many submit attempts' }, '503': { description: 'Shared rate-limit store unavailable' } },
                 },
             },
             '/api/report/{jid}/download': {
@@ -531,37 +682,74 @@ if (ENABLE_SWAGGER) {
     });
 }
 
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: ALLOWED_ORIGINS,
+        credentials: true,
+        methods: ['GET', 'POST'],
+    },
+});
+
+const authRouteOptions = {
+    authService: operatorAuthService,
+    allowedOrigins: ALLOWED_ORIGINS,
+    secureCookies: SECURE_AUTH_COOKIES,
+    onSessionRevoked: (sessionFingerprint: string) => {
+        for (const connectedSocket of io.sockets.sockets.values()) {
+            if (connectedSocket.data.authSessionFingerprint === sessionFingerprint) {
+                connectedSocket.disconnect(true);
+            }
+        }
+    },
+    onCredentialsChanged: () => {
+        io.disconnectSockets(true);
+    },
+    recordAudit: async (action: 'operator_login' | 'operator_logout' | 'operator_credentials_changed', username: string) => {
+        await saveAuditEvent({
+            caseId: 'SYSTEM-AUTH',
+            operatorName: username,
+            authorizationNote: 'Authenticated dashboard operator action',
+            action,
+            scope: 'system',
+            targetJid: null,
+        });
+    },
+};
+
+registerAuthRoutes(app, authRouteOptions);
+
+const apiSessionGuard = createApiSessionGuard(authRouteOptions);
 app.use('/api', (req, res, next) => {
     if (req.path === '/runtime-capabilities' || req.path === '/health') {
         next();
         return;
     }
-    if (!isAuthorizedToken(extractAuthToken(req))) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-    next();
+    apiSessionGuard(req, res, next);
 });
-
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-    cors: {
-        origin: ALLOWED_ORIGINS,
-        methods: ["GET", "POST"]
-    }
-});
+app.use('/api', createApiOriginGuard(ALLOWED_ORIGINS));
 
 io.use((socket, next) => {
-    const token = typeof socket.handshake.auth?.token === 'string'
-        ? socket.handshake.auth.token
-        : '';
-
-    if (!isAuthorizedToken(token)) {
-        next(new Error('Unauthorized'));
+    if (!isTrustedRequestOrigin(socket.handshake.headers.origin, ALLOWED_ORIGINS)) {
+        next(new Error('Unauthorized origin'));
         return;
     }
-
-    next();
+    const token = extractCookieValue(
+        socket.handshake.headers.cookie,
+        getSessionCookieName(SECURE_AUTH_COOKIES),
+    );
+    void operatorAuthService.authenticate(token).then(principal => {
+        if (!principal) {
+            next(new Error('Unauthorized'));
+            return;
+        }
+        socket.data.authSessionFingerprint = principal.sessionFingerprint;
+        socket.data.authSessionExpiresAt = principal.expiresAt;
+        socket.data.operatorUsername = principal.username;
+        next();
+    }).catch(() => {
+        next(new Error('Authentication service unavailable'));
+    });
 });
 
 let sock: any;
@@ -575,6 +763,7 @@ let autoRestoreTimer: NodeJS.Timeout | null = null;
 
 interface TrackerEntry {
     tracker: WhatsAppTracker;
+    trackingSession: TrackingSessionDoc;
 }
 
 const trackers: Map<string, TrackerEntry> = new Map(); // JID -> Tracker entry
@@ -623,7 +812,17 @@ let activeCallAuditContext: (CaptureAuditContext & { targetJid: string; callId: 
 const liveSignalExpiryTimers = new Map<string, NodeJS.Timeout>();
 
 function rejectCaptureUnavailable(res: express.Response): boolean {
-    return sendCaptureUnavailableIfNeeded(RUNTIME_CONFIG, res);
+    return sendCaptureUnavailableIfNeeded(RUNTIME_CONFIG, res, hasPacketCapturePrivileges());
+}
+
+function emitCapturePrivilegeUnavailable(socket: { emit: (event: string, payload: unknown) => unknown }): void {
+    const payload = buildCapturePrivilegeUnavailablePayload();
+    socket.emit('error', {
+        status: 503,
+        message: payload.error,
+        code: payload.code,
+        hint: payload.hint,
+    });
 }
 
 function parseCaptureAuditContext(data: any): CaptureAuditContext | null {
@@ -663,15 +862,29 @@ async function checkCaseCanCapture(context: CaptureAuditContext): Promise<{ ok: 
     }
 
     if (!existing) {
-        await createCase({
+        const created = await createCase({
             caseId: context.caseId,
             title: context.caseId,
             status: 'active',
             primaryOperator: context.operatorName,
             authorizationNote: context.authorizationNote,
         });
+        if (!created) {
+            return {
+                ok: false,
+                status: 503,
+                payload: { error: 'Case persistence is unavailable; authorized operations cannot start' },
+            };
+        }
     } else if (existing.status === 'draft' || existing.status === 'authorized') {
-        await updateCase(context.caseId, { status: 'active' });
+        const activated = await updateCase(context.caseId, { status: 'active' });
+        if (!activated) {
+            return {
+                ok: false,
+                status: 503,
+                payload: { error: 'Case could not be activated because persistence is unavailable' },
+            };
+        }
     }
 
     return { ok: true };
@@ -723,10 +936,6 @@ function resolveLidToPhoneJid(candidate: string): string | null {
     } catch {
         return null;
     }
-}
-
-function signalAgeMs(signal?: LiveSignal): number | null {
-    return signal ? Math.max(0, Date.now() - signal.timestamp) : null;
 }
 
 function formatPresenceLabel(value: string): string {
@@ -841,9 +1050,9 @@ function installRawCallNodeMonitor(socket: any) {
     });
 }
 
-function shouldPersistActivitySignal(jid: string, signal: LiveSignal): boolean {
+function shouldPersistActivitySignal(jid: string, trackingSessionId: string, signal: LiveSignal): boolean {
     if (signal.source === 'rtt_probe' || signal.source === 'system') return false;
-    const keyParts = [jid, signal.source, signal.value];
+    const keyParts = [trackingSessionId, jid, signal.source, signal.value];
     const details = signal.details || {};
     if (signal.source === 'message' && details.messageId) keyParts.push(String(details.messageId));
     if (signal.source === 'call' && details.callId) keyParts.push(String(details.callId));
@@ -863,14 +1072,18 @@ function shouldPersistActivitySignal(jid: string, signal: LiveSignal): boolean {
 }
 
 function persistObservedActivitySignal(jid: string, signal: LiveSignal) {
-    if (!shouldPersistActivitySignal(jid, signal)) return;
+    const trackingSession = trackers.get(jid)?.trackingSession;
+    if (!trackingSession) return;
+    if (!shouldPersistActivitySignal(jid, trackingSession.trackingSessionId, signal)) return;
     saveActivityEvent({
+        caseId: trackingSession.caseId,
+        trackingSessionId: trackingSession.trackingSessionId,
         jid,
         source: signal.source,
         type: signal.value,
         label: signal.label,
         confidence: signal.confidence,
-        details: signal.details,
+        ...(signal.details !== undefined ? { details: signal.details } : {}),
         timestamp: signal.timestamp,
     }).catch(err => console.error('[ACTIVITY] Failed to persist observed activity:', err));
 }
@@ -967,7 +1180,7 @@ function buildContactLiveState(jid: string): ContactLiveState {
         explanation = 'Presence reporto unavailable; puede estar limitado por privacidad o caducidad de presencia.';
     } else if (rtt) {
         selected = rtt;
-        explanation = rtt.value === 'OFFLINE'
+        explanation = isNoAckState(rtt.value)
             ? 'El probe RTT no recibio ACK. Esto es no concluyente y no prueba desconexion real.'
             : 'Estado inferido por RTT/probe; menor prioridad que presence, mensajes o llamadas.';
     }
@@ -1026,57 +1239,6 @@ async function linkEvidenceToCase(
     });
 }
 
-function getClientIp(req: express.Request): string {
-    return String(req.ip || req.socket.remoteAddress || '').trim().replace(/^::ffff:/, '') || 'unknown';
-}
-
-interface RateLimitBucket {
-    count: number;
-    resetAt: number;
-}
-
-const publicCheckInSubmitBuckets = new Map<string, RateLimitBucket>();
-
-function consumeRateLimit(key: string, max: number, windowMs: number): { ok: true } | { ok: false; retryAfterSeconds: number } {
-    const now = Date.now();
-    if (publicCheckInSubmitBuckets.size > 10_000) {
-        for (const [bucketKey, bucket] of publicCheckInSubmitBuckets) {
-            if (bucket.resetAt <= now) publicCheckInSubmitBuckets.delete(bucketKey);
-        }
-    }
-
-    const existing = publicCheckInSubmitBuckets.get(key);
-    if (!existing || existing.resetAt <= now) {
-        publicCheckInSubmitBuckets.set(key, { count: 1, resetAt: now + windowMs });
-        return { ok: true };
-    }
-
-    if (existing.count >= max) {
-        return {
-            ok: false,
-            retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
-        };
-    }
-
-    existing.count += 1;
-    return { ok: true };
-}
-
-function enforcePublicCheckInSubmitRateLimit(req: express.Request, res: express.Response, token: string): boolean {
-    const ip = getClientIp(req);
-    const ipResult = consumeRateLimit(`checkin-submit:ip:${ip}`, CHECKIN_SUBMIT_RATE_MAX_PER_IP, CHECKIN_SUBMIT_RATE_WINDOW_MS);
-    const tokenIpResult = consumeRateLimit(`checkin-submit:token:${token}:ip:${ip}`, CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP, CHECKIN_SUBMIT_RATE_WINDOW_MS);
-    const denied = ipResult.ok ? tokenIpResult : ipResult;
-
-    if (!denied.ok) {
-        res.setHeader('Retry-After', String(denied.retryAfterSeconds));
-        res.status(429).json({ error: 'Too many check-in submit attempts. Try again later.' });
-        return false;
-    }
-
-    return true;
-}
-
 function getPublicBaseUrl(req: express.Request): string {
     const configured = process.env.PUBLIC_BASE_URL?.trim();
     if (configured) return configured.replace(/\/+$/, '');
@@ -1093,10 +1255,31 @@ function parseImageDataUrl(value: unknown): { ext: string; buffer: Buffer } | nu
     if (typeof value !== 'string') return null;
     const match = value.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/);
     if (!match) return null;
-    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const buffer = Buffer.from(match[2], 'base64');
+    const [, rawExtension, encodedImage] = match;
+    if (!rawExtension || !encodedImage) return null;
+    const ext = rawExtension === 'jpeg' ? 'jpg' : rawExtension;
+    const buffer = Buffer.from(encodedImage, 'base64');
     if (buffer.length === 0 || buffer.length > 2 * 1024 * 1024) return null;
     return { ext, buffer };
+}
+
+function omitUndefinedFields<T extends object>(value: T): {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+} {
+    return Object.fromEntries(
+        Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined),
+    ) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
+function omitUndefinedJsonValues(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(omitUndefinedJsonValues);
+    if (typeof value !== 'object' || value === null) return value;
+
+    const result: Record<string, unknown> = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+        if (fieldValue !== undefined) result[key] = omitUndefinedJsonValues(fieldValue);
+    }
+    return result;
 }
 
 function cleanHexColor(value: unknown, fallback: string): string {
@@ -1151,7 +1334,7 @@ app.post('/api/checkins', async (req, res) => {
     const label = cleanText(req.body?.label, 160) || `Check-in ${new Date().toISOString()}`;
     const targetName = cleanText(req.body?.targetName, 160) || null;
     const pageTitle = cleanText(req.body?.pageTitle, 120) || 'Check-in autorizado';
-    const pageDescription = cleanText(req.body?.pageDescription, 260) || undefined;
+    const pageDescription = cleanText(req.body?.pageDescription, 260);
     const ogImageUrl = cleanText(req.body?.ogImageUrl, 1000) || null;
     const brandName = cleanText(req.body?.brandName, 80) || 'WP MONITOR';
     const accentColor = cleanHexColor(req.body?.accentColor, '#25d366');
@@ -1164,7 +1347,7 @@ app.post('/api/checkins', async (req, res) => {
     const operatorLabel = cleanText(req.body?.operatorLabel, 60) || 'Operador';
     const checkInLabel = cleanText(req.body?.checkInLabel, 60) || 'Etiqueta';
     const expiresLabel = cleanText(req.body?.expiresLabel, 60) || 'Vence';
-    const consentText = cleanText(req.body?.consentText, 1200) || undefined;
+    const consentText = cleanText(req.body?.consentText, 1200);
     const submitButtonText = cleanText(req.body?.submitButtonText, 80) || 'Aceptar y enviar check-in';
     const successMessage = cleanText(req.body?.successMessage, 180) || 'Check-in recibido. Hash de evidencia:';
     const redirectUrl = cleanOptionalUrl(req.body?.redirectUrl);
@@ -1256,7 +1439,7 @@ app.post('/api/checkins', async (req, res) => {
 app.get('/api/checkins', async (req, res) => {
     const caseIdResult: { ok: boolean; value?: string; errors?: string[] } = typeof req.query.caseId === 'string' && req.query.caseId.trim()
         ? validateCaseId(req.query.caseId)
-        : { ok: true, value: undefined };
+        : { ok: true };
     if (!caseIdResult.ok) {
         validationError(res, caseIdResult.errors || ['Invalid caseId']);
         return;
@@ -1345,7 +1528,7 @@ app.patch('/api/checkins/:token', async (req, res) => {
         patch.content = {
             ...existing.content,
             ...(req.body?.pageTitle !== undefined ? { pageTitle: pageTitle || 'Check-in autorizado' } : {}),
-            ...(req.body?.pageDescription !== undefined ? { pageDescription: pageDescription || undefined } : {}),
+            ...(req.body?.pageDescription !== undefined ? { pageDescription } : {}),
             ...(req.body?.ogImageUrl !== undefined ? { ogImageUrl: ogImageUrl || null } : {}),
             ...(req.body?.brandName !== undefined ? { brandName: brandName || 'WP MONITOR' } : {}),
             ...(req.body?.accentColor !== undefined ? { accentColor } : {}),
@@ -1358,7 +1541,7 @@ app.patch('/api/checkins/:token', async (req, res) => {
             ...(req.body?.operatorLabel !== undefined ? { operatorLabel: operatorLabel || 'Operador' } : {}),
             ...(req.body?.checkInLabel !== undefined ? { checkInLabel: checkInLabel || 'Etiqueta' } : {}),
             ...(req.body?.expiresLabel !== undefined ? { expiresLabel: expiresLabel || 'Vence' } : {}),
-            ...(req.body?.consentText !== undefined ? { consentText: consentText || undefined } : {}),
+            ...(req.body?.consentText !== undefined ? { consentText } : {}),
             ...(req.body?.submitButtonText !== undefined ? { submitButtonText: submitButtonText || 'Aceptar y enviar check-in' } : {}),
             ...(req.body?.successMessage !== undefined ? { successMessage: successMessage || 'Check-in recibido. Hash de evidencia:' } : {}),
             ...(req.body?.redirectUrl !== undefined ? { redirectUrl } : {}),
@@ -1457,7 +1640,7 @@ app.get('/checkin/:token', async (req, res) => {
 
 app.post('/public/checkin/:token/submit', async (req, res) => {
     const token = cleanText(req.params.token, 200);
-    if (!enforcePublicCheckInSubmitRateLimit(req, res, token || 'missing')) return;
+    if (!await enforcePublicCheckInSubmitRateLimit(req, res, token || 'missing')) return;
 
     const existing = token ? await getCheckInByToken(token) : null;
     if (!existing) {
@@ -1483,6 +1666,7 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
         res.status(400).json({ error: 'Explicit consent is required' });
         return;
     }
+    const hasGpsLocation = hasValidCheckInLocation(submission.location);
 
     const completedAt = new Date();
     const ip = getClientIp(req);
@@ -1498,29 +1682,60 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
             referer: cleanText(req.headers.referer, 500) || null,
         },
         browser: {
-            timezone: submission.browser?.timezone,
-            language: submission.browser?.language,
-            languages: submission.browser?.languages,
-            platform: submission.browser?.platform,
-            userAgentData: submission.browser?.userAgentData,
-            device: submission.browser?.device,
-            viewport: submission.browser?.viewport?.width && submission.browser.viewport.height
+            ...(submission.browser?.timezone !== undefined ? { timezone: submission.browser.timezone } : {}),
+            ...(submission.browser?.language !== undefined ? { language: submission.browser.language } : {}),
+            ...(submission.browser?.languages !== undefined ? { languages: submission.browser.languages } : {}),
+            ...(submission.browser?.platform !== undefined ? { platform: submission.browser.platform } : {}),
+            ...(submission.browser?.userAgentData !== undefined
                 ? {
+                    userAgentData: {
+                        ...(submission.browser.userAgentData.platform !== undefined
+                            ? { platform: submission.browser.userAgentData.platform }
+                            : {}),
+                        ...(submission.browser.userAgentData.mobile !== undefined
+                            ? { mobile: submission.browser.userAgentData.mobile }
+                            : {}),
+                        ...(submission.browser.userAgentData.brands !== undefined
+                            ? {
+                                brands: submission.browser.userAgentData.brands.map(brand => {
+                                    const normalizedBrand: { brand?: string; version?: string } = {};
+                                    if (brand.brand !== undefined) normalizedBrand.brand = brand.brand;
+                                    if (brand.version !== undefined) normalizedBrand.version = brand.version;
+                                    return normalizedBrand;
+                                }),
+                            }
+                            : {}),
+                    },
+                }
+                : {}),
+            ...(submission.browser?.device !== undefined
+                ? { device: omitUndefinedFields(submission.browser.device) }
+                : {}),
+            ...(submission.browser?.viewport?.width && submission.browser.viewport.height
+                ? { viewport: {
                     width: submission.browser.viewport.width,
                     height: submission.browser.viewport.height,
-                }
-                : undefined,
-            screen: submission.browser?.screen?.width && submission.browser.screen.height
-                ? {
+                } }
+                : {}),
+            ...(submission.browser?.screen?.width && submission.browser.screen.height
+                ? { screen: {
                     width: submission.browser.screen.width,
                     height: submission.browser.screen.height,
                     pixelRatio: submission.browser.screen.pixelRatio || 1,
-                    colorDepth: submission.browser.screen.colorDepth,
-                    orientation: submission.browser.screen.orientation,
-                }
-                : undefined,
-            network: submission.browser?.network,
-            privacy: submission.browser?.privacy,
+                    ...(submission.browser.screen.colorDepth !== undefined
+                        ? { colorDepth: submission.browser.screen.colorDepth }
+                        : {}),
+                    ...(submission.browser.screen.orientation !== undefined
+                        ? { orientation: submission.browser.screen.orientation }
+                        : {}),
+                } }
+                : {}),
+            ...(submission.browser?.network !== undefined
+                ? { network: omitUndefinedFields(submission.browser.network) }
+                : {}),
+            ...(submission.browser?.privacy !== undefined
+                ? { privacy: omitUndefinedFields(submission.browser.privacy) }
+                : {}),
         },
         consent: {
             accepted: true,
@@ -1529,16 +1744,22 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
         },
         location: {
             permission: submission.location?.permission || 'unavailable',
-            lat: submission.location?.lat,
-            lon: submission.location?.lon,
-            accuracy: submission.location?.accuracy,
-            altitude: submission.location?.altitude,
-            altitudeAccuracy: submission.location?.altitudeAccuracy,
-            heading: submission.location?.heading,
-            speed: submission.location?.speed,
-            capturedAt: submission.location?.capturedAt ? new Date(submission.location.capturedAt) : null,
+            ...(submission.location?.lat !== undefined ? { lat: submission.location.lat } : {}),
+            ...(submission.location?.lon !== undefined ? { lon: submission.location.lon } : {}),
+            ...(submission.location?.accuracy !== undefined ? { accuracy: submission.location.accuracy } : {}),
+            ...(submission.location?.altitude !== undefined ? { altitude: submission.location.altitude } : {}),
+            ...(submission.location?.altitudeAccuracy !== undefined
+                ? { altitudeAccuracy: submission.location.altitudeAccuracy }
+                : {}),
+            ...(submission.location?.heading !== undefined ? { heading: submission.location.heading } : {}),
+            ...(submission.location?.speed !== undefined ? { speed: submission.location.speed } : {}),
+            ...(submission.location?.capturedAt !== undefined
+                ? { capturedAt: new Date(submission.location.capturedAt) }
+                : {}),
         },
-        ipEnrichment: ipEnrichment as unknown as Record<string, unknown> | null,
+        ipEnrichment: ipEnrichment
+            ? omitUndefinedJsonValues(ipEnrichment) as Record<string, unknown>
+            : null,
     };
 
     const fullDoc = { ...existing, ...completed, updatedAt: completedAt } as CheckInDoc;
@@ -1561,7 +1782,7 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
         status: 'completed',
         completedAt: completedAt.toISOString(),
         ip,
-        hasGpsLocation: completed.location?.permission === 'granted',
+        hasGpsLocation,
         consistencyScore: completed.consistency?.score,
         consistencyLevel: completed.consistency?.level,
         hash: finalHash,
@@ -1571,7 +1792,7 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
         label: existing.label,
         ip,
         locationPermission: completed.location?.permission,
-        hasGpsLocation: completed.location?.permission === 'granted',
+        hasGpsLocation,
         ipEnrichmentStatus: ipEnrichment?.status || 'unavailable',
         consistencyScore: completed.consistency?.score,
         consistencyLevel: completed.consistency?.level,
@@ -1586,7 +1807,7 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
             caseId: existing.caseId,
             receivedAt: completedAt.toISOString(),
             ip,
-            hasLocation: completed.location?.permission === 'granted',
+            hasLocation: hasGpsLocation,
             hash: finalHash,
         },
     });
@@ -1796,6 +2017,11 @@ async function connectToWhatsApp() {
                     console.log('[CALL] Auto-capture skipped: DEFAULT_CASE_ID, DEFAULT_OPERATOR_NAME, and DEFAULT_AUTHORIZATION_NOTE are required');
                     continue;
                 }
+                const caseCheck = await checkCaseCanCapture(defaultContext);
+                if (!caseCheck.ok) {
+                    console.log(`[CALL] Auto-capture skipped: case ${defaultContext.caseId} is not available for capture`);
+                    continue;
+                }
                 const iface = autoDetectInterface();
                 if (iface) {
                     const started = startCallCapture(
@@ -1836,8 +2062,8 @@ async function connectToWhatsApp() {
                     console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(c => c.isP2P).length} direct-path candidates`);
                     io.emit('call-analysis', result);
                     // Persist to MongoDB
-                    await saveCallAnalysis(result);
                     if (stoppedCallAuditContext) {
+                        await saveCallAnalysis(result, stoppedCallAuditContext.caseId);
                         await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
                             callId: result.callId,
                             startedCallId: stoppedCallAuditContext.callId,
@@ -1855,30 +2081,90 @@ async function connectToWhatsApp() {
     });
 }
 
-// Initialize DB, Analytics, and WhatsApp
-(async () => {
+// Initialize persistence, authentication, analytics, and WhatsApp before listening.
+async function initializeApplication(): Promise<void> {
+    const redisReady = await initializeRedis();
+    if (!redisReady) throw new Error('Redis authentication dependency is unavailable');
+
     dbAvailableForStartupAudit = await connectDB();
+    if (!dbAvailableForStartupAudit) throw new Error('MongoDB authentication dependency is unavailable');
+
+    const bootstrap = await operatorAuthService.ensureBootstrap(
+        INITIAL_ADMIN_USERNAME,
+        INITIAL_ADMIN_PASSWORD,
+    );
+    bootLog('ok', bootstrap.created
+        ? 'Initial single-operator account created'
+        : 'Single-operator account loaded');
     await initAnalytics();
-    connectToWhatsApp();
-    await tryRecordStartupAudit();
-})();
+    void connectToWhatsApp().catch(() => {
+        bootLog('error', 'WhatsApp initialization failed');
+    });
+    startupInitializationComplete = true;
+    bootLog('ok', 'Startup initialization complete');
+}
+
+async function createTrackerEntry(
+    jid: string,
+    context: CaptureAuditContext,
+    probeMethod: ProbeMethod = globalProbeMethod,
+): Promise<TrackerEntry | null> {
+    const trackingSession = await createTrackingSession({
+        trackingSessionId: `tracking-${randomUUID()}`,
+        caseId: context.caseId,
+        jid,
+        operatorName: context.operatorName,
+        authorizationNote: context.authorizationNote,
+        probeMethod,
+    });
+    if (!trackingSession) return null;
+
+    const currentCase = await getCase(context.caseId);
+    if (!currentCase || currentCase.status !== 'active') {
+        await finishTrackingSession(
+            trackingSession.trackingSessionId,
+            'failed',
+            `tracker_start_blocked_case_${currentCase?.status || 'missing'}`,
+        );
+        return null;
+    }
+
+    const tracker = new WhatsAppTracker(sock, jid);
+    tracker.setProbeMethod(probeMethod);
+    const entry: TrackerEntry = { tracker, trackingSession };
+    trackers.set(jid, entry);
+    wireTrackerCallbacks(entry);
+
+    try {
+        await tracker.startTracking();
+        return entry;
+    } catch (err) {
+        trackers.delete(jid);
+        tracker.stopTracking();
+        await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'tracker_start_failed');
+        console.error(`[TRACKERS] Failed to start scoped session ${trackingSession.trackingSessionId}:`, err);
+        return null;
+    }
+}
 
 /**
  * Wire up standard callbacks for a tracker instance.
  * Centralizes onUpdate, onPresenceChange, onNewDevice logic.
  */
-function wireTrackerCallbacks(tracker: WhatsAppTracker, jid: string) {
+function wireTrackerCallbacks(entry: TrackerEntry) {
+    const { tracker, trackingSession } = entry;
+    const { jid, caseId, trackingSessionId } = trackingSession;
     tracker.onUpdate = (updateData) => {
         io.emit('tracker-update', { jid, ...updateData });
-        const devices = Array.isArray(updateData.devices) ? updateData.devices : [];
-        const primary = devices.find((d: any) => d.state?.includes?.('Online')) || devices[0];
+        const devices = updateData.devices;
+        const primary = selectPrimaryTrackerDevice(devices);
         const probeState = primary?.state;
         if (probeState) {
             updateLiveSignal(jid, {
                 source: 'rtt_probe',
                 value: String(probeState),
-                label: probeState === 'OFFLINE' ? 'Sin ACK' : String(probeState),
-                confidence: probeState === 'OFFLINE' ? 'low' : 'medium',
+                label: isNoAckState(probeState) ? 'Sin ACK' : String(probeState),
+                confidence: isNoAckState(probeState) ? 'low' : 'medium',
                 details: {
                     rtt: primary?.rtt,
                     avg: primary?.avg,
@@ -1889,16 +2175,20 @@ function wireTrackerCallbacks(tracker: WhatsAppTracker, jid: string) {
             });
         }
 
-        if (updateData.median !== undefined && updateData.devices) {
-            saveMeasurement({
+        if (primary && shouldPersistTrackerMeasurement(updateData)) {
+            void saveMeasurement({
+                caseId,
+                trackingSessionId,
                 jid,
-                rtt: updateData.devices[0]?.rtt ?? 0,
-                avg: updateData.devices[0]?.avg ?? 0,
+                rtt: primary.rtt,
+                avg: primary.avg,
                 median: updateData.median,
                 threshold: updateData.threshold ?? 0,
-                state: updateData.devices.find((d: any) => d.state.includes('Online'))?.state || updateData.devices[0]?.state || 'Unknown',
-                devices: updateData.devices,
-                deviceCount: updateData.deviceCount ?? 0
+                state: primary.state,
+                devices,
+                deviceCount: updateData.deviceCount ?? devices.length
+            }).catch(error => {
+                console.error('[TRACKER] Failed to persist RTT measurement:', error);
             });
         }
     };
@@ -1955,44 +2245,80 @@ function scheduleAutoRestoreContacts(delayMs = 8000) {
  */
 async function autoRestoreContacts() {
     try {
-        const saved = await getActiveContacts();
-        if (saved.length === 0) {
-            console.log('[AUTO-RESTORE] No saved contacts to restore');
+        const activeSessions = await getActiveTrackingSessions();
+        if (activeSessions === null) {
+            console.error('[AUTO-RESTORE] Tracking session persistence is unavailable');
+            return;
+        }
+        if (activeSessions.length === 0) {
+            console.log('[AUTO-RESTORE] No authorized active tracking sessions to restore');
             return;
         }
 
-        console.log(`[AUTO-RESTORE] Restoring ${saved.length} contact(s)...`);
+        console.log(`[AUTO-RESTORE] Restoring ${activeSessions.length} scoped tracking session(s)...`);
         let restored = 0;
 
-        for (const contact of saved) {
-            if (trackers.has(contact.jid)) {
-                console.log(`[AUTO-RESTORE] ${contact.jid} already tracked, skipping`);
+        for (const trackingSession of activeSessions) {
+            if (trackers.has(trackingSession.jid)) {
+                console.log(`[AUTO-RESTORE] ${trackingSession.jid} already tracked, skipping`);
                 continue;
             }
 
             try {
-                const tracker = new WhatsAppTracker(sock, contact.jid);
-                tracker.setProbeMethod(globalProbeMethod);
-                trackers.set(contact.jid, { tracker });
+                const caseRecord = await getCase(trackingSession.caseId);
+                if (!caseRecord || caseRecord.status !== 'active') {
+                    await finishTrackingSession(
+                        trackingSession.trackingSessionId,
+                        'interrupted',
+                        `restore_blocked_case_${caseRecord?.status || 'missing'}`,
+                    );
+                    console.log(`[AUTO-RESTORE] ${trackingSession.jid} blocked: case ${trackingSession.caseId} is not active`);
+                    continue;
+                }
 
-                wireTrackerCallbacks(tracker, contact.jid);
-
-                tracker.startTracking();
-                restored++;
+                const tracker = new WhatsAppTracker(sock, trackingSession.jid);
+                tracker.setProbeMethod(trackingSession.probeMethod);
+                const entry: TrackerEntry = { tracker, trackingSession };
+                trackers.set(trackingSession.jid, entry);
+                wireTrackerCallbacks(entry);
+                await tracker.startTracking();
 
                 // Emit contact info to connected clients
+                const contact = await getContactProfile(trackingSession.jid);
+                if (!contact) {
+                    throw new Error('Contact profile is missing');
+                }
                 const displayName = contact.customName || contact.pushName || contact.contactName || contact.number;
-                io.emit('contact-added', { jid: contact.jid, number: contact.number, customName: contact.customName || null, pushName: contact.pushName || null });
+                io.emit('contact-added', {
+                    jid: contact.jid,
+                    number: contact.number,
+                    customName: contact.customName || null,
+                    pushName: contact.pushName || null,
+                    caseId: trackingSession.caseId,
+                    trackingSessionId: trackingSession.trackingSessionId,
+                });
                 if (contact.profilePic) io.emit('profile-pic', { jid: contact.jid, url: contact.profilePic });
                 io.emit('contact-name', { jid: contact.jid, name: displayName });
 
+                await auditEvent({
+                    caseId: trackingSession.caseId,
+                    operatorName: trackingSession.operatorName,
+                    authorizationNote: trackingSession.authorizationNote,
+                }, 'contact_tracking_restored', 'contact', {
+                    trackingSessionId: trackingSession.trackingSessionId,
+                }, trackingSession.jid);
+
+                restored++;
                 console.log(`[AUTO-RESTORE] ✓ ${contact.number} (${displayName})`);
             } catch (err) {
-                console.error(`[AUTO-RESTORE] ✗ Failed to restore ${contact.jid}:`, err);
+                trackers.get(trackingSession.jid)?.tracker.stopTracking();
+                trackers.delete(trackingSession.jid);
+                await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'auto_restore_failed');
+                console.error(`[AUTO-RESTORE] ✗ Failed to restore ${trackingSession.jid}:`, err);
             }
         }
 
-        console.log(`[AUTO-RESTORE] Done: ${restored}/${saved.length} contacts restored`);
+        console.log(`[AUTO-RESTORE] Done: ${restored}/${activeSessions.length} tracking sessions restored`);
     } catch (err) {
         console.error('[AUTO-RESTORE] Error:', err);
     }
@@ -2263,7 +2589,10 @@ app.get('/api/intel/:jid/habits', async (req, res) => {
 
 app.get('/api/intel/correlation', async (req, res) => {
     const { jid1, jid2, days } = req.query;
-    if (!jid1 || !jid2) return res.status(400).json({ error: 'jid1 and jid2 required' });
+    if (!jid1 || !jid2) {
+        res.status(400).json({ error: 'jid1 and jid2 required' });
+        return;
+    }
     const d = parseLimit(days, 7, 365);
     res.json(await getCorrelation(jid1 as string, jid2 as string, d));
 });
@@ -2461,7 +2790,11 @@ app.put('/api/contact/:jid/custom-name', async (req, res) => {
 registerRuntimeRoutes(app, RUNTIME_CONFIG, {
     mongoConfigured: () => isConfigured(process.env.MONGODB_URI),
     mongoConnected: () => isDBConnected(),
+    redisConfigured: () => redisService.getHealth().configured,
+    redisRequired: () => redisService.getHealth().required,
+    redisConnected: () => redisService.getHealth().connected,
     whatsappConnected: () => isWhatsAppConnected,
+    localCaptureAvailable: () => hasPacketCapturePrivileges(),
 });
 
 registerCaseRoutes(app);
@@ -2611,8 +2944,8 @@ app.post('/api/call-capture/stop', async (_req, res) => {
     const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
     if (result) {
         io.emit('call-analysis', result);
-        await saveCallAnalysis(result);
         if (stoppedCallAuditContext) {
+            await saveCallAnalysis(result, stoppedCallAuditContext.caseId);
             await linkEvidenceToCase(stoppedCallAuditContext, 'call_analysis', result.callId, `Call analysis ${result.callId}`, {
                 verdict: result.verdict,
                 totalPackets: result.totalPackets,
@@ -2640,6 +2973,14 @@ app.post('/api/call-capture/stop', async (_req, res) => {
 
 io.on('connection', (socket) => {
     console.log('Client connected');
+
+    const sessionExpiresAt = Date.parse(String(socket.data.authSessionExpiresAt || ''));
+    const sessionLifetimeMs = Number.isFinite(sessionExpiresAt)
+        ? Math.max(0, sessionExpiresAt - Date.now())
+        : 0;
+    const sessionExpiryTimer = setTimeout(() => socket.disconnect(true), sessionLifetimeMs);
+    sessionExpiryTimer.unref?.();
+    socket.once('disconnect', () => clearTimeout(sessionExpiryTimer));
 
     // Send current WhatsApp QR code if available
     if (currentWhatsAppQr) {
@@ -2694,13 +3035,15 @@ io.on('connection', (socket) => {
             const result = results?.[0];
 
             if (result?.exists) {
-                const tracker = new WhatsAppTracker(sock, result.jid);
-                tracker.setProbeMethod(globalProbeMethod);
-                trackers.set(result.jid, { tracker });
-
-                wireTrackerCallbacks(tracker, result.jid);
-
-                tracker.startTracking();
+                const entry = await createTrackerEntry(result.jid, auditContext);
+                if (!entry) {
+                    socket.emit('error', {
+                        jid: result.jid,
+                        message: 'Could not create a durable tracking session. Check MongoDB or an existing active session.',
+                    });
+                    return;
+                }
+                const { tracker, trackingSession } = entry;
 
                 const ppUrl = await tracker.getProfilePicture();
 
@@ -2725,6 +3068,7 @@ io.on('connection', (socket) => {
                     customName: customName,
                     pushName: pushNameFromWA,
                     caseId: auditContext.caseId,
+                    trackingSessionId: trackingSession.trackingSessionId,
                 });
 
                 io.emit('profile-pic', { jid: result.jid, url: ppUrl });
@@ -2738,12 +3082,14 @@ io.on('connection', (socket) => {
                     customName,
                     pushName: pushNameFromWA,
                     status: 'tracking_started',
+                    trackingSessionId: trackingSession.trackingSessionId,
                 }, result.jid);
                 await auditEvent(auditContext, 'contact_tracking_start', 'contact', {
                     number: cleanNumber,
                     displayName,
                     customName,
                     pushName: pushNameFromWA,
+                    trackingSessionId: trackingSession.trackingSessionId,
                 }, result.jid);
 
                 // Fetch and persist enriched profile (about, business, etc.)
@@ -2800,7 +3146,7 @@ io.on('connection', (socket) => {
                             isBusinessAccount: !!businessProfile,
                             businessProfile,
                             pushName,
-                            profilePic: ppUrl,
+                            profilePic: ppUrl ?? null,
                         });
 
                         // Emit enriched profile to all clients
@@ -2828,20 +3174,41 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('remove-contact', (jid: string) => {
-        const jidResult = validateJid(jid);
+    socket.on('remove-contact', async (data: string | { jid: string; stopReason?: string }) => {
+        const rawJid = typeof data === 'string' ? data : data?.jid;
+        const jidResult = validateJid(rawJid);
         if (!jidResult.ok) {
             socketValidationError(socket, jidResult.errors || []);
             return;
         }
-        jid = jidResult.value!;
+        const jid = jidResult.value!;
         console.log(`Request to stop tracking: ${jid}`);
         const entry = trackers.get(jid);
         if (entry) {
+            const stopReason = cleanText(typeof data === 'object' ? data.stopReason : '', 500) || 'Stopped by operator';
+            const finished = await finishTrackingSession(
+                entry.trackingSession.trackingSessionId,
+                'stopped',
+                stopReason,
+            );
+            if (!finished) {
+                socket.emit('error', { jid, message: 'Tracking session could not be closed durably' });
+                return;
+            }
             entry.tracker.stopTracking();
             trackers.delete(jid);
-            socket.emit('contact-removed', jid);
-            removeContact(jid);
+            io.emit('contact-removed', jid);
+            await removeContact(jid);
+            await auditEvent({
+                caseId: entry.trackingSession.caseId,
+                operatorName: entry.trackingSession.operatorName,
+                authorizationNote: entry.trackingSession.authorizationNote,
+            }, 'contact_tracking_stop', 'contact', {
+                trackingSessionId: entry.trackingSession.trackingSessionId,
+                stopReason,
+            }, jid);
+        } else {
+            socket.emit('error', { jid, message: 'No active tracking session for this contact' });
         }
     });
 
@@ -2861,13 +3228,27 @@ io.on('connection', (socket) => {
     });
 
     // Re-activate a previously tracked contact from history
-    socket.on('reactivate-contact', async (jid: string) => {
-        const jidResult = validateJid(jid);
+    socket.on('reactivate-contact', async (data: string | { jid: string; caseId?: string; operatorName?: string; authorizationNote?: string }) => {
+        if (!data || typeof data !== 'object') {
+            socketValidationError(socket, ['caseId, operatorName, and authorizationNote are required to reactivate tracking']);
+            return;
+        }
+        const jidResult = validateJid(data.jid);
         if (!jidResult.ok) {
             socketValidationError(socket, jidResult.errors || []);
             return;
         }
-        jid = jidResult.value!;
+        const jid = jidResult.value!;
+        const auditContext = parseCaptureAuditContext(data);
+        if (!auditContext) {
+            socketValidationError(socket, ['caseId, operatorName, and authorizationNote are required to reactivate tracking']);
+            return;
+        }
+        const caseCheck = await checkCaseCanCapture(auditContext);
+        if (!caseCheck.ok) {
+            socket.emit('error', { status: caseCheck.status, ...caseCheck.payload });
+            return;
+        }
         console.log(`Request to reactivate: ${jid}`);
 
         if (trackers.has(jid)) {
@@ -2881,19 +3262,25 @@ io.on('connection', (socket) => {
         }
 
         try {
-            const tracker = new WhatsAppTracker(sock, jid);
-            tracker.setProbeMethod(globalProbeMethod);
-            trackers.set(jid, { tracker });
-
-            wireTrackerCallbacks(tracker, jid);
-
-            tracker.startTracking();
+            const entry = await createTrackerEntry(jid, auditContext);
+            if (!entry) {
+                socket.emit('error', { jid, message: 'Could not create a durable tracking session' });
+                return;
+            }
 
             // Mark as active again in DB
             await reactivateContact(jid);
 
             const number = jid.replace('@s.whatsapp.net', '');
-            socket.emit('contact-added', { jid, number });
+            socket.emit('contact-added', {
+                jid,
+                number,
+                caseId: auditContext.caseId,
+                trackingSessionId: entry.trackingSession.trackingSessionId,
+            });
+            await auditEvent(auditContext, 'contact_tracking_reactivated', 'contact', {
+                trackingSessionId: entry.trackingSession.trackingSessionId,
+            }, jid);
 
             // Fetch profile pic
             try {
@@ -2913,6 +3300,10 @@ io.on('connection', (socket) => {
     socket.on('network-start', async (data: { interfaceAddr: string; filter?: CaptureFilter; caseId?: string; operatorName?: string; authorizationNote?: string }) => {
         if (!LOCAL_CAPTURE_ENABLED) {
             socket.emit('error', { message: 'Local packet capture is disabled in this deployment', mode: DEPLOYMENT_MODE });
+            return;
+        }
+        if (!hasPacketCapturePrivileges()) {
+            emitCapturePrivilegeUnavailable(socket);
             return;
         }
         const auditContext = parseCaptureAuditContext(data);
@@ -2993,7 +3384,7 @@ io.on('connection', (socket) => {
         socket.emit('network-status', getCaptureStatus());
     });
 
-    socket.on('set-probe-method', (method: ProbeMethod) => {
+    socket.on('set-probe-method', async (method: ProbeMethod) => {
         console.log(`Request to change probe method to: ${method}`);
         if (method !== 'delete' && method !== 'reaction') {
             socket.emit('error', { message: 'Invalid probe method' });
@@ -3004,6 +3395,8 @@ io.on('connection', (socket) => {
 
         for (const entry of trackers.values()) {
             entry.tracker.setProbeMethod(method);
+            entry.trackingSession.probeMethod = method;
+            await updateTrackingSessionProbeMethod(entry.trackingSession.trackingSessionId, method);
         }
 
         io.emit('probe-method', method);
@@ -3015,6 +3408,10 @@ io.on('connection', (socket) => {
     socket.on('start-call-capture', async (data: { interfaceAddr?: string; targetJid?: string; callId?: string; isVideo?: boolean; caseId?: string; operatorName?: string; authorizationNote?: string }) => {
         if (!LOCAL_CAPTURE_ENABLED) {
             socket.emit('error', { message: 'Local call traffic analysis is disabled in this deployment', mode: DEPLOYMENT_MODE });
+            return;
+        }
+        if (!hasPacketCapturePrivileges()) {
+            emitCapturePrivilegeUnavailable(socket);
             return;
         }
         const auditContext = parseCaptureAuditContext(data);
@@ -3074,8 +3471,8 @@ io.on('connection', (socket) => {
         const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
         if (result) {
             io.emit('call-analysis', result);
-            await saveCallAnalysis(result);
             if (stoppedCallAuditContext) {
+                await saveCallAnalysis(result, stoppedCallAuditContext.caseId);
                 await linkEvidenceToCase(stoppedCallAuditContext, 'call_analysis', result.callId, `Call analysis ${result.callId}`, {
                     verdict: result.verdict,
                     totalPackets: result.totalPackets,
@@ -3117,19 +3514,42 @@ io.on('connection', (socket) => {
     });
 });
 
-httpServer.listen(PORT, () => {
-    serverListeningForStartupAudit = true;
-    logStartupConfiguration();
-    bootLog('ok', 'Backend operational');
-    tryRecordStartupAudit();
-});
+async function startApplication(): Promise<void> {
+    try {
+        await initializeApplication();
+        httpServer.listen(PORT, () => {
+            serverListeningForStartupAudit = true;
+            logStartupConfiguration();
+            bootLog('ok', 'Backend listening');
+            void tryRecordStartupAudit();
+        });
+    } catch {
+        bootLog('error', 'Startup initialization failed; backend will not listen');
+        await redisService.disconnect();
+        await disconnectDB();
+        process.exitCode = 1;
+    }
+}
+
+void startApplication();
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\nShutting down...');
+let shutdownStarted = false;
+async function shutdown(signal: 'SIGINT' | 'SIGTERM') {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    console.log(`\nShutting down after ${signal}...`);
     for (const entry of trackers.values()) {
         entry.tracker.stopTracking();
     }
+    trackers.clear();
+    stopCapture();
+    stopCallCapture();
+    httpServer.close();
+    await redisService.disconnect();
     await disconnectDB();
     process.exit(0);
-});
+}
+
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
