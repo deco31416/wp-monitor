@@ -913,6 +913,34 @@ export async function getObservedActivityEvents(
     }
 }
 
+export async function getObservedActivityEventsForCase(
+    jid: string,
+    caseId: string,
+    limit: number = 5000,
+): Promise<ObservedActivityListItem[]> {
+    if (!db) return [];
+    try {
+        return await activityEvents
+            .find(buildObservedActivityScope(jid, caseId), {
+                projection: {
+                    _id: 0,
+                    source: 1,
+                    type: 1,
+                    label: 1,
+                    confidence: 1,
+                    timestamp: 1,
+                    timestampUtc: 1,
+                },
+            })
+            .sort({ timestamp: 1 })
+            .limit(limit)
+            .toArray() as ObservedActivityListItem[];
+    } catch (err) {
+        console.error('[DB] Error fetching case observed activity events:', err);
+        return [];
+    }
+}
+
 export async function getObservedActivitySummary(
     jid: string,
     days: number = 30,
@@ -921,6 +949,7 @@ export async function getObservedActivitySummary(
 ): Promise<{
     totalEvents: number;
     activeEvents: number;
+    firstEvent: ActivityEventDoc | null;
     lastEvent: ActivityEventDoc | null;
     lastPresence: ActivityEventDoc | null;
     lastCall: ActivityEventDoc | null;
@@ -934,6 +963,7 @@ export async function getObservedActivitySummary(
     const empty = {
         totalEvents: 0,
         activeEvents: 0,
+        firstEvent: null,
         lastEvent: null,
         lastPresence: null,
         lastCall: null,
@@ -951,11 +981,16 @@ export async function getObservedActivitySummary(
             ...buildObservedActivityScope(jid, caseId, trackingSessionId),
             timestamp: { $gte: since },
         };
-        const [events, grouped] = await Promise.all([
+        const [events, firstEvents, grouped] = await Promise.all([
             activityEvents
                 .find(match)
                 .sort({ timestamp: -1 })
                 .limit(500)
+                .toArray(),
+            activityEvents
+                .find(match)
+                .sort({ timestamp: 1 })
+                .limit(1)
                 .toArray(),
             activityEvents.aggregate<{
                 _id: { source: string; type: string; label: string; confidence: string };
@@ -1007,6 +1042,7 @@ export async function getObservedActivitySummary(
         return {
             totalEvents,
             activeEvents,
+            firstEvent: firstEvents[0] || null,
             lastEvent: events[0] || null,
             lastPresence: events.find(event => event.source === 'presence') || null,
             lastCall: events.find(event => event.source === 'call') || null,
@@ -1073,6 +1109,7 @@ export async function getStateDistribution(
         observedActivity: {
             totalEvents: 0,
             activeEvents: 0,
+            firstEvent: null,
             lastEvent: null,
             lastPresence: null,
             lastCall: null,
@@ -1190,10 +1227,16 @@ export async function generateReport(
     patterns: Awaited<ReturnType<typeof getOnlinePatterns>>;
     activityHistory: Awaited<ReturnType<typeof getActivityHistory>>;
     recentMeasurements: MeasurementDoc[];
+    scope: {
+        caseId: string | null;
+        trackingSessionId: string | null;
+    };
+    observedActivityEvents: ObservedActivityListItem[];
     summary: {
         trackingDuration: string;
         totalAttempts: number;
         totalDataPoints: number;
+        totalObservedEvents: number;
         measurementAvailable: boolean;
         avgResponseTime: number | null;
         onlinePercentage: number | null;
@@ -1201,18 +1244,31 @@ export async function generateReport(
         estimatedDailyUsage: string | null;
     };
 }> {
-    const [contact, stats, patterns, activity, recent] = await Promise.all([
+    const [contact, stats, patterns, activity, recent, observedEvents] = await Promise.all([
         getContactProfile(jid),
         getStateDistribution(jid, caseId, trackingSessionId),
         getOnlinePatterns(jid, trackingSessionId),
         getActivityHistory(jid, 200, trackingSessionId),
         getRecentMeasurements(jid, 500, trackingSessionId),
+        trackingSessionId ? getObservedActivityEvents(jid, trackingSessionId, 5000) : Promise.resolve([]),
     ]);
 
-    // Calculate tracking duration
-    const firstSeen = stats.firstSeen ? new Date(stats.firstSeen) : new Date();
-    const lastSeen = stats.lastSeen ? new Date(stats.lastSeen) : new Date();
-    const durationMs = lastSeen.getTime() - firstSeen.getTime();
+    // Calculate the observation window from both technical measurements and
+    // passive events. Passive-only sessions must not report a zero/unknown
+    // duration merely because RTT is unavailable.
+    const firstCandidates = [stats.firstSeen, stats.observedActivity.firstEvent?.timestamp]
+        .filter((value): value is Date => value instanceof Date);
+    const lastCandidates = [stats.lastSeen, stats.observedActivity.lastEvent?.timestamp]
+        .filter((value): value is Date => value instanceof Date);
+    const firstSeen = firstCandidates.length > 0
+        ? new Date(Math.min(...firstCandidates.map(value => value.getTime())))
+        : null;
+    const lastSeen = lastCandidates.length > 0
+        ? new Date(Math.max(...lastCandidates.map(value => value.getTime())))
+        : null;
+    const durationMs = firstSeen && lastSeen
+        ? Math.max(0, lastSeen.getTime() - firstSeen.getTime())
+        : 0;
     const durationHours = durationMs / (1000 * 60 * 60);
     const durationDays = durationHours / 24;
 
@@ -1243,10 +1299,16 @@ export async function generateReport(
         patterns,
         activityHistory: activity,
         recentMeasurements: recent,
+        scope: {
+            caseId: caseId || null,
+            trackingSessionId: trackingSessionId || null,
+        },
+        observedActivityEvents: observedEvents,
         summary: {
             trackingDuration,
             totalAttempts: stats.totalMeasurements,
             totalDataPoints: stats.conclusiveMeasurements,
+            totalObservedEvents: stats.observedActivity.totalEvents,
             measurementAvailable: stats.acknowledgedRttMeasurements > 0,
             avgResponseTime: stats.acknowledgedRttMeasurements > 0 ? stats.avgRtt : null,
             onlinePercentage: stats.conclusiveMeasurements > 0 ? stats.online : null,

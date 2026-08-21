@@ -222,6 +222,7 @@ export function ContactCard({
     const [stats, setStats] = useState<StatsData | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
     const [observedActivity, setObservedActivity] = useState<ObservedActivityEvent[]>([]);
+    const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(null);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [patterns, setPatterns] = useState<PatternsData | null>(null);
     type DetailPanel = 'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call';
@@ -477,11 +478,12 @@ export function ContactCard({
     }, [jid]);
 
     const fetchObservedActivity = useCallback(() => {
-        authFetch(`${API_URL}/api/contact/${encodeURIComponent(jid)}/activity?limit=50`)
+        authFetch(`${API_URL}/api/contact/${encodeURIComponent(jid)}/activity?limit=200`)
             .then(r => r.json())
-            .then((response: ObservedActivityResponse) => setObservedActivity(
-                Array.isArray(response.events) ? response.events : [],
-            ))
+            .then((response: ObservedActivityResponse) => {
+                setObservedActivity(Array.isArray(response.events) ? response.events : []);
+                setTrackingStartedAt(response.trackingStartedAt || null);
+            })
             .catch(console.error);
     }, [jid]);
 
@@ -1069,6 +1071,7 @@ export function ContactCard({
 
                             <ActivityJournalPanel
                                 activity={activity}
+                                observedEvents={observedActivity}
                                 jid={jid}
                                 displayNumber={displayNumber}
                                 privacyMode={privacyMode}
@@ -1102,6 +1105,7 @@ export function ContactCard({
                                 profile={profile}
                                 profileLoading={profileLoading}
                                 patterns={patterns}
+                                trackingStartedAt={trackingStartedAt}
                                 privacyScore={privacyScore}
                                 privacyMode={privacyMode}
                                 blurredNumber={blurredNumber}

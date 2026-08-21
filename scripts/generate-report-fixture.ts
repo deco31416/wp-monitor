@@ -16,7 +16,7 @@ function syntheticEvidencePackage(): any {
     return {
         manifest: {
             packageType: 'evidence-package',
-            version: '1.0',
+            version: '1.1',
             software: {
                 name: 'WP MONITOR',
                 version: '2.9.4',
@@ -115,11 +115,22 @@ function syntheticEvidencePackage(): any {
                     lastSeen: new Date('2026-06-18T00:00:00.000Z'),
                     lastOnline: new Date('2026-06-17T23:30:00.000Z'),
                     avgRtt: 88,
+                    observedActivity: {
+                        totalEvents: 2,
+                        activeEvents: 2,
+                        bySource: { message: 1, receipt: 1 },
+                        confidence: { high: 2 },
+                        activeDays: 1,
+                        lastEvent: {
+                            label: 'Mensaje entregado',
+                            timestamp: new Date('2026-06-17T18:02:00.000Z'),
+                        },
+                    },
                     insights: {
                         periods: [
-                            { key: 'last24h', label: '24h', totalMeasurements: 300, onlineMeasurements: 120, onlinePct: 40, avgRtt: 80, changeOnlinePct: 5 },
-                            { key: 'last7d', label: '7d', totalMeasurements: 900, onlineMeasurements: 360, onlinePct: 40, avgRtt: 85, changeOnlinePct: -2 },
-                            { key: 'last30d', label: '30d', totalMeasurements: 1_200, onlineMeasurements: 504, onlinePct: 42, avgRtt: 88, changeOnlinePct: null },
+                            { key: 'last24h', label: '24h', totalMeasurements: 300, conclusiveMeasurements: 240, onlineMeasurements: 120, onlinePct: 50, avgRtt: 80, changeOnlinePct: 5 },
+                            { key: 'last7d', label: '7d', totalMeasurements: 900, conclusiveMeasurements: 720, onlineMeasurements: 360, onlinePct: 50, avgRtt: 85, changeOnlinePct: -2 },
+                            { key: 'last30d', label: '30d', totalMeasurements: 1_200, conclusiveMeasurements: 720, onlineMeasurements: 504, onlinePct: 70, avgRtt: 88, changeOnlinePct: null },
                         ],
                         dailyCoverage: [
                             { date: '2026-06-17', totalMeasurements: 300, onlinePct: 40, coverageScore: 100 },
@@ -132,6 +143,27 @@ function syntheticEvidencePackage(): any {
                         },
                     },
                 },
+            }],
+            observedActivity: [{
+                targetJid,
+                events: [
+                    {
+                        source: 'message',
+                        type: 'outgoing',
+                        label: 'Mensaje enviado (text)',
+                        confidence: 'high',
+                        timestamp: new Date('2026-06-17T18:00:00.000Z'),
+                        timestampUtc: '2026-06-17T18:00:00.000Z',
+                    },
+                    {
+                        source: 'receipt',
+                        type: 'delivered',
+                        label: 'Mensaje entregado',
+                        confidence: 'high',
+                        timestamp: new Date('2026-06-17T18:02:00.000Z'),
+                        timestampUtc: '2026-06-17T18:02:00.000Z',
+                    },
+                ],
             }],
             networkSummary: {
                 captureStartCount: 1,
@@ -168,7 +200,7 @@ async function main(): Promise<void> {
 
     if (!html.includes('CASE-FIXTURE-001')) throw new Error('HTML fixture is missing the case ID');
     if (pdf.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('PDF fixture has an invalid header');
-    for (const expectedEntry of ['manifest.json', 'final-report.html', 'final-report.pdf', 'annexes/csv-integrity.json']) {
+    for (const expectedEntry of ['manifest.json', 'observed-activity.json', 'final-report.html', 'final-report.pdf', 'annexes/observed-activity.csv', 'annexes/csv-integrity.json']) {
         if (!zip.toString('latin1').includes(expectedEntry)) throw new Error(`ZIP fixture is missing ${expectedEntry}`);
     }
 

@@ -236,11 +236,11 @@ Results can be affected by VPNs, proxies, carrier-grade NAT, mobile networks, CD
 
 ### Activity bitácora and reports
 
-- Human-readable state timeline with local and UTC timestamps
-- Paginated event table with loading states and visual state differentiation
-- Bitácora export to JSON, HTML, and PDF
-- Full contact report with profile, statistics, patterns, measurements, history, and executive summary
-- Case-level final reports in JSON, HTML, and native PDF
+- Session-scoped passive activity timeline and hourly chart for messages, confirmations, presence, and calls
+- Technical RTT history kept separate, with a definitive unavailable state instead of an endless loading placeholder
+- Bitácora export to JSON, HTML, and PDF with both observed activity and technical measurements
+- Full contact report with session scope, passive event list, profile, RTT statistics, patterns, measurements, history, and executive summary
+- Case-level final reports in JSON, HTML, and native PDF with passive signal counts and timestamps
 
 ### Behavior intelligence
 
@@ -737,10 +737,11 @@ A case evidence package can include:
 - Audit events
 - Call analyses linked through audited `callId` values
 - Activity statistics and coverage/reliability information
+- Session/case-scoped passive activity events without message content or raw message IDs
 - Network summary derived from capture audit events
 - Final report artifacts
 - SHA-256 hash per section and package-level integrity hash
-- CSV annexes for audit events, evidence links, call analyses, candidate IP observations, activity statistics, and network captures
+- CSV annexes for audit events, evidence links, call analyses, passive activity, candidate IP observations, activity statistics, and network captures
 
 Expected ZIP artifacts include:
 
@@ -750,6 +751,8 @@ case.json
 audit.json
 evidence-links.json
 call-analysis.json
+activity-stats.json
+observed-activity.json
 network-summary.json
 final-report.json
 final-report.html
@@ -773,11 +776,11 @@ The fixture checks required report sections, PDF generation, ZIP contents, integ
 
 | Export | Scope | Includes | Recommended use |
 |---|---|---|---|
-| Activity Bitácora JSON/HTML/PDF | One contact and its activity timeline | State changes, local/UTC timestamps, RTT, readable descriptions, activity summary | Fast chronological review |
-| Full Contact Report | One contact | Profile, RTT statistics, state distribution, behavior patterns, history, measurements, executive summary | Technical contact-level review |
+| Activity Bitácora JSON/HTML/PDF | One active tracking session | Passive signals, confidence, local/UTC timestamps, technical state changes and RTT when available | Fast chronological review without conflating passive activity and RTT |
+| Full Contact Report | One active tracking session/contact | Case/session scope, passive events, profile, RTT statistics, state distribution, behavior patterns, history, measurements and executive summary | Complete technical contact-level review |
 | Call Analysis History | One contact | Capture windows, route view, packet counts, infrastructure, candidate scoring, GeoIP/provider hints, limitations | Review of authorized local call/interaction captures |
-| Final Case Report JSON/HTML/PDF | Entire case | Case record, authorization, audit timeline, evidence links, activity statistics, call analyses, IP observations, hashes, limitations | Formal case-level reporting |
-| Evidence Package JSON/ZIP | Entire case and archival artifacts | Manifest, case, audit, evidence links, analyses, reports, CSV annexes, SHA-256 integrity metadata | Chain-of-custody archive and external review |
+| Final Case Report JSON/HTML/PDF | Entire case | Case record, authorization, passive activity timeline, technical statistics, audit, evidence links, call analyses, IP observations, hashes and limitations | Formal case-level reporting |
+| Evidence Package JSON/ZIP | Entire case and archival artifacts | Manifest, case, audit, passive activity JSON/CSV, evidence links, analyses, reports, CSV annexes and SHA-256 integrity metadata | Chain-of-custody archive and external review |
 
 The Full Contact Report and Final Case Report are different products. The contact report summarizes one authorized contact inside the tracker; the final case report consolidates the broader case, including audit events, check-ins, local captures, call analyses, evidence links, and integrity metadata.
 

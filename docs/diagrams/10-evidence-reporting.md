@@ -9,6 +9,7 @@ flowchart LR
     Case[Case record]
     Audit[Audit events]
     Activity[Actividad y mediciones]
+    Passive[Señales pasivas por caso]
     Calls[Analisis de llamadas]
     CheckIns[Check-Ins]
     Network[Resumen de red]
@@ -25,6 +26,7 @@ flowchart LR
     Case --> Builder
     Audit --> Builder
     Activity --> Builder
+    Passive --> Builder
     Calls --> Builder
     CheckIns --> Builder
     Network --> Builder
@@ -44,6 +46,8 @@ flowchart LR
 ## Reglas
 
 - JSON conserva estructura; HTML/PDF priorizan lectura humana.
+- Las señales pasivas y las mediciones RTT se exportan en secciones distintas; ausencia de RTT no elimina actividad real observada.
+- El paquete 1.1 incluye `observed-activity.json` y su anexo CSV sin contenido ni IDs crudos de mensajes.
 - El ZIP incluye manifiesto y archivos verificables.
 - Una exportacion genera auditoria y por tanto puede cambiar una exportacion posterior.
 - Secrets, sesion Baileys y credenciales se excluyen.

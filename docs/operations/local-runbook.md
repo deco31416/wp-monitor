@@ -165,8 +165,8 @@ La herramienta tiene varios reportes. No todos significan lo mismo:
 
 | Reporte | Donde se genera | Alcance | Contenido principal | Cuando usarlo |
 |---------|-----------------|---------|---------------------|---------------|
-| **Bitacora de Actividad JSON/HTML/PDF** | Tarjeta del contacto, seccion `Bitacora de Actividad` | Un contacto | Cambios de estado, hora local, UTC, RTT y descripcion legible | Revision rapida de actividad observada |
-| **Full Contact Report** | Boton `Full` del contacto o `/api/report/:jid/download` | Un contacto | Perfil, estadisticas RTT, distribucion de estados, patrones, historial y mediciones recientes | Informe tecnico del contacto monitoreado |
+| **Bitacora de Sesion JSON/HTML/PDF** | Tarjeta del contacto, seccion `Bitacora de sesion` | Sesion activa de un contacto | Señales pasivas con fuente/confianza y mediciones RTT separadas, hora local y UTC | Revision cronologica rapida |
+| **Full Contact Report** | Boton `Completo` del contacto o `/api/report/:jid/download` | Sesion activa de un contacto | Caso/sesion, eventos pasivos, perfil, estadisticas RTT, patrones, historial y mediciones recientes | Informe tecnico completo del contacto monitoreado |
 | **Historial de Llamadas** | Pestana `Llamada` del contacto | Un contacto y sus capturas locales | Mapa observado, paquetes, infraestructura, relays, IPs candidatas/no concluyentes, scoring y limitaciones | Revisar una captura de llamada/interaccion WhatsApp Web autorizada |
 | **Final Case Report JSON/HTML/PDF** | Vista `Cases` o `Audit Trail` | Caso completo | Caso, autorizacion, auditoria, evidencias, actividad, analisis de llamada, hashes y limitaciones | Informe formal de caso |
 | **Evidence Package JSON/ZIP** | Vista `Cases` o `Audit Trail` | Caso completo para archivo | Manifest, caso, auditoria, enlaces de evidencia, analisis, resumen de red, reportes, CSV anexos e integridad SHA-256 | Cadena de custodia, archivo y revision externa |

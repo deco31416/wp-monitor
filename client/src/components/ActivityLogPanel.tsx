@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import clsx from 'clsx';
-import { History } from 'lucide-react';
+import { BarChart3, History } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ObservedActivityEvent } from '../types';
 
 interface ActivityLogPanelProps {
@@ -22,32 +24,105 @@ function confidenceLabel(confidence: ObservedActivityEvent['confidence']): strin
 }
 
 export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelProps) {
+    const hourly = useMemo(() => buildHourlyActivity(events), [events]);
+
     return (
-        <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
-            <div className="flex items-center justify-between gap-3 mb-4">
-                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
-                <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos observados</span>
-            </div>
-            {events.length > 0 ? (
-                <div className="max-h-[260px] overflow-y-auto pr-2 space-y-0">
-                    {events.map((entry, index) => (
-                        <ActivityTimelineRow
-                            key={`${entry.timestamp}-${index}`}
-                            entry={entry}
-                            isLast={index >= events.length - 1}
-                            formatDateTime={formatDateTime}
-                        />
-                    ))}
-                </div>
-            ) : (
-                <div className="text-center py-8">
-                    <History size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin actividad observada</p>
-                    <p className="text-txt-dim text-xs mt-1">Aquí aparecerán mensajes, confirmaciones, presencia y llamadas atribuibles a esta sesión.</p>
-                </div>
+        <div className="space-y-4">
+            {events.length > 0 && (
+                <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
+                        <div>
+                            <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider flex items-center gap-1.5">
+                                <BarChart3 size={13} /> Distribución horaria de señales
+                            </h5>
+                            <p className="text-[11px] text-txt-dim mt-1">
+                                Actividad observada por hora local. Cada barra representa eventos reales de esta sesión, no mediciones RTT.
+                            </p>
+                        </div>
+                        <span className="badge-neutral !text-[9px] !py-0 !px-1.5 w-fit">{events.length} eventos cargados</span>
+                    </div>
+                    <div className="h-[220px]" aria-label="Gráfica de actividad observada por hora">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={hourly} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(100,116,139,0.18)" />
+                                <XAxis
+                                    dataKey="hour"
+                                    tick={{ fill: '#64748b', fontSize: 9 }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    interval={2}
+                                />
+                                <YAxis allowDecimals={false} tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
+                                <Tooltip
+                                    contentStyle={{
+                                        backgroundColor: '#0f1629',
+                                        border: '1px solid #1e2545',
+                                        borderRadius: '12px',
+                                        color: '#f1f5f9',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+                                        fontSize: '11px',
+                                    }}
+                                />
+                                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                                <Bar dataKey="messages" name="Mensajes" stackId="activity" fill="#25d366" radius={[2, 2, 0, 0]} />
+                                <Bar dataKey="receipts" name="Confirmaciones" stackId="activity" fill="#38bdf8" radius={[2, 2, 0, 0]} />
+                                <Bar dataKey="presence" name="Presencia" stackId="activity" fill="#a78bfa" radius={[2, 2, 0, 0]} />
+                                <Bar dataKey="calls" name="Llamadas" stackId="activity" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </section>
             )}
+
+            <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
+                    <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos observados</span>
+                </div>
+                {events.length > 0 ? (
+                    <div className="max-h-[260px] overflow-y-auto pr-2 space-y-0">
+                        {events.map((entry, index) => (
+                            <ActivityTimelineRow
+                                key={`${entry.timestamp}-${index}`}
+                                entry={entry}
+                                isLast={index >= events.length - 1}
+                                formatDateTime={formatDateTime}
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-center py-8">
+                        <History size={32} className="mx-auto text-txt-dim mb-2" />
+                        <p className="text-txt-muted text-sm">Sin actividad observada</p>
+                        <p className="text-txt-dim text-xs mt-1">Aquí aparecerán mensajes, confirmaciones, presencia y llamadas atribuibles a esta sesión.</p>
+                    </div>
+                )}
+            </section>
         </div>
     );
+}
+
+function buildHourlyActivity(events: ObservedActivityEvent[]) {
+    const buckets = Array.from({ length: 24 }, (_, hour) => ({
+        hour: `${String(hour).padStart(2, '0')}:00`,
+        messages: 0,
+        receipts: 0,
+        presence: 0,
+        calls: 0,
+    }));
+
+    events.forEach(event => {
+        const date = new Date(event.timestamp);
+        if (Number.isNaN(date.getTime())) return;
+        const bucket = buckets[date.getHours()];
+        if (!bucket) return;
+        if (event.source === 'message') bucket.messages += 1;
+        if (event.source === 'receipt') bucket.receipts += 1;
+        if (event.source === 'presence') bucket.presence += 1;
+        if (event.source === 'call') bucket.calls += 1;
+    });
+
+    return buckets;
 }
 
 function ActivityTimelineRow({

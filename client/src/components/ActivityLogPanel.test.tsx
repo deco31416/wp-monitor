@@ -40,10 +40,14 @@ test('renders persisted human activity without presenting it as RTT', () => {
     expect(screen.getByText(/Confirmación · confianza alta/)).toBeInTheDocument();
     expect(screen.getByText('Escribiendo')).toBeInTheDocument();
     expect(screen.getByText('3 eventos observados')).toBeInTheDocument();
+    expect(screen.getByText('Distribución horaria de señales')).toBeInTheDocument();
+    expect(screen.getByLabelText('Gráfica de actividad observada por hora')).toBeInTheDocument();
+    expect(screen.getByText(/eventos reales de esta sesión, no mediciones RTT/i)).toBeInTheDocument();
     expect(screen.queryByText(/RTT:/)).not.toBeInTheDocument();
 });
 
 test('explains when no attributable activity exists', () => {
     render(<ActivityLogPanel events={[]} formatDateTime={value => value || '-'} />);
     expect(screen.getByText('Sin actividad observada')).toBeInTheDocument();
+    expect(screen.queryByText('Distribución horaria de señales')).not.toBeInTheDocument();
 });

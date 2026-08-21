@@ -2484,20 +2484,37 @@ app.get('/api/contact/:jid/activity', async (req, res) => {
 
     const entry = trackers.get(jidResult.value!);
     if (!entry) {
-        res.json({ active: false, caseId: null, trackingSessionId: null, events: [] });
+        res.json({
+            active: false,
+            caseId: null,
+            trackingSessionId: null,
+            trackingStartedAt: null,
+            summary: null,
+            events: [],
+        });
         return;
     }
 
     const limit = parseLimit(req.query.limit, 50, 200);
-    const events = await getObservedActivityEvents(
-        jidResult.value!,
-        entry.trackingSession.trackingSessionId,
-        limit,
-    );
+    const [events, summary] = await Promise.all([
+        getObservedActivityEvents(
+            jidResult.value!,
+            entry.trackingSession.trackingSessionId,
+            limit,
+        ),
+        getObservedActivitySummary(
+            jidResult.value!,
+            30,
+            entry.trackingSession.caseId,
+            entry.trackingSession.trackingSessionId,
+        ),
+    ]);
     res.json({
         active: true,
         caseId: entry.trackingSession.caseId,
         trackingSessionId: entry.trackingSession.trackingSessionId,
+        trackingStartedAt: entry.trackingSession.startedAt,
+        summary,
         events,
     });
 });

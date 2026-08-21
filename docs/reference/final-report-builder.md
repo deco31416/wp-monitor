@@ -1,6 +1,6 @@
 # Final Report Builder
 
-Ultima actualizacion: 2026-06-18
+Ultima actualizacion: 2026-08-21
 
 ## Objetivo
 
@@ -12,7 +12,7 @@ El informe no reemplaza el `Evidence Package`; lo resume y referencia sus hashes
 
 - `GET /api/reports/:caseId/final`
   - Exporta `final-report.json`.
-  - Incluye resumen, alcance, hallazgos, timeline, evidencia e integridad.
+  - Incluye resumen, alcance, señales pasivas observadas, estadisticas tecnicas, hallazgos, timeline, evidencia e integridad.
 
 - `GET /api/reports/:caseId/final.html`
   - Exporta `final-report.html`.
@@ -24,25 +24,30 @@ El informe no reemplaza el `Evidence Package`; lo resume y referencia sus hashes
 
 - `GET /api/evidence/:caseId/package.zip`
   - Incluye tambien `final-report.json`, `final-report.html` y `final-report.pdf`.
-  - Incluye anexos CSV en `annexes/` para auditoria, evidencias, analisis de llamada, IPs candidatas y capturas de red.
+  - Incluye `observed-activity.json` con la linea de tiempo pasiva atribuible al caso.
+  - Incluye anexos CSV en `annexes/` para auditoria, evidencias, actividad pasiva, estadisticas tecnicas, analisis de llamada, IPs candidatas y capturas de red.
   - Incluye `annexes/csv-integrity.json` con SHA-256 por CSV.
 
 ## Estructura UX del HTML
 
 1. Portada con caso, estado, fecha, version y marca.
-2. Metricas ejecutivas: eventos, evidencias, analisis de llamada y score maximo.
+2. Metricas ejecutivas: eventos, evidencias, analisis de llamada, score maximo y señales observadas.
 3. Resumen ejecutivo corto.
 4. Alcance autorizado.
-5. Hallazgos de IP candidata con score y nota tecnica.
-6. Timeline de auditoria.
-7. Hashes de integridad.
-8. Limitaciones tecnicas.
+5. Timeline de señales pasivas con fuente y confianza.
+6. Actividad pasiva y medicion RTT separadas; valores RTT no disponibles se muestran como `—`.
+7. Hallazgos de IP candidata con score y nota tecnica.
+8. Timeline de auditoria.
+9. Hashes de integridad.
+10. Limitaciones tecnicas.
 
 ## Anexos CSV del ZIP
 
 - `annexes/audit-events.csv`: timeline tabular de eventos por caso.
 - `annexes/evidence-links.csv`: evidencias vinculadas y metadata.
 - `annexes/call-analysis.csv`: resumen por analisis de llamada.
+- `annexes/activity-stats.csv`: resumen por contacto con conteos pasivos por fuente y metricas RTT separadas.
+- `annexes/observed-activity.csv`: eventos pasivos atribuibles al caso con UTC, target, fuente, tipo, etiqueta y confianza; no contiene contenido ni IDs crudos de mensajes.
 - `annexes/candidate-ips.csv`: IPs candidatas con score, categoria, ASN/ORG heuristico, puertos, GeoIP y nota tecnica.
 - `annexes/network-captures.csv`: resumen tabular de capturas de red.
 - `annexes/csv-integrity.json`: hashes SHA-256 de los anexos CSV.
@@ -73,23 +78,24 @@ Los eventos `*_requested` se registran antes de construir el archivo para que qu
 
 El script `pnpm run qa:report-fixture` genera artefactos estables en `.runtime-logs/report-fixture/`:
 
-- `final-report-fixture.json`
-- `final-report-fixture.html`
-- `final-report-fixture.pdf`
-- `evidence-package-fixture.zip`
-- `qa-summary.json`
+- `evidence-package.json`
+- `final-report.json`
+- `final-report.html`
+- `final-report.pdf`
+- `evidence-package.zip`
+- `fixture-manifest.json`
 
 Validaciones actuales:
 
 - PDF multipagina.
-- Secciones HTML requeridas: estadisticas, hallazgos de IP candidata e integridad.
-- ZIP con `activity-stats.json` y `annexes/activity-stats.csv`.
+- Secciones HTML requeridas: señales observadas, actividad/medicion tecnica, hallazgos de IP candidata e integridad.
+- ZIP con `activity-stats.json`, `observed-activity.json`, `annexes/activity-stats.csv` y `annexes/observed-activity.csv`.
 - Marca de producto `WP MONITOR`.
 - Limitaciones tecnicas presentes.
 - Texto clave presente dentro del PDF: titulo, estadisticas, hallazgos, integridad, limitaciones y marca de desarrollo.
 - Ausencia de placeholders visibles: `undefined`, `null`, `NaN`, `[object Object]`.
 
-## QA Visual Pendiente
+## QA Visual
 
 El PDF debe validarse tambien renderizando una muestra a PNG y revisando:
 
@@ -99,4 +105,4 @@ El PDF debe validarse tambien renderizando una muestra a PNG y revisando:
 - Continuacion de timeline con encabezado repetido.
 - Hashes legibles en monospace.
 
-Estado local actual: `pdftoppm/pdfinfo` no esta disponible en PATH, por lo que el render PNG queda pendiente hasta instalar Poppler o exponer esas herramientas en el entorno.
+La fixture debe inspeccionarse con `pdfinfo` y una renderizacion `pdftoppm` disponible en el entorno de QA. La validacion automatizada comprueba estructura y contenido; la inspeccion visual confirma jerarquia, tablas y ausencia de cortes.

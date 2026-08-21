@@ -116,5 +116,7 @@ sequenceDiagram
 - La interfaz puede presentar hora local, pero los informes deben conservar UTC.
 - Las observaciones de tracking deben incluir `caseId` y `trackingSessionId`; el operador y la autorizacion pertenecen a la sesion durable.
 - Los detalles persistidos de mensajes/receipts pueden incluir `messageIdHash`, pero no el ID crudo ni contenido del mensaje.
+- El reporte de contacto conserva `caseId`, `trackingSessionId`, la lista pasiva atribuible y la duracion calculada con señales pasivas aunque no exista RTT.
+- El Evidence Package 1.1 incorpora `observedActivity`; el ZIP materializa `observed-activity.json` y `annexes/observed-activity.csv`, ambos cubiertos por hashes de integridad.
 - Un hash se calcula sobre una representacion canonica o archivo concreto; cualquier regeneracion produce un nuevo hash.
 - La procedencia debe viajar con el dato, no depender de memoria del operador.

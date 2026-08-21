@@ -160,6 +160,7 @@ export interface ObservedActivityResponse {
     active: boolean;
     caseId: string | null;
     trackingSessionId: string | null;
+    trackingStartedAt: string | null;
     events: ObservedActivityEvent[];
 }
 

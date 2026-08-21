@@ -27,7 +27,7 @@ interface ProfileData {
 }
 
 interface PatternsData {
-    hourly: Array<{ hour: number; total: number; online: number; pct: number }>;
+    hourly: Array<{ hour: number; total: number; conclusive?: number; online: number; pct: number }>;
     peakHour: number;
     avgSessionLength: number;
     totalOnlineMinutes: number;
@@ -43,6 +43,7 @@ interface ProfilePanelProps {
     profile: ProfileData | null;
     profileLoading: boolean;
     patterns: PatternsData | null;
+    trackingStartedAt: string | null;
     privacyScore: PrivacyScore | null;
     privacyMode: boolean;
     blurredNumber: string;
@@ -61,6 +62,7 @@ export function ProfilePanel({
     profile,
     profileLoading,
     patterns,
+    trackingStartedAt,
     privacyScore,
     privacyMode,
     blurredNumber,
@@ -102,13 +104,14 @@ export function ProfilePanel({
                 onStartEditName={onStartEditName}
                 onCancelEditName={onCancelEditName}
                 formatDateTime={formatDateTime}
+                trackingStartedAt={trackingStartedAt}
             />
 
             {profile?.isBusinessAccount && profile.businessProfile && (
                 <BusinessProfileCard profile={profile} />
             )}
 
-            {patterns && patterns.hourly.length > 0 && (
+            {patterns && patterns.hourly.some(item => (item.conclusive ?? item.online) > 0) && (
                 <ActivityPatternsCard patterns={patterns} />
             )}
 
@@ -132,6 +135,7 @@ function ContactInfoCard({
     onStartEditName,
     onCancelEditName,
     formatDateTime,
+    trackingStartedAt,
 }: Omit<ProfilePanelProps, 'profileLoading' | 'patterns' | 'privacyScore'>) {
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
@@ -201,7 +205,8 @@ function ContactInfoCard({
                     )}
                 </div>
                 <ProfileItem label="Verificado en WA" value={profile?.verifiedOnWhatsApp ? 'Si' : 'No'} />
-                <ProfileItem label="Tracking desde" value={profile?.addedAt ? formatDateTime(profile.addedAt) : '-'} />
+                <ProfileItem label="Sesión activa desde" value={trackingStartedAt ? formatDateTime(trackingStartedAt) : '-'} />
+                <ProfileItem label="Contacto registrado" value={profile?.addedAt ? formatDateTime(profile.addedAt) : '-'} />
                 {profile?.lastProfileUpdate && (
                     <ProfileItem label="Perfil actualizado" value={formatDateTime(profile.lastProfileUpdate)} />
                 )}

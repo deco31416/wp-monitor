@@ -65,16 +65,17 @@ Los estados oficiales observables por la version instalada incluyen `offer`, `ri
 | Presencia | Ultimo estado compatible; `Presencia no disponible` es un resultado valido |
 | Registros | Intentos tecnicos de la sesion; pueden ser cero en modo pasivo |
 | Inicio de seguimiento | Inicio de la sesion durable activa |
+| Contacto registrado | Fecha global en que el contacto se incorporo por primera vez; no es el inicio de la sesion actual |
 | Distribucion | Porcentaje de intentos tecnicos por clasificacion |
 | Latencia | Solo se muestra cuando existe una confirmacion RTT compatible |
 
 ## Pestañas
 
 - **Medicion:** serie RTT experimental; muestra indisponibilidad explicita cuando no existe evidencia.
-- **Actividad:** mensajes, recibos, presencia y llamadas observados dentro de la sesion activa.
+- **Actividad:** grafica horaria local y timeline de mensajes, recibos, presencia y llamadas observados dentro de la sesion activa. La grafica cuenta eventos reales cargados y no representa RTT.
 - **Resumen:** actividad pasiva, cobertura, periodos y distribucion tecnica separados.
 - **Patrones:** inferencias solo despues de cobertura RTT concluyente suficiente.
-- **Perfil:** identidad visible, alias y score de privacidad observado y explicable.
+- **Perfil:** identidad visible, alias, fecha de sesion activa, fecha global de registro y score de privacidad observado y explicable. El grafico de patrones RTT se oculta cuando toda la cobertura es inconclusa.
 - **Llamada:** captura especializada local y resultados historicos.
 
 ## Finalizar y reactivar
@@ -102,8 +103,8 @@ Compara verdad conocida con latencia, cobertura y expiracion. Conserva falsos po
 
 ## Informes de contacto
 
-- Bitacora JSON/HTML/PDF: transiciones de actividad.
-- Full report: RTT, actividad, estadisticas, inteligencia, perfil y llamadas disponibles.
-- Final case report: integra todos los elementos del caso y se genera desde Cases/Audit.
+- Bitacora JSON/HTML/PDF: señales pasivas y mediciones tecnicas separadas, con UTC, hora local y confianza.
+- Full report: alcance de caso/sesion, lista de actividad pasiva, RTT, estadisticas, perfil y patrones disponibles.
+- Final case report: integra señales pasivas, resumen tecnico, auditoria, llamadas y los demas elementos del caso desde Cases/Audit.
 
 Antes de exportar comprueba nombres completos, zona horaria, cobertura y que no aparezcan `undefined`, `null` o conclusiones absolutas.

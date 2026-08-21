@@ -6,7 +6,7 @@ function sampleEvidencePackage(): any {
     return {
         manifest: {
             packageType: 'evidence-package',
-            version: '1.0',
+            version: '1.1',
             software: {
                 name: 'WP MONITOR',
                 version: '2.6.0',
@@ -139,11 +139,27 @@ function sampleEvidencePackage(): any {
                         lastSeen: new Date('2026-06-18T00:00:00.000Z'),
                         lastOnline: new Date('2026-06-17T23:30:00.000Z'),
                         avgRtt: 88,
+                        observedActivity: {
+                            totalEvents: 2,
+                            activeEvents: 2,
+                            firstEvent: { timestamp: new Date('2026-06-17T18:00:00.000Z') },
+                            lastEvent: {
+                                source: 'receipt',
+                                type: 'delivered',
+                                label: 'Mensaje entregado',
+                                confidence: 'high',
+                                timestamp: new Date('2026-06-17T18:02:00.000Z'),
+                                timestampUtc: '2026-06-17T18:02:00.000Z',
+                            },
+                            bySource: { message: 1, receipt: 1 },
+                            confidence: { high: 2 },
+                            activeDays: 1,
+                        },
                         insights: {
                             periods: [
-                                { key: 'last24h', label: '24h', totalMeasurements: 300, onlineMeasurements: 120, onlinePct: 40, avgRtt: 80, changeOnlinePct: 5 },
-                                { key: 'last7d', label: '7d', totalMeasurements: 900, onlineMeasurements: 360, onlinePct: 40, avgRtt: 85, changeOnlinePct: -2 },
-                                { key: 'last30d', label: '30d', totalMeasurements: 1200, onlineMeasurements: 504, onlinePct: 42, avgRtt: 88, changeOnlinePct: null },
+                                { key: 'last24h', label: '24h', totalMeasurements: 300, conclusiveMeasurements: 240, onlineMeasurements: 120, onlinePct: 50, avgRtt: 80, changeOnlinePct: 5 },
+                                { key: 'last7d', label: '7d', totalMeasurements: 900, conclusiveMeasurements: 720, onlineMeasurements: 360, onlinePct: 50, avgRtt: 85, changeOnlinePct: -2 },
+                                { key: 'last30d', label: '30d', totalMeasurements: 1200, conclusiveMeasurements: 720, onlineMeasurements: 504, onlinePct: 70, avgRtt: 88, changeOnlinePct: null },
                             ],
                             dailyCoverage: [
                                 { date: '2026-06-17', totalMeasurements: 300, onlinePct: 40, coverageScore: 100 },
@@ -156,6 +172,29 @@ function sampleEvidencePackage(): any {
                             },
                         },
                     },
+                },
+            ],
+            observedActivity: [
+                {
+                    targetJid: 'synthetic-contact@s.whatsapp.net',
+                    events: [
+                        {
+                            source: 'message',
+                            type: 'outgoing',
+                            label: 'Mensaje enviado (text)',
+                            confidence: 'high',
+                            timestamp: new Date('2026-06-17T18:00:00.000Z'),
+                            timestampUtc: '2026-06-17T18:00:00.000Z',
+                        },
+                        {
+                            source: 'receipt',
+                            type: 'delivered',
+                            label: 'Mensaje entregado',
+                            confidence: 'high',
+                            timestamp: new Date('2026-06-17T18:02:00.000Z'),
+                            timestampUtc: '2026-06-17T18:02:00.000Z',
+                        },
+                    ],
                 },
             ],
             networkSummary: {
@@ -187,6 +226,7 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(report.summary.candidateIpCount, 1);
     assert.equal(report.summary.nonConclusiveIpObservationCount, 1);
     assert.equal(report.summary.activityStatsCount, 1);
+    assert.equal(report.summary.observedActivityEventCount, 2);
     assert.equal(report.summary.highestCandidateScore, 55);
     const [activityStats] = report.findings.activityStats;
     const [candidateIp] = report.findings.candidateIps;
@@ -201,13 +241,18 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(activityStats.conclusiveMeasurements, 720);
     assert.equal(activityStats.inconclusiveMeasurements, 480);
     assert.equal(activityStats.acknowledgedRttMeasurements, 780);
+    assert.equal(activityStats.observedEventCount, 2);
+    assert.equal(activityStats.observedBySource.receipt, 1);
+    assert.equal(report.findings.observedSignals[1]?.label, 'Mensaje entregado');
     assert.equal(candidateIp.networkIntelligence.org, 'Google');
     assert.equal(nonConclusiveIp.networkIntelligence.org, 'Akamai');
     assert.match(report.integrity.reportHash, /^[a-f0-9]{64}$/);
 
     const html = renderFinalCaseReportHtml(report);
     assert.match(html, /ASN\/ORG/);
-    assert.match(html, /Estadisticas de Actividad Observada/);
+    assert.match(html, /Señales de Actividad Observada/);
+    assert.match(html, /Mensaje entregado/);
+    assert.match(html, /Actividad y Medición Técnica/);
     assert.match(html, /720 \/ 1200/);
     assert.match(html, /Online \/ concl\. 24h/);
     assert.match(html, /85\/100/);
@@ -226,10 +271,12 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
         'manifest.json',
         'final-report.pdf',
         'activity-stats.json',
+        'observed-activity.json',
         'annexes/audit-events.csv',
         'annexes/evidence-links.csv',
         'annexes/call-analysis.csv',
         'annexes/activity-stats.csv',
+        'annexes/observed-activity.csv',
         'annexes/candidate-ips.csv',
         'annexes/non-conclusive-ip-observations.csv',
         'annexes/network-captures.csv',
