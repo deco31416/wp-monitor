@@ -29,3 +29,24 @@ test('shows a final empty state instead of an endless loading skeleton', () => {
     expect(screen.getByText(/incluidos en las exportaciones/i)).toBeInTheDocument();
     expect(screen.queryByText('Esperando cambios de estado...')).not.toBeInTheDocument();
 });
+
+test('warns when quick exports contain only the loaded observed-event page', () => {
+    render(
+        <ActivityJournalPanel
+            activity={[]}
+            observedEvents={[{
+                source: 'message', type: 'outgoing', label: 'Mensaje enviado', confidence: 'high',
+                timestamp: '2026-08-21T17:51:00.000Z', timestampUtc: '2026-08-21T17:51:00.000Z',
+            }]}
+            observedEventTotal={250}
+            observedEventsTruncated
+            jid="synthetic-contact@s.whatsapp.net"
+            displayNumber="synthetic-number"
+            privacyMode={false}
+            onDownloadFullReport={() => undefined}
+        />,
+    );
+
+    expect(screen.getByText('1 de 250 observados · 0 técnicos')).toBeInTheDocument();
+    expect(screen.getByText(/incluye 1 de 250 señales/i)).toBeInTheDocument();
+});

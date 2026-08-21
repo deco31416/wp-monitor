@@ -75,4 +75,5 @@ Incluye objetivo, archivos, riesgo, pruebas, capturas anonimizadas si cambia UI,
 
 - [API y eventos](api-reference.md)
 - [Calidad y pruebas](quality-testing.md)
+- [Especificacion de actividad pasiva e informes](passive-activity-report-spec.md)
 - [Proceso de release](release-process.md)

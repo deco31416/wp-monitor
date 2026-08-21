@@ -12,6 +12,7 @@ import { PRIMARY_OPERATOR_ID } from './operator-auth.js';
 import type { OperatorUserDoc } from './operator-auth.js';
 import { buildStatsInsights } from './stats-insights.js';
 import type { StatsInsights } from './stats-insights.js';
+import { buildPageMetadata, type PageMetadata } from './page-metadata.js';
 import {
     CONCLUSIVE_TRACKER_STATE_REGEX,
     ONLINE_TRACKER_STATE_REGEX,
@@ -941,6 +942,79 @@ export async function getObservedActivityEventsForCase(
     }
 }
 
+export async function countObservedActivityEvents(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<number> {
+    if (!db) return 0;
+    try {
+        return await activityEvents.countDocuments(
+            buildObservedActivityScope(jid, caseId, trackingSessionId),
+        );
+    } catch (err) {
+        console.error('[DB] Error counting observed activity events:', err);
+        return 0;
+    }
+}
+
+export async function getObservedActivityBounds(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<{ firstEventAt: Date | null; lastEventAt: Date | null }> {
+    if (!db) return { firstEventAt: null, lastEventAt: null };
+    try {
+        const [result] = await activityEvents.aggregate<{
+            firstEventAt: Date | null;
+            lastEventAt: Date | null;
+        }>([
+            { $match: buildObservedActivityScope(jid, caseId, trackingSessionId) },
+            {
+                $group: {
+                    _id: null,
+                    firstEventAt: { $min: '$timestamp' },
+                    lastEventAt: { $max: '$timestamp' },
+                },
+            },
+        ]).toArray();
+        return result || { firstEventAt: null, lastEventAt: null };
+    } catch (err) {
+        console.error('[DB] Error fetching observed activity bounds:', err);
+        return { firstEventAt: null, lastEventAt: null };
+    }
+}
+
+export function buildObservationWindow(
+    technicalFirst: Date | null,
+    technicalLast: Date | null,
+    observedFirst: Date | null,
+    observedLast: Date | null,
+): { firstSeen: Date | null; lastSeen: Date | null; durationMs: number; label: string } {
+    const firstCandidates = [technicalFirst, observedFirst].filter((value): value is Date => (
+        value instanceof Date && Number.isFinite(value.getTime())
+    ));
+    const lastCandidates = [technicalLast, observedLast].filter((value): value is Date => (
+        value instanceof Date && Number.isFinite(value.getTime())
+    ));
+    const firstSeen = firstCandidates.length > 0
+        ? new Date(Math.min(...firstCandidates.map(value => value.getTime())))
+        : null;
+    const lastSeen = lastCandidates.length > 0
+        ? new Date(Math.max(...lastCandidates.map(value => value.getTime())))
+        : null;
+    const durationMs = firstSeen && lastSeen
+        ? Math.max(0, lastSeen.getTime() - firstSeen.getTime())
+        : 0;
+    const durationHours = durationMs / (1000 * 60 * 60);
+    const durationDays = durationHours / 24;
+    const label = durationDays >= 1
+        ? `${Math.floor(durationDays)}d ${Math.floor(durationHours % 24)}h`
+        : `${Math.floor(durationHours)}h ${Math.floor((durationMs / 60000) % 60)}m`;
+
+    return { firstSeen, lastSeen, durationMs, label };
+}
+
 export async function getObservedActivitySummary(
     jid: string,
     days: number = 30,
@@ -1232,6 +1306,7 @@ export async function generateReport(
         trackingSessionId: string | null;
     };
     observedActivityEvents: ObservedActivityListItem[];
+    observedActivityPage: PageMetadata;
     summary: {
         trackingDuration: string;
         totalAttempts: number;
@@ -1244,40 +1319,31 @@ export async function generateReport(
         estimatedDailyUsage: string | null;
     };
 }> {
-    const [contact, stats, patterns, activity, recent, observedEvents] = await Promise.all([
+    const observedEventLimit = 5000;
+    const [contact, stats, patterns, activity, recent, observedEvents, observedEventCount, observedBounds] = await Promise.all([
         getContactProfile(jid),
         getStateDistribution(jid, caseId, trackingSessionId),
         getOnlinePatterns(jid, trackingSessionId),
         getActivityHistory(jid, 200, trackingSessionId),
         getRecentMeasurements(jid, 500, trackingSessionId),
-        trackingSessionId ? getObservedActivityEvents(jid, trackingSessionId, 5000) : Promise.resolve([]),
+        trackingSessionId ? getObservedActivityEvents(jid, trackingSessionId, observedEventLimit) : Promise.resolve([]),
+        trackingSessionId ? countObservedActivityEvents(jid, caseId, trackingSessionId) : Promise.resolve(0),
+        trackingSessionId
+            ? getObservedActivityBounds(jid, caseId, trackingSessionId)
+            : Promise.resolve({ firstEventAt: null, lastEventAt: null }),
     ]);
 
     // Calculate the observation window from both technical measurements and
     // passive events. Passive-only sessions must not report a zero/unknown
     // duration merely because RTT is unavailable.
-    const firstCandidates = [stats.firstSeen, stats.observedActivity.firstEvent?.timestamp]
-        .filter((value): value is Date => value instanceof Date);
-    const lastCandidates = [stats.lastSeen, stats.observedActivity.lastEvent?.timestamp]
-        .filter((value): value is Date => value instanceof Date);
-    const firstSeen = firstCandidates.length > 0
-        ? new Date(Math.min(...firstCandidates.map(value => value.getTime())))
-        : null;
-    const lastSeen = lastCandidates.length > 0
-        ? new Date(Math.max(...lastCandidates.map(value => value.getTime())))
-        : null;
-    const durationMs = firstSeen && lastSeen
-        ? Math.max(0, lastSeen.getTime() - firstSeen.getTime())
-        : 0;
-    const durationHours = durationMs / (1000 * 60 * 60);
+    const observationWindow = buildObservationWindow(
+        stats.firstSeen,
+        stats.lastSeen,
+        observedBounds.firstEventAt,
+        observedBounds.lastEventAt,
+    );
+    const durationHours = observationWindow.durationMs / (1000 * 60 * 60);
     const durationDays = durationHours / 24;
-
-    let trackingDuration = '';
-    if (durationDays >= 1) {
-        trackingDuration = `${Math.floor(durationDays)}d ${Math.floor(durationHours % 24)}h`;
-    } else {
-        trackingDuration = `${Math.floor(durationHours)}h ${Math.floor((durationMs / 60000) % 60)}m`;
-    }
 
     // Peak activity hour formatted
     const peakHour = patterns.peakHour >= 0 ? `${patterns.peakHour}:00 - ${patterns.peakHour + 1}:00` : null;
@@ -1291,6 +1357,11 @@ export async function generateReport(
         : dailyMinutes > 60
             ? `${Math.floor(dailyMinutes / 60)}h ${dailyMinutes % 60}m`
             : `${dailyMinutes}m`;
+    const observedActivityPage = buildPageMetadata(
+        observedEvents.length,
+        observedEventCount,
+        observedEventLimit,
+    );
 
     return {
         generatedAt: new Date(),
@@ -1304,11 +1375,12 @@ export async function generateReport(
             trackingSessionId: trackingSessionId || null,
         },
         observedActivityEvents: observedEvents,
+        observedActivityPage,
         summary: {
-            trackingDuration,
+            trackingDuration: observationWindow.label,
             totalAttempts: stats.totalMeasurements,
             totalDataPoints: stats.conclusiveMeasurements,
-            totalObservedEvents: stats.observedActivity.totalEvents,
+            totalObservedEvents: observedActivityPage.total,
             measurementAvailable: stats.acknowledgedRttMeasurements > 0,
             avgResponseTime: stats.acknowledgedRttMeasurements > 0 ? stats.avgRtt : null,
             onlinePercentage: stats.conclusiveMeasurements > 0 ? stats.online : null,

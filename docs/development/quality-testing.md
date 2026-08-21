@@ -27,7 +27,7 @@ pnpm run qa:report-fixture
 | Evidence Package | manifiesto, hashes y ZIP |
 | Stats | insights y reglas derivadas |
 | Meta ranges | clasificacion de infraestructura |
-| Frontend | arranque y flujos cubiertos por Testing Library |
+| Frontend | arranque, autenticacion, actividad pasiva, agrupacion horaria, truncamiento, bitacora, fechas de perfil y semantica de evidencia cubiertos por Testing Library |
 
 ## Matriz de calidad
 
@@ -110,4 +110,4 @@ Revisa navegacion colapsada, textos largos, tablas, scroll, botones, tooltips y 
 
 Registra version, commit, sistema, Node/pnpm, comandos, resultados, fecha UTC, capturas anonimizadas y responsable. Un `PASS` sin salida verificable no es suficiente para una auditoria formal.
 
-Linea base de `Unreleased` validada el 2026-08-21: 127 pruebas backend y 11 frontend, typechecks, lint y builds exitosos; `pnpm audit` sin vulnerabilidades conocidas. El smoke local observo una sesion `passive` con cero mediciones tecnicas y persistio un mensaje real saliente mas su receipt `delivered`, sin identificadores crudos en detalles.
+Linea base de `Unreleased` validada el 2026-08-21: la cifra exacta se registra en el changelog y salida de CI. La cobertura incluye duracion pasiva, agrupacion horaria, paginas truncadas, estados RTT vacios, reportes JSON/HTML/PDF/ZIP y privacidad de receipts; typechecks, lint, builds y `pnpm audit` forman parte de la misma puerta.

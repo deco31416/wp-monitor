@@ -195,6 +195,7 @@ function sampleEvidencePackage(): any {
                             timestampUtc: '2026-06-17T18:02:00.000Z',
                         },
                     ],
+                    page: { returned: 2, total: 2, truncated: false, limit: 5000 },
                 },
             ],
             networkSummary: {
@@ -227,6 +228,8 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(report.summary.nonConclusiveIpObservationCount, 1);
     assert.equal(report.summary.activityStatsCount, 1);
     assert.equal(report.summary.observedActivityEventCount, 2);
+    assert.equal(report.summary.observedActivityTotalAvailable, 2);
+    assert.equal(report.summary.observedActivityTruncated, false);
     assert.equal(report.summary.highestCandidateScore, 55);
     const [activityStats] = report.findings.activityStats;
     const [candidateIp] = report.findings.candidateIps;
@@ -261,6 +264,22 @@ test('builds final reports with candidate IP limitations and integrity', () => {
 
     const pdf = renderFinalCaseReportPdf(report);
     assert.equal(pdf.subarray(0, 5).toString('ascii'), '%PDF-');
+});
+
+test('declares when passive activity is truncated instead of presenting a partial export as complete', () => {
+    const evidencePackage = sampleEvidencePackage();
+    evidencePackage.sections.observedActivity[0].page = {
+        returned: 2,
+        total: 8,
+        truncated: true,
+        limit: 2,
+    };
+
+    const report = buildFinalCaseReport(evidencePackage);
+    assert.equal(report.summary.observedActivityEventCount, 2);
+    assert.equal(report.summary.observedActivityTotalAvailable, 8);
+    assert.equal(report.summary.observedActivityTruncated, true);
+    assert.match(renderFinalCaseReportHtml(report), /incluye 2 de 8 señales disponibles/i);
 });
 
 test('builds evidence ZIP with CSV annexes and integrity manifest', () => {

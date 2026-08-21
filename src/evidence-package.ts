@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
-import { getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
+import { countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
+import { buildPageMetadata } from './page-metadata.js';
 
 function resolveSoftwareVersion(): string {
     if (process.env.npm_package_version) return process.env.npm_package_version;
@@ -80,10 +81,18 @@ export async function buildEvidencePackage(caseId: string) {
         targetJid,
         stats: await getStateDistribution(targetJid, caseId),
     })));
-    const observedActivity = await Promise.all(targetJids.map(async targetJid => ({
-        targetJid,
-        events: await getObservedActivityEventsForCase(targetJid, caseId),
-    })));
+    const observedActivity = await Promise.all(targetJids.map(async targetJid => {
+        const limit = 5000;
+        const [events, total] = await Promise.all([
+            getObservedActivityEventsForCase(targetJid, caseId, limit),
+            countObservedActivityEvents(targetJid, caseId),
+        ]);
+        return {
+            targetJid,
+            events,
+            page: buildPageMetadata(events.length, total, limit),
+        };
+    }));
     const networkSummary = buildNetworkSummary(auditEvents);
     const generatedAt = new Date().toISOString();
 
@@ -123,7 +132,14 @@ export async function buildEvidencePackage(caseId: string) {
             { name: 'evidenceLinks', format: 'json', sha256: sectionHashes.evidenceLinks, count: evidenceLinks.length },
             { name: 'callAnalysis', format: 'json', sha256: sectionHashes.callAnalysis, count: callAnalyses.length },
             { name: 'activityStats', format: 'json', sha256: sectionHashes.activityStats, count: activityStats.length },
-            { name: 'observedActivity', format: 'json', sha256: sectionHashes.observedActivity, count: observedActivity.reduce((sum, item) => sum + item.events.length, 0) },
+            {
+                name: 'observedActivity',
+                format: 'json',
+                sha256: sectionHashes.observedActivity,
+                count: observedActivity.reduce((sum, item) => sum + item.events.length, 0),
+                totalAvailable: observedActivity.reduce((sum, item) => sum + item.page.total, 0),
+                truncated: observedActivity.some(item => item.page.truncated),
+            },
             { name: 'networkSummary', format: 'json', sha256: sectionHashes.networkSummary },
         ],
         limitations: [
@@ -266,6 +282,10 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
             timestampUtc: event.timestampUtc,
         })))
         .sort((a: any, b: any) => new Date(a.timestampUtc).getTime() - new Date(b.timestampUtc).getTime());
+    const observedActivityTotalAvailable = (evidencePackage.sections.observedActivity || [])
+        .reduce((sum: number, entry: any) => sum + (entry.page?.total ?? entry.events?.length ?? 0), 0);
+    const observedActivityTruncated = (evidencePackage.sections.observedActivity || [])
+        .some((entry: any) => entry.page?.truncated === true);
 
     const operators = Array.from(new Set(auditEvents.map(event => event.operatorName).filter(Boolean)));
     const targets = Array.from(new Set([
@@ -304,6 +324,8 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         callAnalysisCount: callAnalysis.length,
         activityStatsCount: activityStats.length,
         observedActivityEventCount: observedSignals.length,
+        observedActivityTotalAvailable,
+        observedActivityTruncated,
         networkCaptureCount: evidencePackage.sections.networkSummary?.captureStopCount || 0,
         candidateIpCount: candidateIps.length,
         nonConclusiveIpObservationCount: nonConclusiveIpObservations.length,
@@ -641,6 +663,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     <h2>Señales de Actividad Observada</h2>
     <div class="notice">
       Eventos pasivos atribuibles al caso. Se documenta tipo, fuente y confianza, sin incluir contenido de mensajes.
+      ${report.summary.observedActivityTruncated ? `El anexo incluye ${escapeHtml(report.summary.observedActivityEventCount)} de ${escapeHtml(report.summary.observedActivityTotalAvailable)} señales disponibles; revise los limites declarados en el JSON.` : ''}
     </div>
     <div class="table-wrap">
       <table>
@@ -657,7 +680,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Target</th><th>Señales / días</th><th>M / C / P / L</th><th>RTT concl. / intentos</th><th>Online RTT</th><th>Online / concl. 24h</th><th>Online / concl. 7d</th><th>Online / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
+        <thead><tr><th>Target</th><th>Señales 30d / días</th><th>M / C / P / L (30d)</th><th>RTT concl. / intentos</th><th>Online RTT</th><th>Online / concl. 24h</th><th>Online / concl. 7d</th><th>Online / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
         <tbody>${activityRows}</tbody>
       </table>
     </div>
@@ -907,6 +930,9 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
 
     pdf.heading('Senales de actividad observada');
     pdf.paragraph('Eventos pasivos atribuibles al caso. Se documenta tipo, fuente y confianza, sin incluir contenido de mensajes.', 92, 8, '9A3412');
+    if (report.summary.observedActivityTruncated) {
+        pdf.paragraph(`El anexo incluye ${report.summary.observedActivityEventCount} de ${report.summary.observedActivityTotalAvailable} senales disponibles; revise los limites declarados en el JSON.`, 92, 8, '9A3412');
+    }
     const observedSignals = report.findings.observedSignals.slice(-30).reverse();
     if (observedSignals.length === 0) {
         pdf.paragraph('No se registraron senales observables atribuibles al caso.');

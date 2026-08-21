@@ -161,6 +161,12 @@ export interface ObservedActivityResponse {
     caseId: string | null;
     trackingSessionId: string | null;
     trackingStartedAt: string | null;
+    page: {
+        returned: number;
+        total: number;
+        truncated: boolean;
+        limit: number;
+    };
     events: ObservedActivityEvent[];
 }
 

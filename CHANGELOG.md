@@ -34,6 +34,7 @@ Maintainer guidance:
 
 - Added a real session-scoped hourly chart for passive WhatsApp signals, separating messages, delivery confirmations, presence, and calls from experimental RTT measurements.
 - Added passive activity timelines to contact JSON/HTML/PDF exports and case JSON/HTML/PDF/ZIP reports, including `observed-activity.json`, `annexes/observed-activity.csv`, per-source counts, confidence, timestamps, and integrity hashes.
+- Added an implementable passive-activity/report specification with requirement-to-test traceability and explicit REST, contact-report, and Evidence Package `1.1` contracts.
 - Added passive-by-default WhatsApp observation for real outgoing/incoming messages and delivery/read/playback receipts, with monotonic receipt correlation, bounded in-memory state, opaque message-ID fingerprints, and a dedicated confirmation count in the dashboard.
 - Added behavioral-intelligence coverage gates so routines, habits, availability, correlations, and anomalies remain unavailable until the active tracking session has at least 100 conclusive RTT measurements across 3 active days.
 - Added durable case-scoped tracking sessions with operator, authorization, probe method, lifecycle status, and per-JID active-session enforcement.
@@ -46,6 +47,7 @@ Maintainer guidance:
 - Replaced the permanent loading skeleton shown for an empty technical history with a definitive passive-session state, and changed the bitacora exports so real observed events remain available when RTT has no data.
 - Prevented the Profile tab from rendering a zero-only RTT pattern chart and separated the active tracking-session start from the contact's original registration date.
 - Corrected contact-report duration and totals for passive-only sessions; final reports now show unavailable RTT values as `—` instead of misleading zero percentages.
+- Prevented contact views and evidence exports from silently presenting limited event pages as complete; APIs and reports now declare returned, available, limit, and truncation metadata.
 - Prevented historical measurements, live signals, message receipts, profiles, and call-analysis history from crossing active tracking-session or case boundaries; stopping/reactivating a contact now starts a clean observation session without deleting prior evidence.
 - Fixed `/api/intel/correlation` route precedence so Express no longer consumes `correlation` as a dynamic JID.
 - Corrected real-message receipt races and cross-contact message-ID collisions, excluded synthetic probes from observed-message evidence, and stopped using ambiguous upstream timestamps as local delivery latency.
@@ -89,8 +91,8 @@ Maintainer guidance:
 
 ### Verification
 
-- Backend tests: 127/127 passed.
-- Frontend tests: 13/13 passed.
+- Backend tests: 133/133 passed.
+- Frontend tests: 16/16 passed.
 - Backend/frontend typechecks, frontend lint, and production builds passed.
 - Full and production-only pnpm audits reported no known vulnerabilities.
 - Local runtime smoke testing on Node.js 24.19.0 confirmed MongoDB, Redis, WhatsApp, and automatic restoration of one authorized passive session. The real contact report returned 5 persisted observed events, zero technical attempts, unavailable RTT, a 22-minute observation window, and the expected tracking-session scope without printing private identifiers.
@@ -98,7 +100,7 @@ Maintainer guidance:
 - Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, passive-activity JSON/CSV, and per-artifact SHA-256 metadata.
 - Native PDF inspection with `pdfinfo`/`pdftoppm` confirmed a valid two-page A4 document with readable passive-signal, technical-measurement, candidate-IP, audit, integrity, and limitation sections without visible clipping.
 - Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set.
-- Documentation relative-link validation passed across 55 Markdown files.
+- Documentation relative-link validation passed across 61 Markdown files.
 
 ### Migration Notes
 

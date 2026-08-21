@@ -164,6 +164,7 @@ function syntheticEvidencePackage(): any {
                         timestampUtc: '2026-06-17T18:02:00.000Z',
                     },
                 ],
+                page: { returned: 2, total: 2, truncated: false, limit: 5000 },
             }],
             networkSummary: {
                 captureStartCount: 1,

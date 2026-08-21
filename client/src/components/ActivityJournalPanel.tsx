@@ -23,6 +23,8 @@ interface JournalEntry {
 interface ActivityJournalPanelProps {
     activity: ActivityEntry[];
     observedEvents: ObservedActivityEvent[];
+    observedEventTotal?: number;
+    observedEventsTruncated?: boolean;
     jid: string;
     displayNumber: string;
     privacyMode: boolean;
@@ -38,6 +40,8 @@ function isNoAckState(value: string): boolean {
 export function ActivityJournalPanel({
     activity,
     observedEvents,
+    observedEventTotal = observedEvents.length,
+    observedEventsTruncated = false,
     jid,
     displayNumber,
     privacyMode,
@@ -55,6 +59,8 @@ export function ActivityJournalPanel({
             generatedAt: new Date().toISOString(),
             summary: {
                 observedEvents: observedEvents.length,
+                observedEventsAvailable: observedEventTotal,
+                observedEventsTruncated,
                 technicalEvents: entries.length,
                 totalEvents: observedEvents.length + entries.length,
                 rttAvailable: entries.some(entry => entry.rtt > 0 && !isNoAckState(entry.state)),
@@ -115,7 +121,7 @@ export function ActivityJournalPanel({
                     <FileText size={14} className="text-accent" />
                     <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitácora de sesión</h5>
                     <span className="badge-neutral !text-[9px] !py-0 !px-1.5">
-                        {observedEvents.length} observados · {entries.length} técnicos
+                        {observedEventsTruncated ? `${observedEvents.length} de ${observedEventTotal}` : observedEvents.length} observados · {entries.length} técnicos
                     </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -138,6 +144,12 @@ export function ActivityJournalPanel({
                     </button>
                 </div>
             </div>
+
+            {observedEventsTruncated && (
+                <div className="border-b border-warning/30 bg-warning/10 px-5 py-2 text-[11px] text-warning">
+                    Esta exportación rápida incluye {observedEvents.length} de {observedEventTotal} señales. Usa “Completo” para el reporte ampliado de la sesión.
+                </div>
+            )}
 
             {entries.length === 0 ? (
                 <div className="p-6 text-center">

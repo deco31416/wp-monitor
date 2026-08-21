@@ -222,6 +222,7 @@ export function ContactCard({
     const [stats, setStats] = useState<StatsData | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
     const [observedActivity, setObservedActivity] = useState<ObservedActivityEvent[]>([]);
+    const [observedActivityPage, setObservedActivityPage] = useState({ returned: 0, total: 0, truncated: false, limit: 200 });
     const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(null);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [patterns, setPatterns] = useState<PatternsData | null>(null);
@@ -482,6 +483,12 @@ export function ContactCard({
             .then(r => r.json())
             .then((response: ObservedActivityResponse) => {
                 setObservedActivity(Array.isArray(response.events) ? response.events : []);
+                setObservedActivityPage(response.page || {
+                    returned: Array.isArray(response.events) ? response.events.length : 0,
+                    total: Array.isArray(response.events) ? response.events.length : 0,
+                    truncated: false,
+                    limit: 200,
+                });
                 setTrackingStartedAt(response.trackingStartedAt || null);
             })
             .catch(console.error);
@@ -1072,6 +1079,8 @@ export function ContactCard({
                             <ActivityJournalPanel
                                 activity={activity}
                                 observedEvents={observedActivity}
+                                observedEventTotal={observedActivityPage.total}
+                                observedEventsTruncated={observedActivityPage.truncated}
                                 jid={jid}
                                 displayNumber={displayNumber}
                                 privacyMode={privacyMode}
@@ -1081,7 +1090,11 @@ export function ContactCard({
                         )}
 
                         {activePanel === 'activity' && (
-                            <ActivityLogPanel events={observedActivity} formatDateTime={formatDateTime} />
+                            <ActivityLogPanel
+                                events={observedActivity}
+                                page={observedActivityPage}
+                                formatDateTime={formatDateTime}
+                            />
                         )}
 
                         {activePanel === 'stats' && (

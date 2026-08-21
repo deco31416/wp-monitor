@@ -3,9 +3,11 @@ import clsx from 'clsx';
 import { BarChart3, History } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ObservedActivityEvent } from '../types';
+import { buildHourlyActivity } from './activity-chart';
 
 interface ActivityLogPanelProps {
     events: ObservedActivityEvent[];
+    page?: { returned: number; total: number; truncated: boolean; limit: number };
     formatDateTime: (value: string | null) => string;
 }
 
@@ -23,8 +25,9 @@ function confidenceLabel(confidence: ObservedActivityEvent['confidence']): strin
     return 'no disponible';
 }
 
-export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelProps) {
+export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPanelProps) {
     const hourly = useMemo(() => buildHourlyActivity(events), [events]);
+    const totalEvents = page?.total ?? events.length;
 
     return (
         <div className="space-y-4">
@@ -39,7 +42,9 @@ export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelPro
                                 Actividad observada por hora local. Cada barra representa eventos reales de esta sesión, no mediciones RTT.
                             </p>
                         </div>
-                        <span className="badge-neutral !text-[9px] !py-0 !px-1.5 w-fit">{events.length} eventos cargados</span>
+                        <span className="badge-neutral !text-[9px] !py-0 !px-1.5 w-fit">
+                            {page?.truncated ? `${events.length} de ${totalEvents} eventos cargados` : `${events.length} eventos cargados`}
+                        </span>
                     </div>
                     <div className="h-[220px]" aria-label="Gráfica de actividad observada por hora">
                         <ResponsiveContainer width="100%" height="100%">
@@ -74,6 +79,12 @@ export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelPro
                 </section>
             )}
 
+            {page?.truncated && (
+                <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
+                    La vista muestra los {page.returned} eventos más recientes de {page.total}. Usa el reporte completo para obtener una exportación ampliada de la sesión.
+                </div>
+            )}
+
             <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                 <div className="flex items-center justify-between gap-3 mb-4">
                     <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
@@ -100,29 +111,6 @@ export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelPro
             </section>
         </div>
     );
-}
-
-function buildHourlyActivity(events: ObservedActivityEvent[]) {
-    const buckets = Array.from({ length: 24 }, (_, hour) => ({
-        hour: `${String(hour).padStart(2, '0')}:00`,
-        messages: 0,
-        receipts: 0,
-        presence: 0,
-        calls: 0,
-    }));
-
-    events.forEach(event => {
-        const date = new Date(event.timestamp);
-        if (Number.isNaN(date.getTime())) return;
-        const bucket = buckets[date.getHours()];
-        if (!bucket) return;
-        if (event.source === 'message') bucket.messages += 1;
-        if (event.source === 'receipt') bucket.receipts += 1;
-        if (event.source === 'presence') bucket.presence += 1;
-        if (event.source === 'call') bucket.calls += 1;
-    });
-
-    return buckets;
 }
 
 function ActivityTimelineRow({

@@ -24,7 +24,7 @@ import type { ProbeMethod } from './tracker.js';
 import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
 import { isSyntheticProbeId, isSyntheticProbeMessage } from './probe-messages.js';
 import { MessageReceiptRegistry, fingerprintMessageId, type MessageReceiptTransition } from './message-receipts.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getObservedActivityEvents, countObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
@@ -50,6 +50,7 @@ import { createPublicCheckInSubmitRateLimitGuard, getClientIp } from './check-in
 import { extractCookieValue, getSessionCookieName, isTrustedRequestOrigin } from './access-control.js';
 import { OperatorAuthService } from './operator-auth.js';
 import { createApiOriginGuard, createApiSessionGuard, registerAuthRoutes } from './routes/auth.js';
+import { buildPageMetadata } from './page-metadata.js';
 
 const originalConsoleLog = console.log.bind(console);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -2489,22 +2490,21 @@ app.get('/api/contact/:jid/activity', async (req, res) => {
             caseId: null,
             trackingSessionId: null,
             trackingStartedAt: null,
-            summary: null,
+            page: buildPageMetadata(0, 0, 0),
             events: [],
         });
         return;
     }
 
     const limit = parseLimit(req.query.limit, 50, 200);
-    const [events, summary] = await Promise.all([
+    const [events, total] = await Promise.all([
         getObservedActivityEvents(
             jidResult.value!,
             entry.trackingSession.trackingSessionId,
             limit,
         ),
-        getObservedActivitySummary(
+        countObservedActivityEvents(
             jidResult.value!,
-            30,
             entry.trackingSession.caseId,
             entry.trackingSession.trackingSessionId,
         ),
@@ -2514,7 +2514,7 @@ app.get('/api/contact/:jid/activity', async (req, res) => {
         caseId: entry.trackingSession.caseId,
         trackingSessionId: entry.trackingSession.trackingSessionId,
         trackingStartedAt: entry.trackingSession.startedAt,
-        summary,
+        page: buildPageMetadata(events.length, total, limit),
         events,
     });
 });

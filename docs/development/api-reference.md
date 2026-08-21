@@ -55,6 +55,7 @@ Creacion minima:
 | GET | `/api/contacts/history` |
 | GET | `/api/history/:jid` |
 | GET | `/api/activity/:jid` |
+| GET | `/api/contact/:jid/activity?limit=` |
 | GET | `/api/contact/:jid/live-state` |
 | GET | `/api/contact/:jid/signals` |
 | GET | `/api/stats/:jid` |
@@ -66,6 +67,8 @@ Creacion minima:
 `GET /api/stats/:jid` informa `online`, `standby`, `calibrating`, `noAck` y `unknown` como porcentajes separados. `offline` se conserva unicamente como alias de compatibilidad de `noAck`.
 
 Las rutas de historia, actividad, estado, estadisticas, perfil, patrones, inteligencia, privacidad, reportes y llamadas por JID requieren una sesion de tracking activa. Sus consultas de evidencia se limitan al `trackingSessionId` o `caseId` correspondiente; no son vistas globales por numero.
+
+`GET /api/contact/:jid/activity` devuelve `caseId`, `trackingSessionId`, `trackingStartedAt`, eventos pasivos y `page { returned, total, truncated, limit }`. La vista admite hasta 200 eventos y declara truncamiento cuando existen mas. El resumen agregado se obtiene por `/api/stats/:jid`, evitando recalcularlo dos veces en cada refresco. Consulta la [especificacion verificable](passive-activity-report-spec.md).
 
 ## Inteligencia e informes de contacto
 
@@ -82,6 +85,8 @@ Las rutas de historia, actividad, estado, estadisticas, perfil, patrones, inteli
 | GET | `/api/intel/correlation` |
 | GET | `/api/privacy-score/:jid` |
 | GET | `/api/anomalies/:jid` |
+
+El reporte de contacto incluye `scope`, `observedActivityEvents`, `observedActivityPage` y `summary.totalObservedEvents`. El limite ampliado es 5000; si se supera, `truncated=true` evita presentar la exportacion como completa.
 
 ## Check-In
 
