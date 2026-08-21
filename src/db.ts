@@ -51,6 +51,15 @@ export interface ActivityEventDoc {
     timestampUtc: string;
 }
 
+export interface ObservedActivityListItem {
+    source: ActivityEventSource;
+    type: string;
+    label: string;
+    confidence: ActivityEventDoc['confidence'];
+    timestamp: Date;
+    timestampUtc: string;
+}
+
 export interface ContactDoc {
     jid: string;
     number: string;
@@ -637,11 +646,15 @@ export async function getActiveContacts(): Promise<ContactDoc[]> {
 /**
  * Get recent measurements for a contact (last N entries)
  */
-export async function getRecentMeasurements(jid: string, limit: number = 200): Promise<MeasurementDoc[]> {
+export async function getRecentMeasurements(
+    jid: string,
+    limit: number = 200,
+    trackingSessionId?: string,
+): Promise<MeasurementDoc[]> {
     if (!db) return [];
     try {
         return await measurements
-            .find({ jid })
+            .find({ jid, ...(trackingSessionId ? { trackingSessionId } : {}) })
             .sort({ timestamp: -1 })
             .limit(limit)
             .toArray()
@@ -801,7 +814,11 @@ export async function updateTrackingSessionProbeMethod(
 /**
  * Get activity state changes (transitions) for a contact
  */
-export async function getActivityHistory(jid: string, limit: number = 50): Promise<Array<{
+export async function getActivityHistory(
+    jid: string,
+    limit: number = 50,
+    trackingSessionId?: string,
+): Promise<Array<{
     state: string;
     timestamp: Date;
     rtt: number;
@@ -810,7 +827,7 @@ export async function getActivityHistory(jid: string, limit: number = 50): Promi
     try {
         // Get measurements and detect state transitions
         const docs = await measurements
-            .find({ jid })
+            .find({ jid, ...(trackingSessionId ? { trackingSessionId } : {}) })
             .sort({ timestamp: -1 })
             .limit(500)
             .toArray();
@@ -840,7 +857,59 @@ export async function getActivityHistory(jid: string, limit: number = 50): Promi
     }
 }
 
-export async function getObservedActivitySummary(jid: string, days: number = 30, caseId?: string): Promise<{
+export function buildObservedActivityScope(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Record<string, unknown> {
+    return {
+        ...buildObservationScope(jid, caseId),
+        ...(trackingSessionId ? { trackingSessionId } : {}),
+        // Historical reaction probes were persisted before probes carried an
+        // explicit classification. Keep them out unless they were reviewed as
+        // genuine user activity by the current message pipeline.
+        $nor: [{
+            source: 'message',
+            'details.messageType': 'reaction',
+            'details.syntheticProbe': { $ne: false },
+        }],
+    };
+}
+
+export async function getObservedActivityEvents(
+    jid: string,
+    trackingSessionId: string,
+    limit: number = 50,
+): Promise<ObservedActivityListItem[]> {
+    if (!db) return [];
+    try {
+        return await activityEvents
+            .find(buildObservedActivityScope(jid, undefined, trackingSessionId), {
+                projection: {
+                    _id: 0,
+                    source: 1,
+                    type: 1,
+                    label: 1,
+                    confidence: 1,
+                    timestamp: 1,
+                    timestampUtc: 1,
+                },
+            })
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .toArray() as ObservedActivityListItem[];
+    } catch (err) {
+        console.error('[DB] Error fetching observed activity events:', err);
+        return [];
+    }
+}
+
+export async function getObservedActivitySummary(
+    jid: string,
+    days: number = 30,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<{
     totalEvents: number;
     activeEvents: number;
     lastEvent: ActivityEventDoc | null;
@@ -869,7 +938,10 @@ export async function getObservedActivitySummary(jid: string, days: number = 30,
     if (!db) return empty;
     try {
         const since = new Date(Date.now() - days * 86_400_000);
-        const match = { ...buildObservationScope(jid, caseId), timestamp: { $gte: since } };
+        const match = {
+            ...buildObservedActivityScope(jid, caseId, trackingSessionId),
+            timestamp: { $gte: since },
+        };
         const [events, grouped] = await Promise.all([
             activityEvents
                 .find(match)

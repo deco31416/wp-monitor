@@ -4,7 +4,7 @@ import { Square, Activity, Wifi, Smartphone, Monitor, Clock, Database, BarChart3
 import clsx from 'clsx';
 import { socket } from '../socket';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
-import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type TrackerDeviceInfo } from '../types';
+import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type ObservedActivityEvent, type ObservedActivityResponse, type TrackerDeviceInfo } from '../types';
 import { ActivityJournalPanel } from './ActivityJournalPanel';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
@@ -194,6 +194,7 @@ export function ContactCard({
 }: ContactCardProps) {
     const [stats, setStats] = useState<StatsData | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
+    const [observedActivity, setObservedActivity] = useState<ObservedActivityEvent[]>([]);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [patterns, setPatterns] = useState<PatternsData | null>(null);
     type DetailPanel = 'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call';
@@ -402,7 +403,8 @@ export function ContactCard({
     const resolvedPushName = profile?.pushName || initialPushName || null;
     const resolvedName = customName || resolvedPushName || displayNumber;
 
-    const lastData = data[data.length - 1];
+    const acknowledgedRttData = data.filter(entry => !isNoAckState(entry.state) && entry.avg > 0);
+    const lastData = acknowledgedRttData[acknowledgedRttData.length - 1];
     const presenceStatus = typingState === 'composing' || presence === 'composing'
         ? 'Escribiendo'
         : typingState === 'recording' || presence === 'recording'
@@ -447,6 +449,15 @@ export function ContactCard({
             .catch(console.error);
     }, [jid]);
 
+    const fetchObservedActivity = useCallback(() => {
+        authFetch(`${API_URL}/api/contact/${encodeURIComponent(jid)}/activity?limit=50`)
+            .then(r => r.json())
+            .then((response: ObservedActivityResponse) => setObservedActivity(
+                Array.isArray(response.events) ? response.events : [],
+            ))
+            .catch(console.error);
+    }, [jid]);
+
     const fetchProfile = useCallback(() => {
         authFetch(`${API_URL}/api/profile/${encodeURIComponent(jid)}`)
             .then(r => r.json())
@@ -473,12 +484,19 @@ export function ContactCard({
     useEffect(() => {
         fetchStats();
         fetchActivity();
+        fetchObservedActivity();
         const interval = setInterval(() => {
             fetchStats();
             fetchActivity();
+            fetchObservedActivity();
         }, 10000);
         return () => clearInterval(interval);
-    }, [fetchStats, fetchActivity]);
+    }, [fetchStats, fetchActivity, fetchObservedActivity]);
+
+    useEffect(() => {
+        if (!liveState?.lastSignalAt || liveState.source === 'rtt_probe' || liveState.source === 'system') return;
+        void fetchObservedActivity();
+    }, [fetchObservedActivity, liveState?.lastSignalAt, liveState?.source]);
 
     const fetchIntel = useCallback(() => {
         authFetch(`${API_URL}/api/intel/${encodeURIComponent(jid)}?days=14`)
@@ -911,21 +929,21 @@ export function ContactCard({
                             <MetricCard
                                 label="Current Avg RTT"
                                 value={lastData?.avg.toFixed(0) || '—'}
-                                unit="ms"
+                                unit={lastData ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="accent"
                             />
                             <MetricCard
                                 label="Median (50)"
-                                value={lastData?.median.toFixed(0) || '—'}
-                                unit="ms"
+                                value={lastData && lastData.median > 0 ? lastData.median.toFixed(0) : '—'}
+                                unit={lastData && lastData.median > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="success"
                             />
                             <MetricCard
                                 label="Threshold"
-                                value={lastData?.threshold.toFixed(0) || '—'}
-                                unit="ms"
+                                value={lastData && lastData.threshold > 0 ? lastData.threshold.toFixed(0) : '—'}
+                                unit={lastData && lastData.threshold > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="warning"
                             />
@@ -961,8 +979,9 @@ export function ContactCard({
                             <>
                             <div className="bg-surface-overlay rounded-xl border border-surface-border p-5 h-[300px]">
                                 <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">RTT History & Threshold</h5>
+                                {acknowledgedRttData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height={220}>
-                                    <AreaChart data={data}>
+                                    <AreaChart data={acknowledgedRttData}>
                                         <defs>
                                             <linearGradient id={`grad-${jid}`} x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor="#25d366" stopOpacity={0.3} />
@@ -1010,6 +1029,15 @@ export function ContactCard({
                                         />
                                     </AreaChart>
                                 </ResponsiveContainer>
+                                ) : (
+                                    <div className="h-[220px] flex flex-col items-center justify-center text-center px-6">
+                                        <Activity size={30} className="text-warning mb-3" />
+                                        <p className="text-sm font-medium text-txt-secondary">RTT no disponible</p>
+                                        <p className="text-xs text-txt-dim mt-1 max-w-md">
+                                            WhatsApp no entrego ACK de cliente para las sondas. Los timeouts se conservan como evidencia inconclusa y no se grafican como RTT valido.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             <ActivityJournalPanel
@@ -1023,7 +1051,7 @@ export function ContactCard({
                         )}
 
                         {activePanel === 'activity' && (
-                            <ActivityLogPanel activity={activity} formatDateTime={formatDateTime} />
+                            <ActivityLogPanel events={observedActivity} formatDateTime={formatDateTime} />
                         )}
 
                         {activePanel === 'stats' && (

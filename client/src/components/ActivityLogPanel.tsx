@@ -1,32 +1,32 @@
 import clsx from 'clsx';
 import { History } from 'lucide-react';
-
-interface ActivityEntry {
-    state: string;
-    timestamp: string;
-    rtt: number;
-}
+import type { ObservedActivityEvent } from '../types';
 
 interface ActivityLogPanelProps {
-    activity: ActivityEntry[];
+    events: ObservedActivityEvent[];
     formatDateTime: (value: string | null) => string;
 }
 
-function isNoAckState(value: string): boolean {
-    return value === 'NO_ACK' || value === 'OFFLINE';
+function sourceLabel(source: ObservedActivityEvent['source']): string {
+    if (source === 'message') return 'Mensaje';
+    if (source === 'presence') return 'Presencia';
+    return 'Llamada';
 }
 
-export function ActivityLogPanel({ activity, formatDateTime }: ActivityLogPanelProps) {
+export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelProps) {
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
-            <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">Activity Timeline</h5>
-            {activity.length > 0 ? (
+            <div className="flex items-center justify-between gap-3 mb-4">
+                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
+                <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos reales</span>
+            </div>
+            {events.length > 0 ? (
                 <div className="max-h-[260px] overflow-y-auto pr-2 space-y-0">
-                    {activity.slice().reverse().map((entry, index) => (
+                    {events.map((entry, index) => (
                         <ActivityTimelineRow
                             key={`${entry.timestamp}-${index}`}
                             entry={entry}
-                            isLast={index >= activity.length - 1}
+                            isLast={index >= events.length - 1}
                             formatDateTime={formatDateTime}
                         />
                     ))}
@@ -34,8 +34,8 @@ export function ActivityLogPanel({ activity, formatDateTime }: ActivityLogPanelP
             ) : (
                 <div className="text-center py-8">
                     <History size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin cambios de estado registrados</p>
-                    <p className="text-txt-dim text-xs mt-1">Los cambios apareceran cuando el dispositivo cambie entre Online, Standby o Sin ACK</p>
+                    <p className="text-txt-muted text-sm">Sin actividad real observada</p>
+                    <p className="text-txt-dim text-xs mt-1">Aqui apareceran mensajes, presencia y llamadas atribuibles a esta sesion.</p>
                 </div>
             )}
         </div>
@@ -47,19 +47,20 @@ function ActivityTimelineRow({
     isLast,
     formatDateTime,
 }: {
-    entry: ActivityEntry;
+    entry: ObservedActivityEvent;
     isLast: boolean;
     formatDateTime: (value: string | null) => string;
 }) {
-    const tone = entry.state.includes('Online')
+    const tone = entry.confidence === 'high'
         ? 'success'
-        : isNoAckState(entry.state)
-            ? 'warning'
-            : entry.state === 'Standby'
+        : entry.confidence === 'medium'
+            ? 'accent'
+            : entry.confidence === 'low'
                 ? 'warning'
                 : 'neutral';
     const dotColor = {
         success: 'bg-success',
+        accent: 'bg-accent',
         warning: 'bg-warning',
         neutral: 'bg-txt-dim',
     }[tone];
@@ -75,11 +76,14 @@ function ActivityTimelineRow({
                     <span className={clsx(
                         "text-xs font-semibold",
                         tone === 'success' ? 'text-success' :
+                        tone === 'accent' ? 'text-accent' :
                         tone === 'warning' ? 'text-warning' : 'text-txt-secondary'
                     )}>
-                        {isNoAckState(entry.state) ? 'Sin ACK' : entry.state}
+                        {entry.label}
                     </span>
-                    <span className="text-[10px] text-txt-dim ml-2">RTT: {entry.rtt}ms</span>
+                    <span className="text-[10px] text-txt-dim ml-2">
+                        {sourceLabel(entry.source)} · confianza {entry.confidence}
+                    </span>
                 </div>
                 <span className="text-[10px] text-txt-muted font-mono">
                     {formatDateTime(entry.timestamp)}

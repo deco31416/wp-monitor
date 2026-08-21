@@ -147,6 +147,22 @@ export interface AuditEvent {
     timestampUtc: string;
 }
 
+export interface ObservedActivityEvent {
+    source: 'presence' | 'call' | 'message';
+    type: string;
+    label: string;
+    confidence: 'none' | 'low' | 'medium' | 'high';
+    timestamp: string;
+    timestampUtc: string;
+}
+
+export interface ObservedActivityResponse {
+    active: boolean;
+    caseId: string | null;
+    trackingSessionId: string | null;
+    events: ObservedActivityEvent[];
+}
+
 export type CaseStatus = 'draft' | 'authorized' | 'active' | 'closed' | 'archived';
 
 export interface CaseRecord {

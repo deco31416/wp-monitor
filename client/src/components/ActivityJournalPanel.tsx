@@ -98,7 +98,7 @@ export function ActivityJournalPanel({
             <div className="px-5 py-3 border-b border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                     <FileText size={14} className="text-accent" />
-                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitacora de Actividad</h5>
+                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitacora RTT</h5>
                     <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{entries.length} eventos</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">

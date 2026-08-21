@@ -22,7 +22,8 @@ import { Boom } from '@hapi/boom';
 import { WhatsAppTracker } from './tracker.js';
 import type { ProbeMethod } from './tracker.js';
 import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import { isSyntheticProbeMessage } from './probe-messages.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
@@ -1973,6 +1974,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('messages.upsert', ({ messages, type }: any) => {
         for (const message of messages || []) {
+            if (isSyntheticProbeMessage(message)) continue;
             const remoteJid = normalizeLiveJid(message?.key?.remoteJid);
             if (!remoteJid || !trackers.has(remoteJid)) continue;
 
@@ -1988,6 +1990,7 @@ async function connectToWhatsApp() {
                 messageId: message?.key?.id || null,
                 direction,
                 messageType,
+                syntheticProbe: false,
                 upsertType: type || null,
                 timestamp: new Date(signalTimestamp).toISOString(),
             };
@@ -2326,9 +2329,15 @@ async function autoRestoreContacts() {
 
 // REST endpoint: get measurement history for a contact
 app.get('/api/history/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const jidResult = validateJid(req.params.jid);
+    if (!jidResult.ok) {
+        validationError(res, jidResult.errors || ['Invalid JID']);
+        return;
+    }
+    const jid = jidResult.value!;
     const limit = parseLimit(req.query.limit, 200, 1000);
-    const history = await getRecentMeasurements(jid, limit);
+    const trackingSessionId = trackers.get(jid)?.trackingSession.trackingSessionId;
+    const history = await getRecentMeasurements(jid, limit, trackingSessionId);
     res.json(history);
 });
 
@@ -2340,10 +2349,43 @@ app.get('/api/contacts', async (_req, res) => {
 
 // REST endpoint: get activity history (state transitions)
 app.get('/api/activity/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const jidResult = validateJid(req.params.jid);
+    if (!jidResult.ok) {
+        validationError(res, jidResult.errors || ['Invalid JID']);
+        return;
+    }
+    const jid = jidResult.value!;
     const limit = parseLimit(req.query.limit, 50, 1000);
-    const history = await getActivityHistory(jid, limit);
+    const trackingSessionId = trackers.get(jid)?.trackingSession.trackingSessionId;
+    const history = await getActivityHistory(jid, limit, trackingSessionId);
     res.json(history);
+});
+
+app.get('/api/contact/:jid/activity', async (req, res) => {
+    const jidResult = validateJid(req.params.jid);
+    if (!jidResult.ok) {
+        validationError(res, jidResult.errors || ['Invalid JID']);
+        return;
+    }
+
+    const entry = trackers.get(jidResult.value!);
+    if (!entry) {
+        res.json({ active: false, caseId: null, trackingSessionId: null, events: [] });
+        return;
+    }
+
+    const limit = parseLimit(req.query.limit, 50, 200);
+    const events = await getObservedActivityEvents(
+        jidResult.value!,
+        entry.trackingSession.trackingSessionId,
+        limit,
+    );
+    res.json({
+        active: true,
+        caseId: entry.trackingSession.caseId,
+        trackingSessionId: entry.trackingSession.trackingSessionId,
+        events,
+    });
 });
 
 app.get('/api/contact/:jid/live-state', (req, res) => {
@@ -2367,8 +2409,14 @@ app.get('/api/contact/:jid/signals', (req, res) => {
 
 // REST endpoint: get state distribution stats
 app.get('/api/stats/:jid', async (req, res) => {
-    const jid = req.params.jid;
-    const stats = await getStateDistribution(jid);
+    const jidResult = validateJid(req.params.jid);
+    if (!jidResult.ok) {
+        validationError(res, jidResult.errors || ['Invalid JID']);
+        return;
+    }
+    const jid = jidResult.value!;
+    const caseId = trackers.get(jid)?.trackingSession.caseId;
+    const stats = await getStateDistribution(jid, caseId);
     res.json(stats);
 });
 

@@ -14,6 +14,7 @@ import {
     type TrackerProbeState,
     type TrackerUpdate,
 } from './tracker-signals.js';
+import { registerSyntheticProbeId } from './probe-messages.js';
 
 // Suppress Baileys debug output (Closing session spam)
 const logger = pino({
@@ -285,11 +286,13 @@ export class WhatsAppTracker {
             trackerLogger.debug(
                 `[PROBE-DELETE] Sending silent delete probe for fake message ${randomMsgId}`
             );
+            registerSyntheticProbeId(randomMsgId);
             const startTime = Date.now();
 
             const result = await this.sock.sendMessage(this.targetJid, randomDeleteMessage);
 
             if (result?.key?.id) {
+                registerSyntheticProbeId(result.key.id);
                 trackerLogger.debug(`[PROBE-DELETE] Delete probe sent successfully, message ID: ${result.key.id}`);
                 this.probeStartTimes.set(result.key.id, startTime);
 
@@ -344,10 +347,12 @@ export class WhatsAppTracker {
             };
 
             trackerLogger.debug(`[PROBE-REACTION] Sending probe with reaction "${randomReaction}" to non-existent message ${randomMsgId}`);
+            registerSyntheticProbeId(randomMsgId);
             const result = await this.sock.sendMessage(this.targetJid, reactionMessage);
             const startTime = Date.now();
 
             if (result?.key?.id) {
+                registerSyntheticProbeId(result.key.id);
                 trackerLogger.debug(`[PROBE-REACTION] Probe sent successfully, message ID: ${result.key.id}`);
                 this.probeStartTimes.set(result.key.id, startTime);
 

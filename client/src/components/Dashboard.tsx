@@ -4,7 +4,7 @@ import type { ConnectionState } from '../App';
 import { ContactCard } from './ContactCard';
 import { Login } from './Login';
 import { API_URL, authFetch } from '../auth';
-import { selectPrimaryTrackerDevice, type TrackerDeviceInfo } from '../types';
+import { selectPrimaryTrackerDevice, type CaseRecord, type TrackerDeviceInfo } from '../types';
 import { socket } from '../socket';
 
 type ProbeMethod = 'delete' | 'reaction';
@@ -89,6 +89,8 @@ export function Dashboard({ connectionState }: DashboardProps) {
     const [caseId, setCaseId] = useState('');
     const [operatorName, setOperatorName] = useState('');
     const [authorizationNote, setAuthorizationNote] = useState('');
+    const [cases, setCases] = useState<CaseRecord[]>([]);
+    const [casesLoading, setCasesLoading] = useState(true);
     const [contacts, setContacts] = useState<Map<string, ContactInfo>>(new Map());
     const [error, setError] = useState<string | null>(null);
     const [privacyMode, setPrivacyMode] = useState(false);
@@ -135,6 +137,39 @@ export function Dashboard({ connectionState }: DashboardProps) {
             });
     }, [mergeSavedContacts]);
 
+    const selectCase = useCallback((selectedCase: CaseRecord | undefined) => {
+        setCaseId(selectedCase?.caseId || '');
+        setOperatorName(selectedCase?.primaryOperator || '');
+        setAuthorizationNote(selectedCase?.authorizationNote || '');
+    }, []);
+
+    const fetchCases = useCallback(async () => {
+        setCasesLoading(true);
+        try {
+            const response = await authFetch(`${API_URL}/api/cases?limit=100`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const data = await response.json();
+            const selectableCases = Array.isArray(data)
+                ? (data as CaseRecord[]).filter(item => (
+                    item.status !== 'closed'
+                    && item.status !== 'archived'
+                    && !item.caseId.toUpperCase().startsWith('SYSTEM-')
+                ))
+                : [];
+
+            setCases(selectableCases);
+            selectCase(selectableCases[0]);
+        } catch (err) {
+            console.error('Failed to fetch cases:', err);
+            setCases([]);
+            selectCase(undefined);
+            setError('No se pudieron cargar los casos disponibles');
+        } finally {
+            setCasesLoading(false);
+        }
+    }, [selectCase]);
+
     const fetchHistory = useCallback(() => {
         authFetch(`${API_URL}/api/contacts/history`)
             .then(r => r.json())
@@ -149,8 +184,16 @@ export function Dashboard({ connectionState }: DashboardProps) {
     }, []);
 
     useEffect(() => {
-        fetchActiveContacts();
-    }, [fetchActiveContacts]);
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (cancelled) return;
+            fetchActiveContacts();
+            void fetchCases();
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchActiveContacts, fetchCases]);
 
     useEffect(() => {
         function onTrackerUpdate(update: TrackerUpdateEvent) {
@@ -566,26 +609,37 @@ export function Dashboard({ connectionState }: DashboardProps) {
 
                 {/* Input row */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                    <input
-                        type="text"
-                        placeholder="Case ID"
-                        className="input-field"
+                    <select
+                        aria-label="Caso activo"
+                        className="select-field"
                         value={caseId}
-                        onChange={(e) => setCaseId(e.target.value)}
-                    />
+                        onChange={(e) => selectCase(cases.find(item => item.caseId === e.target.value))}
+                        disabled={casesLoading || cases.length === 0}
+                    >
+                        <option value="">
+                            {casesLoading ? 'Cargando casos...' : 'No hay casos disponibles'}
+                        </option>
+                        {cases.map(item => (
+                            <option key={item.caseId} value={item.caseId}>
+                                {item.caseId}{item.title && item.title !== item.caseId ? ` - ${item.title}` : ''} ({item.status})
+                            </option>
+                        ))}
+                    </select>
                     <input
                         type="text"
+                        aria-label="Operador del caso"
                         placeholder="Operador"
                         className="input-field"
                         value={operatorName}
-                        onChange={(e) => setOperatorName(e.target.value)}
+                        readOnly
                     />
                     <input
                         type="text"
+                        aria-label="Autorización del caso"
                         placeholder="Autorizacion / motivo"
                         className="input-field"
                         value={authorizationNote}
-                        onChange={(e) => setAuthorizationNote(e.target.value)}
+                        readOnly
                     />
                 </div>
                 <div className="flex gap-3">
