@@ -36,7 +36,7 @@ export interface MeasurementDoc {
     timestamp: Date;
 }
 
-export type ActivityEventSource = 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+export type ActivityEventSource = 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
 
 export interface ActivityEventDoc {
     caseId: string;
@@ -98,7 +98,7 @@ export interface TrackingSessionDoc {
     jid: string;
     operatorName: string;
     authorizationNote: string;
-    probeMethod: 'delete' | 'reaction';
+    probeMethod: 'passive' | 'delete' | 'reaction';
     status: TrackingSessionStatus;
     startedAt: Date;
     stoppedAt: Date | null;
@@ -411,8 +411,16 @@ export function buildActivityEventDoc(
     };
 }
 
-export function buildObservationScope(jid: string, caseId?: string): { jid: string; caseId?: string } {
-    return caseId ? { jid, caseId } : { jid };
+export function buildObservationScope(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): { jid: string; caseId?: string; trackingSessionId?: string } {
+    return {
+        jid,
+        ...(caseId ? { caseId } : {}),
+        ...(trackingSessionId ? { trackingSessionId } : {}),
+    };
 }
 
 /**
@@ -426,7 +434,8 @@ export async function saveContact(jid: string, number: string, contactName?: str
             number,
             ...(contactName && { contactName }),
             ...(profilePic !== undefined && { profilePic }),
-            lastSeen: new Date()
+            lastSeen: new Date(),
+            isActive: true,
         };
         // Only set customName if explicitly provided (not undefined)
         if (customName !== undefined) setFields.customName = customName;
@@ -440,7 +449,6 @@ export async function saveContact(jid: string, number: string, contactName?: str
             verifiedOnWhatsApp: true,
             pushName: null,
             lastProfileUpdate: null,
-            isActive: true,
         };
 
         await contacts.updateOne(
@@ -515,7 +523,7 @@ export async function getContactProfile(jid: string): Promise<ContactDoc | null>
  * Get online activity patterns (hourly distribution)
  * Shows what hours of the day the contact is most active
  */
-export async function getOnlinePatterns(jid: string): Promise<{
+export async function getOnlinePatterns(jid: string, trackingSessionId?: string): Promise<{
     hourly: Array<{ hour: number; total: number; conclusive: number; online: number; pct: number }>;
     peakHour: number;
     avgSessionLength: number;
@@ -525,8 +533,9 @@ export async function getOnlinePatterns(jid: string): Promise<{
     if (!db) return empty;
     try {
         // Aggregate measurements by hour of day
+        const measurementScope = buildObservationScope(jid, undefined, trackingSessionId);
         const pipeline = [
-            { $match: { jid } },
+            { $match: measurementScope },
             {
                 $group: {
                     _id: { $hour: '$timestamp' },
@@ -570,7 +579,7 @@ export async function getOnlinePatterns(jid: string): Promise<{
         // Estimate online sessions = consecutive online measurements
         // Each measurement cycle is ~2-3 seconds (probe interval)
         const onlineDocs = await measurements
-            .find({ jid, state: { $regex: ONLINE_TRACKER_STATE_REGEX } })
+            .find({ ...measurementScope, state: { $regex: ONLINE_TRACKER_STATE_REGEX } })
             .sort({ timestamp: 1 })
             .toArray();
 
@@ -986,6 +995,10 @@ export async function getObservedActivitySummary(
             'ringing',
             'accept',
             'busy',
+            'accepted',
+            'delivered',
+            'read',
+            'played',
         ]);
         const activeEvents = grouped
             .filter(group => activeTypes.has(group._id.type))
@@ -1018,7 +1031,11 @@ export async function getObservedActivitySummary(
 /**
  * Get state distribution (% time in each state)
  */
-export async function getStateDistribution(jid: string, caseId?: string): Promise<{
+export async function getStateDistribution(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<{
     online: number;
     standby: number;
     calibrating: number;
@@ -1069,7 +1086,7 @@ export async function getStateDistribution(jid: string, caseId?: string): Promis
     };
     if (!db) return empty;
     try {
-        const measurementMatch = buildObservationScope(jid, caseId);
+        const measurementMatch = buildObservationScope(jid, caseId, trackingSessionId);
         const pipeline = [
             { $match: measurementMatch },
             {
@@ -1089,7 +1106,12 @@ export async function getStateDistribution(jid: string, caseId?: string): Promis
             samples?: Array<{ state?: unknown; rtt?: unknown }>;
         }>(pipeline).toArray();
         const [r] = result;
-        if (!r) return empty;
+        if (!r) {
+            return {
+                ...empty,
+                observedActivity: await getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
+            };
+        }
 
         const samples = Array.isArray(r.samples)
             ? r.samples as Array<{ state?: unknown; rtt?: unknown }>
@@ -1120,7 +1142,7 @@ export async function getStateDistribution(jid: string, caseId?: string): Promis
             .sort({ timestamp: 1 })
             .toArray();
 
-        const observedActivity = await getObservedActivitySummary(jid, 30, caseId);
+        const observedActivity = await getObservedActivitySummary(jid, 30, caseId, trackingSessionId);
 
         const [lastOnline] = lastOnlineDoc;
         return {
@@ -1157,7 +1179,11 @@ export async function getStateDistribution(jid: string, caseId?: string): Promis
  * Generate a comprehensive report for a contact
  * Includes profile, stats, activity patterns, and recent measurements
  */
-export async function generateReport(jid: string): Promise<{
+export async function generateReport(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<{
     generatedAt: Date;
     contact: ContactDoc | null;
     stats: Awaited<ReturnType<typeof getStateDistribution>>;
@@ -1166,19 +1192,21 @@ export async function generateReport(jid: string): Promise<{
     recentMeasurements: MeasurementDoc[];
     summary: {
         trackingDuration: string;
+        totalAttempts: number;
         totalDataPoints: number;
-        avgResponseTime: number;
-        onlinePercentage: number;
-        peakActivityHour: string;
-        estimatedDailyUsage: string;
+        measurementAvailable: boolean;
+        avgResponseTime: number | null;
+        onlinePercentage: number | null;
+        peakActivityHour: string | null;
+        estimatedDailyUsage: string | null;
     };
 }> {
     const [contact, stats, patterns, activity, recent] = await Promise.all([
         getContactProfile(jid),
-        getStateDistribution(jid),
-        getOnlinePatterns(jid),
-        getActivityHistory(jid, 200),
-        getRecentMeasurements(jid, 500),
+        getStateDistribution(jid, caseId, trackingSessionId),
+        getOnlinePatterns(jid, trackingSessionId),
+        getActivityHistory(jid, 200, trackingSessionId),
+        getRecentMeasurements(jid, 500, trackingSessionId),
     ]);
 
     // Calculate tracking duration
@@ -1196,15 +1224,17 @@ export async function generateReport(jid: string): Promise<{
     }
 
     // Peak activity hour formatted
-    const peakHour = patterns.peakHour >= 0 ? `${patterns.peakHour}:00 - ${patterns.peakHour + 1}:00` : 'N/A';
+    const peakHour = patterns.peakHour >= 0 ? `${patterns.peakHour}:00 - ${patterns.peakHour + 1}:00` : null;
 
     // Estimated daily usage
     const totalMinutes = patterns.totalOnlineMinutes;
     const monitoredDays = Math.max(1, durationDays);
     const dailyMinutes = Math.round(totalMinutes / monitoredDays);
-    const estimatedDailyUsage = dailyMinutes > 60
-        ? `${Math.floor(dailyMinutes / 60)}h ${dailyMinutes % 60}m`
-        : `${dailyMinutes}m`;
+    const estimatedDailyUsage = stats.conclusiveMeasurements <= 0
+        ? null
+        : dailyMinutes > 60
+            ? `${Math.floor(dailyMinutes / 60)}h ${dailyMinutes % 60}m`
+            : `${dailyMinutes}m`;
 
     return {
         generatedAt: new Date(),
@@ -1215,9 +1245,11 @@ export async function generateReport(jid: string): Promise<{
         recentMeasurements: recent,
         summary: {
             trackingDuration,
-            totalDataPoints: stats.totalMeasurements,
-            avgResponseTime: stats.avgRtt,
-            onlinePercentage: stats.online,
+            totalAttempts: stats.totalMeasurements,
+            totalDataPoints: stats.conclusiveMeasurements,
+            measurementAvailable: stats.acknowledgedRttMeasurements > 0,
+            avgResponseTime: stats.acknowledgedRttMeasurements > 0 ? stats.avgRtt : null,
+            onlinePercentage: stats.conclusiveMeasurements > 0 ? stats.online : null,
             peakActivityHour: peakHour,
             estimatedDailyUsage,
         },
@@ -1246,7 +1278,7 @@ export async function saveCallAnalysis(result: CallAnalysisResult, caseId: strin
             },
             { upsert: true }
         );
-        console.log(`[DB] Call analysis saved for ${result.targetJid} (${result.verdict})`);
+        console.log(`[DB] Call analysis saved (${result.verdict})`);
     } catch (err) {
         console.error('[DB] Error saving call analysis:', err);
     }
@@ -1255,11 +1287,19 @@ export async function saveCallAnalysis(result: CallAnalysisResult, caseId: strin
 /**
  * Get call analysis history for a contact
  */
-export async function getCallAnalyses(jid: string, limit: number = 20): Promise<CallAnalysisResult[]> {
+export function buildCallAnalysisScope(jid: string, caseId?: string): Record<string, unknown> {
+    return { targetJid: jid, ...(caseId ? { caseId } : {}) };
+}
+
+export async function getCallAnalyses(
+    jid: string,
+    limit: number = 20,
+    caseId?: string,
+): Promise<CallAnalysisResult[]> {
     if (!db) return [];
     try {
         return await callAnalyses
-            .find({ targetJid: jid })
+            .find(buildCallAnalysisScope(jid, caseId))
             .sort({ startTime: -1 })
             .limit(limit)
             .toArray();
@@ -1479,7 +1519,7 @@ export async function saveAuditEvent(event: Omit<AuditEventDoc, 'timestamp' | 't
             timestamp,
             timestampUtc: timestamp.toISOString(),
         });
-        console.log(`[AUDIT] ${event.caseId} ${event.scope}:${event.action}`);
+        console.log(`[AUDIT] ${event.scope}:${event.action}`);
     } catch (err) {
         console.error('[DB] Error saving audit event:', err);
     }

@@ -32,6 +32,8 @@ Maintainer guidance:
 
 ### Added
 
+- Added passive-by-default WhatsApp observation for real outgoing/incoming messages and delivery/read/playback receipts, with monotonic receipt correlation, bounded in-memory state, opaque message-ID fingerprints, and a dedicated confirmation count in the dashboard.
+- Added behavioral-intelligence coverage gates so routines, habits, availability, correlations, and anomalies remain unavailable until the active tracking session has at least 100 conclusive RTT measurements across 3 active days.
 - Added durable case-scoped tracking sessions with operator, authorization, probe method, lifecycle status, and per-JID active-session enforcement.
 - Added Redis-backed atomic rate limiting for public Check-In submissions, shared health reporting, fail-closed production behavior, Docker AOF persistence, and an Ubuntu/VPS operations runbook.
 - Added a single-operator account stored in MongoDB, memory-hard scrypt password hashing, opaque Redis sessions, persistent login rate limits, secure cookie authentication, origin protection, authentication audit events, and an Account screen for credential rotation.
@@ -39,6 +41,10 @@ Maintainer guidance:
 
 ### Fixed
 
+- Prevented historical measurements, live signals, message receipts, profiles, and call-analysis history from crossing active tracking-session or case boundaries; stopping/reactivating a contact now starts a clean observation session without deleting prior evidence.
+- Fixed `/api/intel/correlation` route precedence so Express no longer consumes `correlation` as a dynamic JID.
+- Corrected real-message receipt races and cross-contact message-ID collisions, excluded synthetic probes from observed-message evidence, and stopped using ambiguous upstream timestamps as local delivery latency.
+- Replaced misleading zero-RTT charts and unsupported behavior labels with explicit unavailable/insufficient-coverage states; timeouts remain inconclusive and are never presented as valid RTT or proof of inactivity.
 - Isolated presence and receipt attribution per tracked JID (including scoped LIDs), prevented initial empty tracker updates from being persisted, replaced timeout-as-offline claims with the inconclusive `NO_ACK` state, and separated calibration/unknown samples from Standby statistics while preserving legacy API compatibility.
 - Scoped new RTT measurements and observed activity events to their case and tracking session so case evidence statistics no longer mix observations from other cases.
 - Scoped persisted call analyses by both case and call ID, and blocked closing/deactivating cases that still have active tracking sessions.
@@ -49,6 +55,9 @@ Maintainer guidance:
 
 ### Changed
 
+- Tracking now starts in `passive` mode and generates no probe traffic. Delete/reaction probes are experimental, disabled unless `ENABLE_EXPERIMENTAL_PROBES=true`, rate-bounded, single-flight, cancellable, and subject to exponential backoff.
+- Dashboard language now distinguishes observed messages/receipts from experimental RTT attempts, uses commercial Spanish labels, defaults to privacy-protected display, and requires confirmation before finalizing tracking.
+- Active observation, statistics, intelligence, privacy, reports, profiles, and call history now resolve through the current durable tracking session instead of contact-wide historical data.
 - Standardized backend and frontend dependency management on a single root **pnpm workspace** and root lockfile.
 - Migrated the supported runtime to Node.js `24.19.x` and pnpm `11.22.0`, including an enforced runtime check and reproducible Debian-based Docker builds.
 - Migrated the frontend from Create React App/Jest to Vite/Vitest and retained production build, typecheck, lint, and component-test gates.
@@ -75,10 +84,11 @@ Maintainer guidance:
 
 ### Verification
 
-- Backend tests: 108/108 passed.
-- Frontend tests: 4/4 passed.
+- Backend tests: 127/127 passed.
+- Frontend tests: 11/11 passed.
 - Backend/frontend typechecks, frontend lint, and production builds passed.
 - Full and production-only pnpm audits reported no known vulnerabilities.
+- Local runtime smoke testing on Node.js 24.19.0 confirmed MongoDB, Redis, WhatsApp, and packet-capture health; one clean passive session produced zero technical measurements while persisting a real outgoing message and `Mensaje entregado` receipt with high confidence and no raw message identifier.
 - Runtime authentication checks covered trusted/untrusted origins, login, session lookup, protected HTTP, logout/revocation, Socket.IO authentication/disconnection, cookie flags, MongoDB hash/index state, and Redis session cleanup.
 - Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, and per-artifact SHA-256 metadata.
 - Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set.
@@ -93,6 +103,7 @@ Maintainer guidance:
 - Existing measurements and activity events have no case/session provenance and remain available only through legacy contact-wide views; case evidence exports intentionally include only newly scoped observations.
 - Existing call analyses without `caseId` remain available in contact-wide history but are intentionally excluded from case evidence exports.
 - Existing active contacts without a durable `tracking_sessions` record are not auto-restored and must be reactivated with case, operator, and authorization metadata.
+- An active session that already contains historical experimental attempts retains them as evidence. Finalize and reactivate the contact once to open a clean passive session; this does not delete the earlier session or its retained records.
 
 ---
 

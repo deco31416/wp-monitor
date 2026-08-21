@@ -98,9 +98,9 @@ test('starts contact tracking with the context of the selected case', async () =
     render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
 
     await screen.findByRole('option', { name: 'PRUEBA-LOCAL-001 - Ulises (authorized)' });
-    await user.type(screen.getByPlaceholderText('Phone number with country code'), '573001234567');
-    await user.type(screen.getByPlaceholderText('Alias (optional)'), 'Contacto autorizado');
-    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.type(screen.getByPlaceholderText('Número con código de país'), '573001234567');
+    await user.type(screen.getByPlaceholderText('Alias (opcional)'), 'Contacto autorizado');
+    await user.click(screen.getByRole('button', { name: 'Agregar' }));
 
     expect(socketEmitMock).toHaveBeenCalledWith('add-contact', {
         number: '573001234567',
@@ -109,4 +109,12 @@ test('starts contact tracking with the context of the selected case', async () =
         operatorName: 'DECO',
         authorizationNote: 'Prueba funcional autorizada',
     });
+});
+
+test('uses protected passive mode by default and hides experimental probes', async () => {
+    render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
+
+    expect(await screen.findByText('Seguimiento pasivo')).toBeInTheDocument();
+    expect(screen.getByText('Datos protegidos')).toBeInTheDocument();
+    expect(screen.queryByText('Opciones experimentales')).not.toBeInTheDocument();
 });

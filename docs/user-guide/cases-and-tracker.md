@@ -38,9 +38,15 @@ El pais del numero se deriva de su plan de numeracion. No demuestra pais actual,
 
 ## Fuentes del Tracker
 
-### RTT
+### Observacion pasiva (predeterminada)
 
-Los probes producen tiempos de respuesta y el sistema los clasifica usando distribucion y umbrales. Los valores dependen de red, congestion, privacidad y disponibilidad del metodo. RTT no equivale directamente a presencia oficial.
+El tracker observa mensajes reales enviados/recibidos y confirmaciones compatibles (`accepted`, `delivered`, `read`, `played`) de la sesion vinculada. No genera mensajes de prueba. Los eventos se atribuyen al caso y `trackingSessionId` activos; los IDs de mensaje se conservan unicamente como huellas opacas.
+
+La ausencia de una confirmacion no demuestra que el destinatario este desconectado. Lectura y reproduccion dependen del tipo de mensaje, privacidad y eventos que WhatsApp entregue a Baileys.
+
+### RTT experimental
+
+Los probes delete/reaction solo estan disponibles cuando el despliegue configura `ENABLE_EXPERIMENTAL_PROBES=true` y el operador los selecciona expresamente. Producen tiempos de respuesta que el sistema clasifica usando distribucion y umbrales. Un timeout queda como `NO_ACK`/No concluyente; nunca equivale directamente a ausencia, presencia oficial o latencia valida.
 
 ### Presencia y mensajes
 
@@ -54,22 +60,26 @@ Los estados oficiales observables por la version instalada incluyen `offer`, `ri
 
 | Campo | Lectura correcta |
 | --- | --- |
-| Status | Estado compuesto mas reciente y su fuente |
-| Devices | Dispositivos observados, no numero fisico confirmado de telefonos |
-| Last Online | Ultima senal disponible, sujeta a privacidad/cobertura |
-| Registros | Muestras almacenadas dentro de retencion |
-| Tracking | Inicio del seguimiento configurado |
-| Distribucion | Porcentaje de muestras clasificadas |
-| RTT promedio | Promedio de la muestra, sensible a outliers |
+| Estado | Senal compuesta mas reciente y su fuente |
+| Destinos tecnicos | Destinos observados, no numero fisico confirmado de telefonos |
+| Presencia | Ultimo estado compatible; `Presencia no disponible` es un resultado valido |
+| Registros | Intentos tecnicos de la sesion; pueden ser cero en modo pasivo |
+| Inicio de seguimiento | Inicio de la sesion durable activa |
+| Distribucion | Porcentaje de intentos tecnicos por clasificacion |
+| Latencia | Solo se muestra cuando existe una confirmacion RTT compatible |
 
 ## Pestañas
 
-- **RTT Chart:** serie temporal y umbral.
-- **Activity:** transiciones consolidadas.
-- **Stats:** cobertura, periodos y distribucion.
-- **Intel:** patrones derivados, sesiones y anomalias.
-- **Profile:** identidad visible, alias y score OPSEC explicable.
+- **Medicion:** serie RTT experimental; muestra indisponibilidad explicita cuando no existe evidencia.
+- **Actividad:** mensajes, recibos, presencia y llamadas observados dentro de la sesion activa.
+- **Resumen:** actividad pasiva, cobertura, periodos y distribucion tecnica separados.
+- **Patrones:** inferencias solo despues de cobertura RTT concluyente suficiente.
+- **Perfil:** identidad visible, alias y score de privacidad observado y explicable.
 - **Llamada:** captura especializada local y resultados historicos.
+
+## Finalizar y reactivar
+
+**Finalizar** cierra durablemente la sesion activa y conserva sus registros. **Historial > Reactivar** crea una sesion nueva, ligada al caso seleccionado, sin heredar señales en vivo, recibos ni estadisticas de la sesion anterior. Usa este flujo cuando quieras iniciar una observacion pasiva limpia despues de pruebas experimentales; no borres la evidencia historica para limpiar la pantalla.
 
 ## Score OPSEC
 

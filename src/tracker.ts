@@ -1,5 +1,6 @@
 import 'baileys';
 import { WASocket, proto } from 'baileys';
+import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import {
     CALIBRATING_STATE,
@@ -23,10 +24,27 @@ const logger = pino({
 
 /**
  * Probe method types
- * - 'delete': Silent delete probe (sends delete request for non-existent message) - DEFAULT
+ * - 'passive': Observe real WhatsApp signals without generating traffic - DEFAULT
+ * - 'delete': Silent delete probe (sends delete request for non-existent message)
  * - 'reaction': Reaction probe (sends reaction to non-existent message)
  */
-export type ProbeMethod = 'delete' | 'reaction';
+export type ProbeMethod = 'passive' | 'delete' | 'reaction';
+
+export interface TrackerProbeOptions {
+    intervalMs?: number;
+    timeoutMs?: number;
+    maxBackoffMs?: number;
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(maximum, Math.max(minimum, Math.floor(parsed)));
+}
+
+function newProbeEnvelopeId(): string {
+    return `3EB0${randomUUID().replace(/-/g, '').slice(0, 20).toUpperCase()}`;
+}
 
 /**
  * Logger utility for debug and normal mode
@@ -117,26 +135,43 @@ export class WhatsAppTracker {
     private probeStartTimes: Map<string, number> = new Map();
     private probeTimeouts: Map<string, NodeJS.Timeout> = new Map();
     private lastPresence: string | null = null;
-    private probeMethod: ProbeMethod = 'delete'; // Default to delete method
+    private probeMethod: ProbeMethod = 'passive';
+    private readonly probeIntervalMs: number;
+    private readonly probeTimeoutMs: number;
+    private readonly maxProbeBackoffMs: number;
+    private consecutiveNoAck: number = 0;
+    private readonly trackerRef = randomUUID().slice(0, 8);
     private knownDeviceJids: Set<string> = new Set(); // Track known device JIDs for alerts
     private messagesUpdateHandler: ((updates: any[]) => void) | null = null;
     private rawReceiptHandler: ((node: any) => void) | null = null;
     private presenceUpdateHandler: ((update: any) => void) | null = null;
+    private probeLoopTimer: NodeJS.Timeout | null = null;
+    private probeLoopWake: (() => void) | null = null;
     public onUpdate?: (data: TrackerUpdate) => void;
     public onPresenceChange?: (data: { jid: string; presence: string; timestamp: number }) => void;
     public onNewDevice?: (data: { deviceJid: string; targetJid: string; totalDevices: number; timestamp: number }) => void;
 
-    constructor(sock: WASocket, targetJid: string, debugMode: boolean = false) {
+    constructor(
+        sock: WASocket,
+        targetJid: string,
+        debugMode: boolean = false,
+        probeOptions: TrackerProbeOptions = {},
+    ) {
         this.sock = sock;
         this.targetJid = targetJid;
         this.trackedJids.add(targetJid);
         this.knownDeviceJids.add(targetJid);
+        this.probeIntervalMs = boundedInteger(probeOptions.intervalMs, 30_000, 10_000, 10 * 60_000);
+        this.probeTimeoutMs = boundedInteger(probeOptions.timeoutMs, 10_000, 3_000, 60_000);
+        this.maxProbeBackoffMs = boundedInteger(probeOptions.maxBackoffMs, 5 * 60_000, this.probeIntervalMs, 30 * 60_000);
         trackerLogger.setDebugMode(debugMode);
     }
 
     public setProbeMethod(method: ProbeMethod) {
         this.probeMethod = method;
-        trackerLogger.info(`\n🔄 Probe method changed to: ${method === 'delete' ? 'Silent Delete' : 'Reaction'}\n`);
+        if (method === 'passive') this.clearPendingProbes();
+        this.wakeProbeLoop();
+        trackerLogger.info(`\n🔄 Tracking mode changed to: ${method === 'passive' ? 'Passive' : method === 'delete' ? 'Experimental Delete' : 'Experimental Reaction'}\n`);
     }
 
     public getProbeMethod(): ProbeMethod {
@@ -150,8 +185,8 @@ export class WhatsAppTracker {
     public async startTracking() {
         if (this.isTracking) return;
         this.isTracking = true;
-        trackerLogger.info(`\n✅ Tracking started for ${this.targetJid}`);
-        trackerLogger.info(`Probe method: ${this.probeMethod === 'delete' ? 'Silent Delete (covert)' : 'Reaction'}\n`);
+        trackerLogger.info(`\n✅ Tracking started [${this.trackerRef}]`);
+        trackerLogger.info(`Tracking mode: ${this.probeMethod === 'passive' ? 'Passive' : `Experimental ${this.probeMethod}`}\n`);
 
         // Listen for message updates (receipts)
         this.messagesUpdateHandler = (updates: any[]) => {
@@ -174,7 +209,7 @@ export class WhatsAppTracker {
 
         // Listen for presence updates
         this.presenceUpdateHandler = (update: any) => {
-            trackerLogger.debug('[PRESENCE] Raw update received:', JSON.stringify(update, null, 2));
+            trackerLogger.debug(`[PRESENCE] Update received [${this.trackerRef}]`);
 
             const scopedPresences = getScopedPresenceEntries(update, this.targetJid, this.trackedJids);
             for (const [jid, presenceData] of scopedPresences) {
@@ -184,7 +219,7 @@ export class WhatsAppTracker {
 
                 if (isDisplayableDevice && !this.knownDeviceJids.has(jid)) {
                     this.knownDeviceJids.add(jid);
-                    trackerLogger.info(`[NEW DEVICE] Detected new device JID: ${jid} for ${this.targetJid}`);
+                    trackerLogger.info(`[TRACKING] Additional technical destination observed [${this.trackerRef}]`);
                     if (this.onNewDevice) {
                         this.onNewDevice({
                             deviceJid: jid,
@@ -197,12 +232,12 @@ export class WhatsAppTracker {
 
                 // Track technical JIDs internally so presence/receipts remain correlated.
                 this.trackedJids.add(jid);
-                trackerLogger.debug(`[MULTI-DEVICE] Added JID to tracking: ${jid}`);
+                trackerLogger.debug(`[TRACKING] Technical destination correlated [${this.trackerRef}]`);
 
                 const newPresence = presenceData.lastKnownPresence;
                 const prevPresence = this.lastPresence;
                 this.lastPresence = newPresence;
-                trackerLogger.debug(`[PRESENCE] Stored presence from ${jid}: ${this.lastPresence}`);
+                trackerLogger.debug(`[PRESENCE] State stored [${this.trackerRef}]: ${this.lastPresence}`);
 
                 // Emit presence change for composing/recording/available/unavailable
                 if (this.onPresenceChange && newPresence !== prevPresence) {
@@ -220,8 +255,7 @@ export class WhatsAppTracker {
         // Subscribe to presence updates
         try {
             await this.sock.presenceSubscribe(this.targetJid);
-            trackerLogger.debug(`[PRESENCE] Successfully subscribed to presence for ${this.targetJid}`);
-            trackerLogger.debug(`[MULTI-DEVICE] Currently tracking JIDs: ${Array.from(this.trackedJids).join(', ')}`);
+            trackerLogger.debug(`[PRESENCE] Subscription active [${this.trackerRef}]`);
         } catch (err) {
             trackerLogger.debug('[PRESENCE] Error subscribing to presence:', err);
         }
@@ -245,17 +279,45 @@ export class WhatsAppTracker {
 
     private async probeLoop() {
         while (this.isTracking) {
-            try {
-                await this.sendProbe();
-            } catch (err) {
-                logger.error(err, 'Error sending probe');
+            if (this.probeMethod !== 'passive' && this.probeStartTimes.size === 0) {
+                try {
+                    await this.sendProbe();
+                } catch (err) {
+                    logger.error(err, 'Error sending probe');
+                }
             }
-            const delay = Math.floor(Math.random() * 100) + 2000;
-            await new Promise(resolve => setTimeout(resolve, delay));
+            const backoffMultiplier = this.probeMethod === 'passive'
+                ? 1
+                : 2 ** Math.min(this.consecutiveNoAck, 4);
+            const delay = this.probeMethod === 'passive'
+                ? this.probeIntervalMs
+                : Math.min(this.maxProbeBackoffMs, this.probeIntervalMs * backoffMultiplier);
+            await this.waitForProbeLoop(delay);
         }
     }
 
+    private waitForProbeLoop(delay: number): Promise<void> {
+        return new Promise(resolve => {
+            let settled = false;
+            const done = () => {
+                if (settled) return;
+                settled = true;
+                if (this.probeLoopTimer) clearTimeout(this.probeLoopTimer);
+                if (this.probeLoopWake === done) this.probeLoopWake = null;
+                this.probeLoopTimer = null;
+                resolve();
+            };
+            this.probeLoopWake = done;
+            this.probeLoopTimer = setTimeout(done, delay);
+        });
+    }
+
+    private wakeProbeLoop(): void {
+        this.probeLoopWake?.();
+    }
+
     private async sendProbe() {
+        if (this.probeMethod === 'passive') return;
         if (this.probeMethod === 'delete') {
             await this.sendDeleteProbe();
         } else {
@@ -268,6 +330,7 @@ export class WhatsAppTracker {
      * Sends a "delete" command for a non-existent message
      */
     private async sendDeleteProbe() {
+        let pendingEnvelopeId: string | null = null;
         try {
             // Generate a random message ID that likely doesn't exist
             const prefixes = ['3EB0', 'BAE5', 'F1D2', 'A9C4', '7E8B', 'C3F9', '2D6A'];
@@ -284,23 +347,31 @@ export class WhatsAppTracker {
             };
 
             trackerLogger.debug(
-                `[PROBE-DELETE] Sending silent delete probe for fake message ${randomMsgId}`
+                `[PROBE-DELETE] Sending experimental probe [${this.trackerRef}]`
             );
+            const envelopeId = newProbeEnvelopeId();
+            pendingEnvelopeId = envelopeId;
             registerSyntheticProbeId(randomMsgId);
+            registerSyntheticProbeId(envelopeId);
             const startTime = Date.now();
+            this.probeStartTimes.set(envelopeId, startTime);
 
-            const result = await this.sock.sendMessage(this.targetJid, randomDeleteMessage);
+            const result = await this.sock.sendMessage(this.targetJid, randomDeleteMessage, { messageId: envelopeId });
 
             if (result?.key?.id) {
                 registerSyntheticProbeId(result.key.id);
-                trackerLogger.debug(`[PROBE-DELETE] Delete probe sent successfully, message ID: ${result.key.id}`);
-                this.probeStartTimes.set(result.key.id, startTime);
+                if (result.key.id !== envelopeId) {
+                    this.probeStartTimes.delete(envelopeId);
+                    this.probeStartTimes.set(result.key.id, startTime);
+                    pendingEnvelopeId = result.key.id;
+                }
+                trackerLogger.debug(`[PROBE-DELETE] Probe accepted [${this.trackerRef}]`);
 
                 // No CLIENT ACK is inconclusive: record NO_ACK rather than claiming disconnection.
                 const timeoutId = setTimeout(() => {
                     if (this.probeStartTimes.has(result.key.id!)) {
                         const elapsedTime = Date.now() - startTime;
-                        trackerLogger.debug(`[PROBE-DELETE TIMEOUT] No CLIENT ACK for ${result.key.id} after ${elapsedTime}ms - Result is inconclusive`);
+                        trackerLogger.debug(`[PROBE-DELETE TIMEOUT] No client confirmation [${this.trackerRef}] after ${elapsedTime}ms`);
                         this.probeStartTimes.delete(result.key.id!);
                         this.probeTimeouts.delete(result.key.id!);
 
@@ -308,13 +379,19 @@ export class WhatsAppTracker {
                             this.markDeviceNoAck(result.key.remoteJid, elapsedTime);
                         }
                     }
-                }, 10000); // 10 seconds timeout
+                }, this.probeTimeoutMs);
 
-                this.probeTimeouts.set(result.key.id, timeoutId);
+                if (this.probeStartTimes.has(result.key.id)) {
+                    this.probeTimeouts.set(result.key.id, timeoutId);
+                } else {
+                    clearTimeout(timeoutId);
+                }
             } else {
+                this.probeStartTimes.delete(envelopeId);
                 trackerLogger.debug('[PROBE-DELETE ERROR] Failed to get message ID from send result');
             }
         } catch (err) {
+            if (pendingEnvelopeId) this.probeStartTimes.delete(pendingEnvelopeId);
             logger.error(err, '[PROBE-DELETE ERROR] Failed to send delete probe message');
         }
     }
@@ -324,6 +401,7 @@ export class WhatsAppTracker {
      * Uses a reaction to a non-existent message to minimize user disruption
      */
     private async sendReactionProbe() {
+        let pendingEnvelopeId: string | null = null;
         try {
             // Generate a random message ID that likely doesn't exist
             const prefixes = ['3EB0', 'BAE5', 'F1D2', 'A9C4', '7E8B', 'C3F9', '2D6A'];
@@ -346,21 +424,29 @@ export class WhatsAppTracker {
                 }
             };
 
-            trackerLogger.debug(`[PROBE-REACTION] Sending probe with reaction "${randomReaction}" to non-existent message ${randomMsgId}`);
+            trackerLogger.debug(`[PROBE-REACTION] Sending experimental probe [${this.trackerRef}]`);
+            const envelopeId = newProbeEnvelopeId();
+            pendingEnvelopeId = envelopeId;
             registerSyntheticProbeId(randomMsgId);
-            const result = await this.sock.sendMessage(this.targetJid, reactionMessage);
             const startTime = Date.now();
+            registerSyntheticProbeId(envelopeId);
+            this.probeStartTimes.set(envelopeId, startTime);
+            const result = await this.sock.sendMessage(this.targetJid, reactionMessage, { messageId: envelopeId });
 
             if (result?.key?.id) {
                 registerSyntheticProbeId(result.key.id);
-                trackerLogger.debug(`[PROBE-REACTION] Probe sent successfully, message ID: ${result.key.id}`);
-                this.probeStartTimes.set(result.key.id, startTime);
+                if (result.key.id !== envelopeId) {
+                    this.probeStartTimes.delete(envelopeId);
+                    this.probeStartTimes.set(result.key.id, startTime);
+                    pendingEnvelopeId = result.key.id;
+                }
+                trackerLogger.debug(`[PROBE-REACTION] Probe accepted [${this.trackerRef}]`);
 
                 // No CLIENT ACK is inconclusive: record NO_ACK rather than claiming disconnection.
                 const timeoutId = setTimeout(() => {
                     if (this.probeStartTimes.has(result.key.id!)) {
                         const elapsedTime = Date.now() - startTime;
-                        trackerLogger.debug(`[PROBE-REACTION TIMEOUT] No CLIENT ACK for ${result.key.id} after ${elapsedTime}ms - Result is inconclusive`);
+                        trackerLogger.debug(`[PROBE-REACTION TIMEOUT] No client confirmation [${this.trackerRef}] after ${elapsedTime}ms`);
                         this.probeStartTimes.delete(result.key.id!);
                         this.probeTimeouts.delete(result.key.id!);
 
@@ -368,13 +454,19 @@ export class WhatsAppTracker {
                             this.markDeviceNoAck(result.key.remoteJid, elapsedTime);
                         }
                     }
-                }, 10000); // 10 seconds timeout
+                }, this.probeTimeoutMs);
 
-                this.probeTimeouts.set(result.key.id, timeoutId);
+                if (this.probeStartTimes.has(result.key.id)) {
+                    this.probeTimeouts.set(result.key.id, timeoutId);
+                } else {
+                    clearTimeout(timeoutId);
+                }
             } else {
+                this.probeStartTimes.delete(envelopeId);
                 trackerLogger.debug('[PROBE-REACTION ERROR] Failed to get message ID from send result');
             }
         } catch (err) {
+            if (pendingEnvelopeId) this.probeStartTimes.delete(pendingEnvelopeId);
             logger.error(err, '[PROBE-REACTION ERROR] Failed to send probe message');
         }
     }
@@ -388,7 +480,7 @@ export class WhatsAppTracker {
             const { attrs } = node;
             // We only care about 'inactive' receipts here
             if (attrs.type === 'inactive') {
-                trackerLogger.debug(`[RAW RECEIPT] Received inactive receipt: ${JSON.stringify(attrs)}`);
+                trackerLogger.debug(`[RAW RECEIPT] Inactive receipt observed [${this.trackerRef}]`);
 
                 const msgId = attrs.id;
                 const fromJid = attrs.from;
@@ -412,7 +504,7 @@ export class WhatsAppTracker {
      * Process an ACK (receipt) from a device
      */
     private processAck(msgId: string, fromJid: string, type: string) {
-        trackerLogger.debug(`[ACK PROCESS] ID: ${msgId}, JID: ${fromJid}, Type: ${type}`);
+        trackerLogger.debug(`[ACK PROCESS] ${type} [${this.trackerRef}]`);
 
         if (!msgId || !fromJid) return;
 
@@ -421,7 +513,7 @@ export class WhatsAppTracker {
 
         if (startTime) {
             const rtt = Date.now() - startTime;
-            trackerLogger.debug(`[TRACKING] ✅ ${type.toUpperCase()} received for ${msgId} from ${fromJid}, RTT: ${rtt}ms`);
+            trackerLogger.debug(`[TRACKING] ✅ ${type.toUpperCase()} [${this.trackerRef}], RTT: ${rtt}ms`);
 
             // Clear timeout
             const timeoutId = this.probeTimeouts.get(msgId);
@@ -431,6 +523,7 @@ export class WhatsAppTracker {
             }
 
             this.probeStartTimes.delete(msgId);
+            this.consecutiveNoAck = 0;
             this.addMeasurementForDevice(fromJid, rtt);
         }
     }
@@ -446,11 +539,11 @@ export class WhatsAppTracker {
 
         if (!msgId || !fromJid) return;
 
-        trackerLogger.debug(`[TRACKING] Message Update - ID: ${msgId}, JID: ${fromJid}, Status: ${status} (${this.getStatusName(status)})`);
+        trackerLogger.debug(`[TRACKING] Message status [${this.trackerRef}]: ${status} (${this.getStatusName(status)})`);
 
-        // Only CLIENT ACK (3) means device is online and received the message
+        // Delivery/read/played all prove that the target device received it.
         // SERVER ACK (2) only means server received it, not the device
-        if (status === 3) { // CLIENT ACK
+        if (typeof status === 'number' && status >= 3 && status <= 5) {
             this.processAck(msgId, fromJid, 'client_ack');
         }
     }
@@ -473,6 +566,7 @@ export class WhatsAppTracker {
      * @param timeout Time elapsed before timeout
      */
     private markDeviceNoAck(jid: string, timeout: number) {
+        this.consecutiveNoAck += 1;
         // Initialize device metrics if not exists
         if (!this.deviceMetrics.has(jid)) {
             this.deviceMetrics.set(jid, {
@@ -489,7 +583,7 @@ export class WhatsAppTracker {
             metrics.lastUpdate = Date.now();
         }
 
-        trackerLogger.info(`\n🟠 Device ${jid}: NO_ACK after ${timeout}ms (inconclusive)\n`);
+        trackerLogger.info(`\n🟠 No client confirmation [${this.trackerRef}] after ${timeout}ms (inconclusive)\n`);
         this.sendUpdate();
     }
 
@@ -560,10 +654,10 @@ export class WhatsAppTracker {
         if (isNoAckState(metrics.state)) {
             // Check if this is a new measurement (device came back online)
             if (metrics.lastRtt <= 5000 && metrics.recentRtts.length > 0) {
-                trackerLogger.debug(`[DEVICE ${jid}] Device came back online (RTT: ${metrics.lastRtt}ms)`);
+                trackerLogger.debug(`[TRACKING ${this.trackerRef}] Confirmation restored (RTT: ${metrics.lastRtt}ms)`);
                 // Continue with normal state determination below
             } else {
-                trackerLogger.debug(`[DEVICE ${jid}] Maintaining inconclusive NO_ACK state`);
+                trackerLogger.debug(`[TRACKING ${this.trackerRef}] Maintaining inconclusive state`);
                 return;
             }
         }
@@ -595,7 +689,7 @@ export class WhatsAppTracker {
         }
 
         // Normal mode: Formatted output
-        trackerLogger.formatDeviceState(jid, metrics.lastRtt, movingAvg, median, threshold, metrics.state);
+        trackerLogger.formatDeviceState(`target-${this.trackerRef}`, metrics.lastRtt, movingAvg, median, threshold, metrics.state);
 
         // Debug mode: Additional debug information
         trackerLogger.debug(`[DEBUG] RTT History length: ${metrics.rttHistory.length}, Global History: ${this.globalRttHistory.length}`);
@@ -683,6 +777,7 @@ export class WhatsAppTracker {
      */
     public stopTracking() {
         this.isTracking = false;
+        this.wakeProbeLoop();
 
         if (this.messagesUpdateHandler) {
             (this.sock.ev as any).off?.('messages.update', this.messagesUpdateHandler);
@@ -698,12 +793,15 @@ export class WhatsAppTracker {
         }
 
         // Clear all pending timeouts
-        for (const timeoutId of this.probeTimeouts.values()) {
-            clearTimeout(timeoutId);
-        }
-        this.probeTimeouts.clear();
-        this.probeStartTimes.clear();
+        this.clearPendingProbes();
 
         logger.info('Stopping tracking');
+    }
+
+    private clearPendingProbes(): void {
+        for (const timeoutId of this.probeTimeouts.values()) clearTimeout(timeoutId);
+        this.probeTimeouts.clear();
+        this.probeStartTimes.clear();
+        this.consecutiveNoAck = 0;
     }
 }

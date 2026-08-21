@@ -40,6 +40,8 @@ test('GET /api/runtime-capabilities returns Railway dashboard capabilities over 
             reports: true,
             networkMonitor: false,
             callTrafficAnalysis: false,
+            passiveMessageReceipts: true,
+            experimentalProbes: false,
             authRequired: true,
         });
     });

@@ -9,8 +9,16 @@ interface ActivityLogPanelProps {
 
 function sourceLabel(source: ObservedActivityEvent['source']): string {
     if (source === 'message') return 'Mensaje';
+    if (source === 'receipt') return 'Confirmación';
     if (source === 'presence') return 'Presencia';
     return 'Llamada';
+}
+
+function confidenceLabel(confidence: ObservedActivityEvent['confidence']): string {
+    if (confidence === 'high') return 'alta';
+    if (confidence === 'medium') return 'media';
+    if (confidence === 'low') return 'baja';
+    return 'no disponible';
 }
 
 export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelProps) {
@@ -18,7 +26,7 @@ export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelPro
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
             <div className="flex items-center justify-between gap-3 mb-4">
                 <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
-                <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos reales</span>
+                <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos observados</span>
             </div>
             {events.length > 0 ? (
                 <div className="max-h-[260px] overflow-y-auto pr-2 space-y-0">
@@ -34,8 +42,8 @@ export function ActivityLogPanel({ events, formatDateTime }: ActivityLogPanelPro
             ) : (
                 <div className="text-center py-8">
                     <History size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin actividad real observada</p>
-                    <p className="text-txt-dim text-xs mt-1">Aqui apareceran mensajes, presencia y llamadas atribuibles a esta sesion.</p>
+                    <p className="text-txt-muted text-sm">Sin actividad observada</p>
+                    <p className="text-txt-dim text-xs mt-1">Aquí aparecerán mensajes, confirmaciones, presencia y llamadas atribuibles a esta sesión.</p>
                 </div>
             )}
         </div>
@@ -82,7 +90,7 @@ function ActivityTimelineRow({
                         {entry.label}
                     </span>
                     <span className="text-[10px] text-txt-dim ml-2">
-                        {sourceLabel(entry.source)} · confianza {entry.confidence}
+                        {sourceLabel(entry.source)} · confianza {confidenceLabel(entry.confidence)}
                     </span>
                 </div>
                 <span className="text-[10px] text-txt-muted font-mono">

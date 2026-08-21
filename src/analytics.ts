@@ -98,11 +98,48 @@ export interface HabitProfile {
     nightOwlScore: number;              // 0-100, activity after midnight
     consistencyScore: number;           // 0-100, how regular the schedule is
     avgResponseGapSec: number;          // avg gap between offline→online
-    dominantPattern: string;            // "early_bird" | "night_owl" | "regular" | "irregular"
+    dominantPattern: string;            // "unavailable" | "early_bird" | "night_owl" | "regular" | "irregular"
     weekdayVsWeekend: {
         weekdayAvgMin: number;
         weekendAvgMin: number;
         difference: string;             // "more_weekday" | "more_weekend" | "similar"
+    };
+}
+
+export interface IntelligenceCoverage {
+    available: boolean;
+    conclusiveMeasurements: number;
+    totalAttempts: number;
+    activeDays: number;
+    minimumConclusiveMeasurements: number;
+    minimumActiveDays: number;
+    reason: 'sufficient' | 'insufficient_conclusive_measurements' | 'insufficient_active_days';
+}
+
+export const INTELLIGENCE_MIN_CONCLUSIVE_MEASUREMENTS = 100;
+export const INTELLIGENCE_MIN_ACTIVE_DAYS = 3;
+
+export function evaluateIntelligenceCoverage(
+    conclusiveMeasurements: number,
+    totalAttempts: number,
+    activeDays: number,
+): IntelligenceCoverage {
+    const available = conclusiveMeasurements >= INTELLIGENCE_MIN_CONCLUSIVE_MEASUREMENTS
+        && activeDays >= INTELLIGENCE_MIN_ACTIVE_DAYS;
+    const reason: IntelligenceCoverage['reason'] = conclusiveMeasurements < INTELLIGENCE_MIN_CONCLUSIVE_MEASUREMENTS
+        ? 'insufficient_conclusive_measurements'
+        : activeDays < INTELLIGENCE_MIN_ACTIVE_DAYS
+            ? 'insufficient_active_days'
+            : 'sufficient';
+
+    return {
+        available,
+        conclusiveMeasurements,
+        totalAttempts,
+        activeDays,
+        minimumConclusiveMeasurements: INTELLIGENCE_MIN_CONCLUSIVE_MEASUREMENTS,
+        minimumActiveDays: INTELLIGENCE_MIN_ACTIVE_DAYS,
+        reason,
     };
 }
 
@@ -170,15 +207,19 @@ function col() {
     return db!.collection<MeasurementDocument>('measurements');
 }
 
+function measurementScope(jid: string, trackingSessionId?: string) {
+    return { jid, ...(trackingSessionId ? { trackingSessionId } : {}) };
+}
+
 /* ================================================================== */
 /*  HELPER — extract sessions from raw measurements                   */
 /* ================================================================== */
 
 const SESSION_GAP_MS = 60_000; // 60 s gap = new session
 
-async function extractSessions(jid: string, since: Date): Promise<Session[]> {
+async function extractSessions(jid: string, since: Date, trackingSessionId?: string): Promise<Session[]> {
     const docs = await col()
-        .find({ jid, timestamp: { $gte: since }, state: { $regex: ONLINE_TRACKER_STATE_REGEX } })
+        .find({ ...measurementScope(jid, trackingSessionId), timestamp: { $gte: since }, state: { $regex: ONLINE_TRACKER_STATE_REGEX } })
         .sort({ timestamp: 1 })
         .toArray();
 
@@ -230,11 +271,11 @@ async function extractSessions(jid: string, since: Date): Promise<Session[]> {
 /*  1. DAILY ROUTINE                                                  */
 /* ================================================================== */
 
-export async function getDailyRoutine(jid: string, days: number = 14): Promise<DailyRoutine[]> {
+export async function getDailyRoutine(jid: string, days: number = 14, trackingSessionId?: string): Promise<DailyRoutine[]> {
     if (!db) return [];
 
     const since = new Date(Date.now() - days * 86_400_000);
-    const sessions = await extractSessions(jid, since);
+    const sessions = await extractSessions(jid, since, trackingSessionId);
     if (sessions.length === 0) return [];
 
     // Group sessions by date
@@ -285,7 +326,7 @@ function fmt(d: Date): string {
 /*  2. AVAILABILITY PROBABILITY                                       */
 /* ================================================================== */
 
-export async function getAvailabilityProfile(jid: string, days: number = 14): Promise<AvailabilityProfile> {
+export async function getAvailabilityProfile(jid: string, days: number = 14, trackingSessionId?: string): Promise<AvailabilityProfile> {
     if (!db) return emptyAvailabilityProfile();
 
     const since = new Date(Date.now() - days * 86_400_000);
@@ -293,7 +334,7 @@ export async function getAvailabilityProfile(jid: string, days: number = 14): Pr
     // Aggregate each (date, hour) pair. NO_ACK/unknown attempts are kept as
     // operational evidence, but cannot prove that the contact was inactive.
     const pipeline = [
-        { $match: { jid, timestamp: { $gte: since } } },
+        { $match: { ...measurementScope(jid, trackingSessionId), timestamp: { $gte: since } } },
         {
             $group: {
                 _id: {
@@ -374,7 +415,7 @@ function observedAvailabilityPct(profile: AvailabilityProfile, hours: number[]):
 /*  3. SESSION STATISTICS                                             */
 /* ================================================================== */
 
-export async function getSessionStats(jid: string, days: number = 14): Promise<SessionStats> {
+export async function getSessionStats(jid: string, days: number = 14, trackingSessionId?: string): Promise<SessionStats> {
     const empty: SessionStats = {
         totalSessions: 0, avgDurationSec: 0, medianDurationSec: 0,
         maxDurationSec: 0, minDurationSec: 0, avgSessionsPerDay: 0,
@@ -383,7 +424,7 @@ export async function getSessionStats(jid: string, days: number = 14): Promise<S
     if (!db) return empty;
 
     const since = new Date(Date.now() - days * 86_400_000);
-    const sessions = await extractSessions(jid, since);
+    const sessions = await extractSessions(jid, since, trackingSessionId);
     if (sessions.length === 0) return empty;
 
     const durations = sessions.map(s => s.durationSec).sort((a, b) => a - b);
@@ -416,7 +457,7 @@ export async function getSessionStats(jid: string, days: number = 14): Promise<S
 /*  4. WEEKLY HEATMAP (7 × 24)                                       */
 /* ================================================================== */
 
-export async function getWeeklyHeatmap(jid: string, weeks: number = 4): Promise<WeeklyHeatmap> {
+export async function getWeeklyHeatmap(jid: string, weeks: number = 4, trackingSessionId?: string): Promise<WeeklyHeatmap> {
     const dayLabels = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
     const emptyMatrix = Array.from({ length: 7 }, () => new Array(24).fill(0));
     const empty: WeeklyHeatmap = {
@@ -430,7 +471,7 @@ export async function getWeeklyHeatmap(jid: string, weeks: number = 4): Promise<
     const since = new Date(Date.now() - weeks * 7 * 86_400_000);
 
     const pipeline = [
-        { $match: { jid, timestamp: { $gte: since } } },
+        { $match: { ...measurementScope(jid, trackingSessionId), timestamp: { $gte: since } } },
         {
             $group: {
                 _id: {
@@ -526,12 +567,12 @@ function utcWeekStart(dateValue: string): string {
 /*  5. HABIT PROFILE                                                  */
 /* ================================================================== */
 
-export async function getHabitProfile(jid: string, days: number = 14): Promise<HabitProfile> {
+export async function getHabitProfile(jid: string, days: number = 14, trackingSessionId?: string): Promise<HabitProfile> {
     if (!db) return defaultHabit();
 
     const [routine, availability] = await Promise.all([
-        getDailyRoutine(jid, days),
-        getAvailabilityProfile(jid, days),
+        getDailyRoutine(jid, days, trackingSessionId),
+        getAvailabilityProfile(jid, days, trackingSessionId),
     ]);
 
     if (routine.length === 0) return defaultHabit();
@@ -568,7 +609,7 @@ export async function getHabitProfile(jid: string, days: number = 14): Promise<H
 
     // Response gap: avg offline→online in sessions
     const since = new Date(Date.now() - days * 86_400_000);
-    const sessions = await extractSessions(jid, since);
+    const sessions = await extractSessions(jid, since, trackingSessionId);
     let gapSum = 0, gapCount = 0;
     for (let i = 1; i < sessions.length; i++) {
         const current = sessions[i];
@@ -622,7 +663,7 @@ function defaultHabit(): HabitProfile {
     return {
         estimatedWakeTime: null, estimatedSleepTime: null, estimatedTimezone: 'UTC',
         workHoursOnline: 0, eveningOnline: 0, nightOwlScore: 0, consistencyScore: 0,
-        avgResponseGapSec: 0, dominantPattern: 'irregular',
+        avgResponseGapSec: 0, dominantPattern: 'unavailable',
         weekdayVsWeekend: { weekdayAvgMin: 0, weekendAvgMin: 0, difference: 'similar' }
     };
 }
@@ -653,7 +694,13 @@ function estimateTZ(avgWakeMinUTC: number): string {
 /*  6. MULTI-CONTACT CORRELATION                                      */
 /* ================================================================== */
 
-export async function getCorrelation(jid1: string, jid2: string, days: number = 7): Promise<CorrelationResult> {
+export async function getCorrelation(
+    jid1: string,
+    jid2: string,
+    days: number = 7,
+    trackingSessionId1?: string,
+    trackingSessionId2?: string,
+): Promise<CorrelationResult> {
     const empty: CorrelationResult = {
         jid1, jid2, overlapMinutes: 0, overlapPercentage: 0,
         hourlyCorrelation: 0, simultaneousCount: 0,
@@ -665,8 +712,8 @@ export async function getCorrelation(jid1: string, jid2: string, days: number = 
 
     // Get hourly online profiles for both
     const [p1, p2] = await Promise.all([
-        getAvailabilityProfile(jid1, days),
-        getAvailabilityProfile(jid2, days),
+        getAvailabilityProfile(jid1, days, trackingSessionId1),
+        getAvailabilityProfile(jid2, days, trackingSessionId2),
     ]);
 
     // Pearson correlation only across hours observed conclusively for both.
@@ -680,8 +727,8 @@ export async function getCorrelation(jid1: string, jid2: string, days: number = 
 
     // Get sessions for both and compute overlap
     const [sessions1, sessions2] = await Promise.all([
-        extractSessions(jid1, since),
-        extractSessions(jid2, since),
+        extractSessions(jid1, since, trackingSessionId1),
+        extractSessions(jid2, since, trackingSessionId2),
     ]);
 
     let overlapSec = 0;
@@ -754,14 +801,20 @@ function pearson(x: number[], y: number[]): number {
 /*  COMPOUND: Full intelligence report                                */
 /* ================================================================== */
 
-export async function getFullIntelligence(jid: string, days: number = 14) {
+export async function getFullIntelligence(jid: string, days: number = 14, trackingSessionId?: string) {
     const [routine, availability, sessionStats, heatmap, habits] = await Promise.all([
-        getDailyRoutine(jid, days),
-        getAvailabilityProfile(jid, days),
-        getSessionStats(jid, days),
-        getWeeklyHeatmap(jid, Math.ceil(days / 7)),
-        getHabitProfile(jid, days),
+        getDailyRoutine(jid, days, trackingSessionId),
+        getAvailabilityProfile(jid, days, trackingSessionId),
+        getSessionStats(jid, days, trackingSessionId),
+        getWeeklyHeatmap(jid, Math.ceil(days / 7), trackingSessionId),
+        getHabitProfile(jid, days, trackingSessionId),
     ]);
 
-    return { routine, availability, sessionStats, heatmap, habits };
+    const coverage = evaluateIntelligenceCoverage(
+        heatmap.totalDataPoints,
+        heatmap.totalAttempts,
+        availability.daysAnalyzed,
+    );
+
+    return { routine, availability, sessionStats, heatmap, habits, coverage };
 }

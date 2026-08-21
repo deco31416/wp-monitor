@@ -28,7 +28,8 @@ export function registerSyntheticProbeId(value: unknown, now: number = Date.now(
     syntheticProbeIds.set(id, now + PROBE_ID_TTL_MS);
 }
 
-function isRegisteredProbeId(value: unknown, now: number): boolean {
+export function isSyntheticProbeId(value: unknown, now: number = Date.now()): boolean {
+    pruneSyntheticProbeIds(now);
     const id = cleanProbeId(value);
     if (!id) return false;
     const expiresAt = syntheticProbeIds.get(id);
@@ -43,7 +44,7 @@ function isRegisteredProbeId(value: unknown, now: number): boolean {
 export function isSyntheticProbeMessage(message: any, now: number = Date.now()): boolean {
     pruneSyntheticProbeIds(now);
     const payload = message?.message;
-    return isRegisteredProbeId(message?.key?.id, now)
-        || isRegisteredProbeId(payload?.reactionMessage?.key?.id, now)
-        || isRegisteredProbeId(payload?.protocolMessage?.key?.id, now);
+    return isSyntheticProbeId(message?.key?.id, now)
+        || isSyntheticProbeId(payload?.reactionMessage?.key?.id, now)
+        || isSyntheticProbeId(payload?.protocolMessage?.key?.id, now);
 }

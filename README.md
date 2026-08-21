@@ -53,10 +53,10 @@ The RTT research foundation follows the paper **“Careless Whisper: Exploiting 
 
 | Area | Capability |
 |---|---|
-| Activity analysis | Measures delivery-receipt round-trip time and derives heuristic `online` and `standby` states; a missing receipt is reported as inconclusive `NO_ACK` |
-| Activity log | Converts technical state transitions into a paginated, human-readable bitácora with local and UTC timestamps |
-| Behavior intelligence | Calculates routines, availability probability, session statistics, weekly heatmaps, habit profiles, and multi-contact correlations |
-| Presence and device signals | Observes supported presence states, recording/typing indicators, device changes, and RTT-based connection-type inference |
+| Activity analysis | Passively records real message activity and supported delivery/read receipts without generating probe traffic; optional experimental RTT probes remain explicitly gated |
+| Activity log | Separates observed messages, receipts, presence and calls from technical RTT attempts in a session-scoped timeline |
+| Behavior intelligence | Calculates routines, availability, sessions, heatmaps, habits and correlations only after sufficient conclusive RTT coverage |
+| Presence and device signals | Observes supported presence states, recording/typing indicators and technical destinations without claiming unavailable presence |
 | Privacy and anomaly assessment | Produces an explainable OPSEC exposure score and flags deviations from historical activity baselines |
 | Network Monitor | Captures packet metadata through Npcap/libpcap, applies protocol filters, classifies IP observations, and exports CSV or JSON |
 | Call traffic analysis | Opens an authorized local capture window around an externally initiated WhatsApp Web/Desktop call or interaction |
@@ -64,7 +64,7 @@ The RTT research foundation follows the paper **“Careless Whisper: Exploiting 
 | Case and audit management | Associates operations with a `caseId`, operator, authorization note, event timeline, and case status |
 | Reporting and evidence | Generates contact reports, final case reports, audit exports, CSV annexes, and JSON/ZIP evidence packages with integrity hashes |
 | Runtime separation | Supports `local-full` for local capture and `railway-dashboard` for remote dashboard, API, statistics, and reporting |
-| Operational controls | Exposes health and capability endpoints, token protection, production CORS controls, rate limits, and safe feature gating |
+| Operational controls | Exposes health/capability endpoints, single-operator cookie authentication, Redis-backed rate limits, production CORS controls and safe feature gating |
 
 ---
 
@@ -180,10 +180,13 @@ sequenceDiagram
     Operator->>Dashboard: Start an authorized operation
     Dashboard->>API: Tracking or capture request
 
-    alt RTT activity research
-        API->>WhatsApp: Send configured probe
-        WhatsApp-->>API: Delivery acknowledgement
-        API->>MongoDB: Store RTT measurement and heuristic state
+    alt Passive observation (default)
+        WhatsApp-->>API: Real message or supported receipt
+        API->>MongoDB: Store session-scoped observed event
+    else Experimental RTT research (explicitly enabled)
+        API->>WhatsApp: Send bounded configured probe
+        WhatsApp-->>API: Supported client acknowledgement or timeout
+        API->>MongoDB: Store RTT measurement or inconclusive result
     else Local network or call analysis
         API->>Capture: Open bounded capture window
         Capture-->>API: Packet metadata and IP observations
@@ -205,6 +208,7 @@ WP MONITOR intentionally uses conservative terminology. Its outputs are investig
 | Output | Correct interpretation |
 |---|---|
 | RTT state | A heuristic activity state derived from measured response timing |
+| Message receipt | A supported status observed for a real outgoing message; delivery/read availability depends on WhatsApp and account privacy settings |
 | Presence signal | A supported session event observed through the current WhatsApp/Baileys integration |
 | Candidate IP | A public IP observed during an authorized capture window and prioritized for manual review |
 | Infrastructure IP | A known or likely relay, CDN, cloud, hosting, STUN/TURN, Meta/WhatsApp, Google, or other provider address |
@@ -221,13 +225,14 @@ Results can be affected by VPNs, proxies, carrier-grade NAT, mobile networks, CD
 
 ### Activity tracking and contact history
 
-- Real-time RTT measurement from supported delivery acknowledgements
-- Dynamic threshold-based state classification
-- Historical chart backed by MongoDB, including the latest 200 measurements on initial load
-- Delete and reaction probe methods
+- Passive-by-default observation of real sent/received messages and supported accepted/delivered/read/played receipts
+- Session-scoped activity persistence with opaque message-ID fingerprints; raw message IDs are not stored in activity-event details
+- No generated probe traffic in the default mode and an explicit unavailable state when RTT evidence does not exist
+- Experimental delete/reaction RTT methods only when `ENABLE_EXPERIMENTAL_PROBES=true`, with bounded intervals, timeouts, single-flight execution and backoff
+- Dynamic threshold classification only for conclusive experimental RTT acknowledgements; timeout remains inconclusive `NO_ACK`
 - QR authentication through Baileys
 - Contact profile enrichment, custom aliases, and display precedence
-- Soft-delete contact history, one-click reactivation, and automatic restoration of active contacts
+- Durable contact history, finalization/reactivation, clean live-state boundaries, and automatic restoration of active authorized sessions
 
 ### Activity bitácora and reports
 
@@ -556,7 +561,7 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 3. Open the dashboard and sign in with the single-operator username and password.
 4. Authenticate the project session through the WhatsApp QR flow.
 5. Create or select a case and provide `caseId`, `operatorName`, and `authorizationNote` before manual capture.
-6. Add an authorized contact and review RTT measurements, state history, profile data, statistics, and behavior analytics.
+6. Add an authorized contact and review passive observed activity. RTT charts and behavior analytics remain unavailable unless experimental probes are explicitly enabled and produce sufficient conclusive coverage.
 7. For call analysis, start the WhatsApp Web/Desktop call outside WP MONITOR on the same authorized host, then open and close the bounded local capture window.
 8. Review candidate and infrastructure classifications conservatively.
 9. Export contact reports, final case reports, audit data, or evidence packages as required.
@@ -612,6 +617,9 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 | `GET` | `/api/contacts/history` | Lists active and inactive saved contacts |
 | `GET` | `/api/history/:jid` | Returns RTT measurement history |
 | `GET` | `/api/activity/:jid` | Returns state transition history |
+| `GET` | `/api/contact/:jid/activity` | Returns observed message, receipt, presence and call events for the active tracking session |
+| `GET` | `/api/contact/:jid/live-state` | Returns the current session-scoped composite signal |
+| `GET` | `/api/contact/:jid/signals` | Returns recent in-memory signals for the active tracking session |
 | `GET` | `/api/stats/:jid` | Returns online, standby, calibrating, inconclusive no-ACK, and unknown distribution (`offline` remains a legacy alias of `noAck`) |
 | `GET` | `/api/profile/:jid` | Returns stored and live profile data |
 | `GET` | `/api/patterns/:jid` | Returns hourly activity patterns |
@@ -659,8 +667,10 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 | `remove-contact` | Client to server | Stops tracking and soft-deletes the contact |
 | `reactivate-contact` | Client to server | Reactivates a saved contact |
 | `get-tracked-contacts` | Client to server | Requests active trackers |
-| `set-probe-method` | Client to server | Changes the delete/reaction probe method |
+| `set-probe-method` | Client to server | Selects passive mode or, when enabled by deployment, an experimental delete/reaction probe |
 | `tracker-update` | Server to client | Sends real-time RTT and state data |
+| `message-activity` | Server to client | Sends a real incoming/outgoing message observation without content |
+| `message-receipt` | Server to client | Sends a supported accepted/delivered/read/played transition for a real outgoing message |
 | `contact-added` | Server to client | Confirms a contact was added |
 | `contact-profile` | Server to client | Sends enriched profile data |
 | `network-start` | Client to server | Starts authorized network capture |
@@ -680,14 +690,17 @@ See [docs/operations/railway.md](docs/operations/railway.md) for the deployment 
 
 ## How It Works
 
-### RTT activity analysis
+### Passive observation and experimental RTT analysis
 
-The tracker sends the configured probe and measures the interval until the supported client acknowledgement is observed.
+The supported default is `passive`: the tracker subscribes to WhatsApp/Baileys events and records only real messages, supported receipts, presence and calls attributable to an active authorized tracking session. It does not send probe traffic, and missing RTT data is displayed as unavailable rather than zero.
+
+Experimental RTT analysis is disabled unless `ENABLE_EXPERIMENTAL_PROBES=true`. When an authorized operator explicitly selects one of these methods, the tracker measures the local interval until a supported client acknowledgement is observed. A timeout is an inconclusive result, not proof that the contact is offline.
 
 | Probe method | Description |
 |---|---|
-| Delete | Sends a delete request referencing a non-existent message identifier |
-| Reaction | Sends a reaction referencing a non-existent message identifier |
+| Passive | Observes real supported events and generates no probe traffic |
+| Delete (experimental) | Sends a bounded delete request referencing a non-existent message identifier |
+| Reaction (experimental) | Sends a bounded reaction referencing a non-existent message identifier |
 
 The project calculates a dynamic threshold from the median RTT. Measurements below or above that threshold contribute to heuristic activity-state classification. These states depend on current platform behavior and must not be treated as direct proof that a person is actively using a device.
 

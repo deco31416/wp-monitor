@@ -62,7 +62,8 @@ Eliminar una solicitud y revocarla son operaciones distintas. La eliminacion ret
 | --- | --- | --- |
 | RTT probe | Medicion heuristica | Serie historica y clasificacion |
 | Presencia Baileys | Evento efimero | Estado actual y transicion cuando aplica |
-| Mensaje | Evento de sesion vinculada | Senal de actividad disponible |
+| Mensaje | Evento real de sesion vinculada, sin contenido | Senal de actividad de la sesion activa |
+| Receipt | Estado compatible de mensaje real saliente | Transicion monotona con huella opaca del ID; no RTT experimental |
 | Llamada | Ciclo `offer/ringing/accept/reject/timeout/terminate` | Estado en vivo y actividad vinculada |
 | Captura de red | Metadata local | Paquetes en memoria, exports y resumen vinculado |
 | Check-In | Solicitud consentida | Registro, recibo y hash |
@@ -79,7 +80,7 @@ sequenceDiagram
     participant IO as Socket.IO
     participant UI as Dashboard
 
-    WA->>API: presencia, mensaje o llamada
+    WA->>API: presencia, mensaje, receipt o llamada
     API->>API: resolver JID y normalizar
     API->>DB: persistir cuando corresponde
     API->>IO: emitir estado/evento
@@ -114,5 +115,6 @@ sequenceDiagram
 - El backend almacena marcas de tiempo en UTC.
 - La interfaz puede presentar hora local, pero los informes deben conservar UTC.
 - Las observaciones de tracking deben incluir `caseId` y `trackingSessionId`; el operador y la autorizacion pertenecen a la sesion durable.
+- Los detalles persistidos de mensajes/receipts pueden incluir `messageIdHash`, pero no el ID crudo ni contenido del mensaje.
 - Un hash se calcula sobre una representacion canonica o archivo concreto; cualquier regeneracion produce un nuevo hash.
 - La procedencia debe viajar con el dato, no depender de memoria del operador.

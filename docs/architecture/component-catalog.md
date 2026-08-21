@@ -45,7 +45,11 @@ Colecciones logicas: operator users, measurements, activity events, contacts, tr
 
 ### `src/tracker.ts`
 
-Ejecuta observaciones RTT y produce clasificacion/actualizaciones. Debe conservar metodo, timestamp, JID y resultado. Sus estados son heuristicas dependientes de cobertura.
+Mantiene la suscripcion pasiva predeterminada y, solo cuando el despliegue/operador lo habilitan, ejecuta probes RTT experimentales acotados. Produce clasificacion/actualizaciones con metodo, timestamp, JID y resultado; sus estados son heuristicas dependientes de cobertura.
+
+### `src/message-receipts.ts`
+
+Correlaciona mensajes reales salientes con transiciones accepted/delivered/read/played. El registro es monotono, idempotente, acotado por TTL/tamano, aislado por contacto y limpiable al cerrar sesion. Expone un fingerprint SHA-256 truncado y nunca el ID crudo.
 
 ### `src/analytics.ts` y `src/stats-insights.ts`
 

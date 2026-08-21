@@ -59,6 +59,10 @@ Las mediciones RTT y los eventos observados se guardan con `caseId` y `trackingS
 
 El frontend recibe actualizaciones por Socket.IO y puede consultar `/api/contact/:jid/live-state`. Un estado efimero incluye timestamp/expiracion. Cuando vence, el backend emite correccion; al recargar, la API evita restaurar una etiqueta antigua como actual.
 
+El modo predeterminado es pasivo. `messages.upsert` registra mensajes reales sin contenido y `messages.update` correlaciona transiciones de entrega mediante un registro acotado por TTL/tamano. La correlacion usa contacto + ID en memoria y solo persiste una huella SHA-256 truncada. Al finalizar o reactivar se limpian señales, temporizadores y correlaciones en memoria para impedir herencia entre sesiones.
+
+Los probes delete/reaction solo operan si `ENABLE_EXPERIMENTAL_PROBES=true` y el operador cambia expresamente el modo. Son single-flight, tienen timeout/backoff y sus mensajes sinteticos se excluyen del pipeline de actividad real.
+
 ## Captura general
 
 ### Precondiciones

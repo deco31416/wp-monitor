@@ -67,6 +67,15 @@ interface IntelData {
     sessionStats: IntelSession;
     heatmap: IntelHeatmap;
     habits: IntelHabits;
+    coverage: {
+        available: boolean;
+        conclusiveMeasurements: number;
+        totalAttempts: number;
+        activeDays: number;
+        minimumConclusiveMeasurements: number;
+        minimumActiveDays: number;
+        reason: 'sufficient' | 'insufficient_conclusive_measurements' | 'insufficient_active_days';
+    };
 }
 
 interface IntelPanelProps {
@@ -82,7 +91,7 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
                 <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
                     <div className="animate-pulse">
                         <Brain size={32} className="mx-auto text-accent mb-2" />
-                        <p className="text-txt-muted text-sm">Analizando patrones de comportamiento...</p>
+                        <p className="text-txt-muted text-sm">Analizando señales confirmadas...</p>
                     </div>
                 </div>
             </div>
@@ -94,9 +103,25 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
             <div className="space-y-4">
                 <div className="text-center py-8">
                     <Brain size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin datos de inteligencia</p>
-                    <p className="text-txt-dim text-xs mt-1">Se requieren al menos unas horas de tracking para generar analisis</p>
+                    <p className="text-txt-muted text-sm">Patrones aún no disponibles</p>
+                    <p className="text-txt-dim text-xs mt-1">Todavía no existe evidencia confirmada suficiente para generar un análisis.</p>
                 </div>
+            </div>
+        );
+    }
+
+    if (!intel.coverage.available) {
+        return (
+            <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
+                <Brain size={32} className="mx-auto text-txt-dim mb-2" />
+                <p className="text-txt-primary text-sm font-semibold">Patrones aún no disponibles</p>
+                <p className="text-txt-muted text-xs mt-2 max-w-xl mx-auto">
+                    Esta sesión no reúne suficientes mediciones confirmadas para inferir rutinas de forma responsable.
+                    La actividad observada permanece disponible en su propia sección.
+                </p>
+                <p className="text-txt-dim text-[10px] mt-3">
+                    Cobertura actual: {intel.coverage.conclusiveMeasurements.toLocaleString()} mediciones RTT concluyentes en {intel.coverage.activeDays} días.
+                </p>
             </div>
         );
     }

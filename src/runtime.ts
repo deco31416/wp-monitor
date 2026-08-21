@@ -1,6 +1,7 @@
 export interface RuntimeConfig {
     deploymentMode: string;
     localCaptureEnabled: boolean;
+    experimentalProbesEnabled: boolean;
     authRequired: true;
 }
 
@@ -14,6 +15,8 @@ export interface RuntimeCapabilities {
     reports: boolean;
     networkMonitor: boolean;
     callTrafficAnalysis: boolean;
+    passiveMessageReceipts: boolean;
+    experimentalProbes: boolean;
     authRequired: boolean;
 }
 
@@ -32,6 +35,7 @@ export function buildRuntimeConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     return {
         deploymentMode,
         localCaptureEnabled: resolveLocalCaptureEnabled(env, deploymentMode),
+        experimentalProbesEnabled: env.ENABLE_EXPERIMENTAL_PROBES === 'true',
         authRequired: true,
     };
 }
@@ -84,6 +88,9 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         ['AUTH_LOGIN_RATE_MAX_PER_IP', 1, 10_000],
         ['AUTH_LOGIN_RATE_MAX_PER_USERNAME', 1, 10_000],
         ['AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP', 1, 10_000],
+        ['PROBE_INTERVAL_MS', 10_000, 600_000],
+        ['PROBE_TIMEOUT_MS', 3_000, 60_000],
+        ['PROBE_MAX_BACKOFF_MS', 10_000, 1_800_000],
     ];
     for (const [name, minimum, maximum] of integerRanges) {
         const rawValue = env[name];
@@ -138,6 +145,8 @@ export function buildRuntimeCapabilities(
         reports: true,
         networkMonitor: captureOperational,
         callTrafficAnalysis: captureOperational,
+        passiveMessageReceipts: true,
+        experimentalProbes: config.experimentalProbesEnabled,
         authRequired: config.authRequired,
     };
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, BarChart3, Clock, Database, History, Keyboard, MessageSquare, PhoneCall, Radio, Target, Timer, TrendingUp, Wifi } from 'lucide-react';
+import { Activity, BarChart3, CheckCheck, Clock, Database, History, Keyboard, MessageSquare, PhoneCall, Radio, Target, Timer, TrendingUp, Wifi } from 'lucide-react';
 import clsx from 'clsx';
 
 export interface StatsData {
@@ -23,7 +23,7 @@ export interface StatsData {
 }
 
 interface ObservedActivityEvent {
-    source: 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+    source: 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
     type: string;
     label: string;
     confidence: 'none' | 'low' | 'medium' | 'high';
@@ -91,20 +91,43 @@ interface StatsPanelProps {
 }
 
 export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPanelProps) {
-    if (!stats || stats.totalMeasurements <= 0) {
+    if (!stats) {
         return (
             <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                 <div className="text-center py-8">
                     <Database size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin estadisticas aun</p>
-                    <p className="text-txt-dim text-xs mt-1">Los datos se acumularan mientras el tracker esta activo</p>
+                    <p className="text-txt-muted text-sm">Sin estadísticas todavía</p>
+                    <p className="text-txt-dim text-xs mt-1">Los datos de esta sesión aparecerán mientras el seguimiento esté activo.</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (stats.totalMeasurements <= 0) {
+        return (
+            <div className="space-y-4">
+                {stats.observedActivity && stats.observedActivity.totalEvents > 0 && (
+                    <ObservedActivityPanel
+                        observed={stats.observedActivity}
+                        formatDateTime={formatDateTime}
+                        timeAgo={timeAgo}
+                    />
+                )}
+                <div className="bg-surface-overlay rounded-xl border border-surface-border p-5 text-center py-10">
+                    <Database size={32} className="mx-auto text-txt-dim mb-2" />
+                    <p className="text-txt-muted text-sm">Sin mediciones técnicas en esta sesión</p>
+                    <p className="text-txt-dim text-xs mt-1">El seguimiento pasivo conserva la actividad observada sin generar tráfico de prueba.</p>
                 </div>
             </div>
         );
     }
 
     const observation = getObservationWindow(stats.firstSeen, stats.lastSeen);
-    const density = observation.hours > 0 ? stats.totalMeasurements / observation.hours : stats.totalMeasurements;
+    const conclusiveMeasurements = stats.conclusiveMeasurements ?? 0;
+    const acknowledgedRttMeasurements = stats.acknowledgedRttMeasurements ?? 0;
+    const coveragePct = stats.totalMeasurements > 0
+        ? Math.round((conclusiveMeasurements / stats.totalMeasurements) * 100)
+        : 0;
     const peakHour = patterns && patterns.peakHour >= 0 ? `${padHour(patterns.peakHour)}:00` : '-';
     const avgSession = patterns ? formatDuration(patterns.avgSessionLength) : '-';
     const totalOnline = patterns ? formatMinutes(patterns.totalOnlineMinutes) : '-';
@@ -117,7 +140,7 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
             <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                     <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider flex items-center gap-1.5">
-                        <Database size={13} /> Estadisticas almacenadas
+                        <Database size={13} /> Resumen técnico de la sesión
                     </h5>
                     <span className={clsx(
                         'text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md border',
@@ -130,10 +153,10 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
                 </div>
 
                 <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-                    <MetricTile icon={<Database size={15} />} label="Mediciones" value={stats.totalMeasurements.toLocaleString()} />
-                    <MetricTile icon={<TrendingUp size={15} />} label="RTT con ACK" value={`${stats.avgRtt} ms`} />
+                    <MetricTile icon={<Database size={15} />} label="Intentos técnicos" value={stats.totalMeasurements.toLocaleString()} />
+                    <MetricTile icon={<TrendingUp size={15} />} label="Latencia confirmada" value={acknowledgedRttMeasurements > 0 ? `${stats.avgRtt} ms` : '—'} />
                     <MetricTile icon={<History size={15} />} label="Ventana observada" value={observation.label} />
-                    <MetricTile icon={<Radio size={15} />} label="Densidad" value={`${density.toFixed(1)}/h`} />
+                    <MetricTile icon={<Radio size={15} />} label="Cobertura concluyente" value={`${coveragePct}%`} />
                 </div>
             </section>
 
@@ -148,21 +171,25 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
             <section className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] gap-4">
                 <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                     <h6 className="text-[10px] text-txt-dim uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                        <BarChart3 size={12} /> Distribucion total
+                        <BarChart3 size={12} /> Resultado de intentos técnicos
                     </h6>
                     <StateDistribution stats={stats} />
                 </div>
 
                 <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                     <h6 className="text-[10px] text-txt-dim uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                        <Target size={12} /> Patrones operativos
+                        <Target size={12} /> Patrones de presencia
                     </h6>
-                    <div className="grid grid-cols-2 gap-3">
+                    {conclusiveMeasurements > 0 ? <div className="grid grid-cols-2 gap-3">
                         <MiniFact icon={<Activity size={13} />} label="Ultimo online" value={stats.lastOnline ? timeAgo(stats.lastOnline) : 'Nunca'} accent />
                         <MiniFact icon={<Clock size={13} />} label="Hora pico" value={peakHour} />
                         <MiniFact icon={<Timer size={13} />} label="Sesion promedio" value={avgSession} />
                         <MiniFact icon={<Wifi size={13} />} label="Online estimado" value={totalOnline} />
-                    </div>
+                    </div> : (
+                        <p className="text-xs text-txt-muted py-6 text-center">
+                            No hay confirmaciones suficientes para calcular patrones de presencia en esta sesión.
+                        </p>
+                    )}
                 </div>
             </section>
 
@@ -200,6 +227,7 @@ function ObservedActivityPanel({
         presence: observed.bySource.presence || 0,
         call: observed.bySource.call || 0,
         message: observed.bySource.message || 0,
+        receipt: observed.bySource.receipt || 0,
     };
     const activityConfidence = observed.totalEvents > 0
         ? Math.round(((observed.confidence.high || 0) / observed.totalEvents) * 100)
@@ -213,19 +241,20 @@ function ObservedActivityPanel({
                         <Activity size={12} /> Senales observadas
                     </h6>
                     <p className="text-xs text-txt-muted mt-1">
-                        Actividad complementaria detectada por WhatsApp/presence, llamadas y mensajes; RTT se mantiene separado como medicion tecnica.
+                        Eventos atribuibles a esta sesión: presencia, llamadas, mensajes y confirmaciones de entrega.
                     </p>
                 </div>
                 <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md border border-success/30 bg-success-muted text-success w-fit">
-                    {observed.activeEvents.toLocaleString()} activas
+                    {observed.totalEvents.toLocaleString()} observados
                 </span>
             </div>
 
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
                 <MetricTile icon={<Radio size={15} />} label="Eventos" value={observed.totalEvents.toLocaleString()} />
-                <MetricTile icon={<Keyboard size={15} />} label="Presence" value={sourceCounts.presence.toLocaleString()} />
+                <MetricTile icon={<Keyboard size={15} />} label="Presencia" value={sourceCounts.presence.toLocaleString()} />
                 <MetricTile icon={<PhoneCall size={15} />} label="Llamadas" value={sourceCounts.call.toLocaleString()} />
                 <MetricTile icon={<MessageSquare size={15} />} label="Mensajes" value={sourceCounts.message.toLocaleString()} />
+                <MetricTile icon={<CheckCheck size={15} />} label="Confirmaciones" value={sourceCounts.receipt.toLocaleString()} />
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-3 mt-3">
@@ -277,7 +306,7 @@ function PeriodTrendPanel({ periods }: { periods: PeriodInsight[] }) {
                         <p className="text-[10px] text-txt-dim mt-1">
                             {(period.conclusiveMeasurements ?? period.totalMeasurements).toLocaleString()} concluyentes / {period.totalMeasurements.toLocaleString()} intentos
                         </p>
-                        <p className="text-[10px] text-txt-muted mt-1">RTT {period.avgRtt || 0} ms</p>
+                        <p className="text-[10px] text-txt-muted mt-1">Latencia {period.acknowledgedRttMeasurements ? `${period.avgRtt} ms` : '—'}</p>
                     </div>
                 ))}
             </div>
@@ -320,7 +349,7 @@ function StateDistribution({ stats }: { stats: StatsData }) {
         { label: 'Online', value: stats.online, color: 'bg-success', text: 'text-success' },
         { label: 'Standby', value: stats.standby, color: 'bg-warning', text: 'text-warning' },
         { label: 'Calibrando', value: stats.calibrating ?? 0, color: 'bg-accent', text: 'text-accent' },
-        { label: 'Sin ACK', value: noAck, color: 'bg-orange-500', text: 'text-orange-400' },
+        { label: 'No concluyente', value: noAck, color: 'bg-orange-500', text: 'text-orange-400' },
         { label: 'Sin clasificar', value: stats.unknown ?? 0, color: 'bg-txt-dim', text: 'text-txt-dim' },
     ];
 
@@ -439,10 +468,11 @@ function formatMinutes(minutes: number): string {
 
 function sourceLabel(source: string): string {
     switch (source) {
-        case 'presence': return 'Presence';
+        case 'presence': return 'Presencia';
         case 'call': return 'Llamada';
         case 'message': return 'Mensaje';
-        case 'rtt_probe': return 'RTT';
+        case 'receipt': return 'Confirmación';
+        case 'rtt_probe': return 'Medición técnica';
         default: return source || 'Sistema';
     }
 }

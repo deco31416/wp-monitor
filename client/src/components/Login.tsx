@@ -16,15 +16,15 @@ export function Login({ connectionState }: LoginProps) {
                     <Smartphone size={28} className="text-accent" />
                 </div>
 
-                <h2 className="text-2xl font-bold text-txt-primary mb-2">Connect WhatsApp</h2>
+                <h2 className="text-2xl font-bold text-txt-primary mb-2">Conectar WhatsApp</h2>
                 <p className="text-txt-muted text-sm mb-8">
-                    Scan the QR code to link your WhatsApp session.
+                    Escanea el código QR para vincular la sesión autorizada.
                 </p>
 
                 {connectionState.whatsapp ? (
                     <div className="mx-auto w-64 h-64 rounded-2xl bg-success-muted flex flex-col items-center justify-center glow-success">
                         <CheckCircle size={56} className="text-success mb-3" />
-                        <span className="text-lg font-semibold text-success">Connected!</span>
+                        <span className="text-lg font-semibold text-success">¡Conectado!</span>
                     </div>
                 ) : (
                     <>
@@ -35,13 +35,13 @@ export function Login({ connectionState }: LoginProps) {
                                 <div className="w-60 h-60 flex items-center justify-center">
                                     <div className="text-center">
                                         <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                                        <span className="text-txt-dim text-sm">Waiting for QR Code...</span>
+                                        <span className="text-txt-dim text-sm">Esperando el código QR...</span>
                                     </div>
                                 </div>
                             )}
                         </div>
                         <p className="text-txt-muted text-sm leading-relaxed">
-                            Open WhatsApp on your phone → Settings → Linked Devices → Scan QR code
+                            Abre WhatsApp en tu teléfono → Ajustes → Dispositivos vinculados → Vincular un dispositivo
                         </p>
                     </>
                 )}

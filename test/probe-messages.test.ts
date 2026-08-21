@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSyntheticProbeMessage, registerSyntheticProbeId } from '../src/probe-messages.js';
+import { isSyntheticProbeId, isSyntheticProbeMessage, registerSyntheticProbeId } from '../src/probe-messages.js';
 
 test('identifies a synthetic reaction from its registered reference id', () => {
     const now = 1_000;
@@ -42,4 +42,10 @@ test('expires probe identifiers instead of retaining them indefinitely', () => {
     registerSyntheticProbeId('EXPIRED-PROBE-004', now);
 
     assert.equal(isSyntheticProbeMessage({ key: { id: 'EXPIRED-PROBE-004' } }, now + 60_001), false);
+});
+
+test('exposes probe id classification for receipt filtering', () => {
+    registerSyntheticProbeId('probe-receipt-id', 6_000);
+    assert.equal(isSyntheticProbeId('probe-receipt-id', 6_001), true);
+    assert.equal(isSyntheticProbeId('unrelated-id', 6_001), false);
 });

@@ -26,6 +26,8 @@ test('resolves Railway mode from Railway environment name and disables local cap
         reports: true,
         networkMonitor: false,
         callTrafficAnalysis: false,
+        passiveMessageReceipts: true,
+        experimentalProbes: false,
         authRequired: true,
     });
 });
@@ -56,6 +58,14 @@ test('keeps local capture configured but marks capture features unavailable with
 test('explicit LOCAL_CAPTURE_ENABLED overrides deployment default', () => {
     assert.equal(resolveLocalCaptureEnabled({ DEPLOYMENT_MODE: 'local-full', LOCAL_CAPTURE_ENABLED: 'false' }), false);
     assert.equal(resolveLocalCaptureEnabled({ DEPLOYMENT_MODE: 'railway-dashboard', LOCAL_CAPTURE_ENABLED: 'true' }), true);
+});
+
+test('keeps active probes disabled unless explicitly enabled', () => {
+    assert.equal(buildRuntimeConfig({ DEPLOYMENT_MODE: 'local-full' }).experimentalProbesEnabled, false);
+    assert.equal(buildRuntimeCapabilities(buildRuntimeConfig({
+        DEPLOYMENT_MODE: 'local-full',
+        ENABLE_EXPERIMENTAL_PROBES: 'true',
+    })).experimentalProbes, true);
 });
 
 test('builds capture unavailable payload with operational hint', () => {

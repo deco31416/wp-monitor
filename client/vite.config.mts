@@ -24,5 +24,9 @@ export default defineConfig({
     setupFiles: ['./src/setupTests.ts'],
     clearMocks: true,
     restoreMocks: true,
+    // The target VPS is intentionally small. Serial files keep jsdom workers
+    // deterministic without weakening the per-test timeout.
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 });

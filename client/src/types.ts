@@ -148,7 +148,7 @@ export interface AuditEvent {
 }
 
 export interface ObservedActivityEvent {
-    source: 'presence' | 'call' | 'message';
+    source: 'presence' | 'call' | 'message' | 'receipt';
     type: string;
     label: string;
     confidence: 'none' | 'low' | 'medium' | 'high';

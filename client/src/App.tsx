@@ -23,6 +23,8 @@ interface RuntimeCapabilities {
     localCaptureAvailable: boolean;
     networkMonitor: boolean;
     callTrafficAnalysis: boolean;
+    passiveMessageReceipts?: boolean;
+    experimentalProbes?: boolean;
     authRequired?: boolean;
 }
 
@@ -193,20 +195,20 @@ function App() {
     }, [sidebarCollapsed]);
 
     const tabs = [
-        { id: 'cases' as AppTab, label: 'Cases', icon: Briefcase },
-        { id: 'tracker' as AppTab, label: 'WhatsApp Tracker', icon: Smartphone },
-        ...(capabilities?.networkMonitor ? [{ id: 'network' as AppTab, label: 'Network Monitor', icon: Globe }] : []),
-        { id: 'checkins' as AppTab, label: 'Check-In', icon: MapPin },
-        { id: 'audit' as AppTab, label: 'Audit Trail', icon: ClipboardList },
+        { id: 'cases' as AppTab, label: 'Casos', icon: Briefcase },
+        { id: 'tracker' as AppTab, label: 'Seguimiento WhatsApp', icon: Smartphone },
+        ...(capabilities?.networkMonitor ? [{ id: 'network' as AppTab, label: 'Monitor de red', icon: Globe }] : []),
+        { id: 'checkins' as AppTab, label: 'Verificación', icon: MapPin },
+        { id: 'audit' as AppTab, label: 'Auditoría', icon: ClipboardList },
         { id: 'account' as AppTab, label: 'Cuenta', icon: Settings },
     ];
 
     const pageTitle = {
-        cases: 'Cases',
-        tracker: 'WhatsApp Tracker',
-        network: 'Network Monitor',
-        checkins: 'Authorized Check-In',
-        audit: 'Audit Trail',
+        cases: 'Casos',
+        tracker: 'Seguimiento WhatsApp',
+        network: 'Monitor de red',
+        checkins: 'Verificación autorizada',
+        audit: 'Auditoría',
         account: 'Cuenta del operador',
     }[activeTab];
 
@@ -337,12 +339,12 @@ function App() {
                 <div className={`px-4 py-4 border-t border-surface-border space-y-2 ${sidebarCollapsed ? 'lg:px-0' : ''}`}>
                     <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
                         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success animate-pulse-slow' : 'bg-danger'}`} />
-                        <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>{isConnected ? 'Server Connected' : 'Disconnected'}</span>
+                        <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>{isConnected ? 'Servidor conectado' : 'Servidor desconectado'}</span>
                     </div>
                     {isConnected && connectionState.whatsapp && (
                         <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
                             <div className="w-2 h-2 rounded-full bg-success animate-pulse-slow" />
-                            <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WhatsApp Active</span>
+                            <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WhatsApp conectado</span>
                         </div>
                     )}
                 </div>
@@ -378,17 +380,17 @@ function App() {
                         {activeTab === 'tracker' && connectionState.whatsapp && (
                             <span className="badge-success">
                                 <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                                Connected
+                                Conectado
                             </span>
                         )}
                         {capabilities && !capabilities.localCapture && (
                             <span className="badge">
-                                Dashboard Mode
+                                Modo panel
                             </span>
                         )}
                         {capabilities?.localCapture && !capabilities.localCaptureAvailable && (
                             <span className="badge-warning">
-                                Capture Permissions Missing
+                                Faltan permisos de captura
                             </span>
                         )}
                         {authError && <span className="badge-warning max-w-72 truncate" title={authError}>{authError}</span>}
@@ -410,7 +412,10 @@ function App() {
                                 {!connectionState.whatsapp ? (
                                     <Login connectionState={connectionState} />
                                 ) : (
-                                    <Dashboard connectionState={connectionState} />
+                                    <Dashboard
+                                        connectionState={connectionState}
+                                        experimentalProbesEnabled={capabilities?.experimentalProbes === true}
+                                    />
                                 )}
                             </>
                         )}

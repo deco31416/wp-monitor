@@ -22,13 +22,14 @@ import { Boom } from '@hapi/boom';
 import { WhatsAppTracker } from './tracker.js';
 import type { ProbeMethod } from './tracker.js';
 import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
-import { isSyntheticProbeMessage } from './probe-messages.js';
+import { isSyntheticProbeId, isSyntheticProbeMessage } from './probe-messages.js';
+import { MessageReceiptRegistry, fingerprintMessageId, type MessageReceiptTransition } from './message-receipts.js';
 import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
 import { initAnalytics, getFullIntelligence, getDailyRoutine, getAvailabilityProfile, getSessionStats, getWeeklyHeatmap, getHabitProfile, getCorrelation } from './analytics.js';
-import { startCallCapture, stopCallCapture, getCallCaptureStatus, getCallAnalysisHistory, getLatestCallAnalysis, autoDetectInterface } from './call-analyzer.js';
+import { startCallCapture, stopCallCapture, getCallCaptureStatus, autoDetectInterface } from './call-analyzer.js';
 import { enrichCallAnalysis, lookupIpEnrichment } from './ip-enrichment.js';
 import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, hasValidCheckInLocation, normalizeCheckInSubmission, renderCheckInPage } from './check-in.js';
 import { registerAuditRoutes } from './routes/audit.js';
@@ -120,6 +121,10 @@ const PORT = parsePositiveInteger(process.env.PORT || process.env.BACKEND_PORT, 
 const RUNTIME_CONFIG = buildRuntimeConfig(process.env);
 const DEPLOYMENT_MODE = RUNTIME_CONFIG.deploymentMode;
 const LOCAL_CAPTURE_ENABLED = RUNTIME_CONFIG.localCaptureEnabled;
+const EXPERIMENTAL_PROBES_ENABLED = RUNTIME_CONFIG.experimentalProbesEnabled;
+const PROBE_INTERVAL_MS = parsePositiveInteger(process.env.PROBE_INTERVAL_MS, 30_000, 10_000);
+const PROBE_TIMEOUT_MS = parsePositiveInteger(process.env.PROBE_TIMEOUT_MS, 10_000, 3_000);
+const PROBE_MAX_BACKOFF_MS = parsePositiveInteger(process.env.PROBE_MAX_BACKOFF_MS, 5 * 60_000, PROBE_INTERVAL_MS);
 const LEGACY_DASHBOARD_TOKEN = (process.env.DASHBOARD_TOKEN || '').trim();
 const ENABLE_SWAGGER = process.env.ENABLE_SWAGGER === 'true' && NODE_ENV !== 'production';
 const TRUST_PROXY = resolveTrustProxy(process.env);
@@ -755,7 +760,7 @@ io.use((socket, next) => {
 
 let sock: any;
 let isWhatsAppConnected = false;
-let globalProbeMethod: ProbeMethod = 'delete'; // Default to delete method
+let globalProbeMethod: ProbeMethod = 'passive';
 let currentWhatsAppQr: string | null = null; // Store current QR code for new clients
 let isWhatsAppConnecting = false;
 let isRotatingWhatsAppAuth = false;
@@ -769,7 +774,27 @@ interface TrackerEntry {
 
 const trackers: Map<string, TrackerEntry> = new Map(); // JID -> Tracker entry
 
-type LiveSignalSource = 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+function requireActiveObservationContext(rawJid: string, res: express.Response): { jid: string; entry: TrackerEntry } | null {
+    const jidResult = validateJid(rawJid);
+    if (!jidResult.ok) {
+        validationError(res, jidResult.errors || ['Invalid JID']);
+        return null;
+    }
+
+    const jid = jidResult.value!;
+    const entry = trackers.get(jid);
+    if (!entry) {
+        res.status(409).json({
+            error: 'No active tracking session for this contact',
+            code: 'TRACKING_SESSION_REQUIRED',
+        });
+        return null;
+    }
+
+    return { jid, entry };
+}
+
+type LiveSignalSource = 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
 type LiveConfidence = 'none' | 'low' | 'medium' | 'high';
 const EPHEMERAL_PRESENCE_TTL_MS = 12_000;
 const AVAILABLE_PRESENCE_TTL_MS = 45_000;
@@ -801,6 +826,7 @@ interface ContactLiveState {
 const liveSignals: Map<string, Partial<Record<LiveSignalSource, LiveSignal>>> = new Map();
 const liveSignalHistory: Map<string, LiveSignal[]> = new Map();
 const persistedActivityEventKeys: Map<string, number> = new Map();
+const messageReceiptRegistry = new MessageReceiptRegistry();
 
 interface CaptureAuditContext {
     caseId: string;
@@ -811,6 +837,19 @@ interface CaptureAuditContext {
 let activeNetworkAuditContext: (CaptureAuditContext & { captureSessionId: string }) | null = null;
 let activeCallAuditContext: (CaptureAuditContext & { targetJid: string; callId: string }) | null = null;
 const liveSignalExpiryTimers = new Map<string, NodeJS.Timeout>();
+
+function clearContactObservationState(jid: string): void {
+    liveSignals.delete(jid);
+    liveSignalHistory.delete(jid);
+    messageReceiptRegistry.clearContact(jid);
+
+    const timerPrefix = `${jid}:`;
+    for (const [key, timer] of liveSignalExpiryTimers) {
+        if (!key.startsWith(timerPrefix)) continue;
+        clearTimeout(timer);
+        liveSignalExpiryTimers.delete(key);
+    }
+}
 
 function rejectCaptureUnavailable(res: express.Response): boolean {
     return sendCaptureUnavailableIfNeeded(RUNTIME_CONFIG, res, hasPacketCapturePrivileges());
@@ -967,9 +1006,48 @@ function isActiveCallStatus(value: string): boolean {
 }
 
 function formatMessageLabel(direction: string, messageType: string): string {
+    const typeLabel = (() => {
+        switch (messageType) {
+            case 'image': return 'imagen';
+            case 'video': return 'video';
+            case 'audio': return 'audio';
+            case 'document': return 'documento';
+            case 'sticker': return 'sticker';
+            case 'location': return 'ubicación';
+            case 'contact': return 'contacto';
+            case 'text': return '';
+            default: return '';
+        }
+    })();
+    const suffix = typeLabel ? ` · ${typeLabel}` : '';
     return direction === 'outgoing'
-        ? `Mensaje enviado (${messageType})`
-        : `Mensaje recibido (${messageType})`;
+        ? `Mensaje enviado${suffix}`
+        : `Mensaje recibido${suffix}`;
+}
+
+function publishMessageReceipt(transition: MessageReceiptTransition | null): void {
+    if (!transition || !trackers.has(transition.jid)) return;
+    updateLiveSignal(transition.jid, {
+        source: 'receipt',
+        value: transition.state,
+        label: transition.label,
+        confidence: transition.status >= 3 ? 'high' : 'medium',
+        timestamp: transition.receiptAt,
+        details: {
+            messageIdHash: transition.messageIdHash,
+            status: transition.status,
+            latencyMs: transition.latencyMs,
+            timingBasis: transition.latencyMs === null ? 'status_only' : 'local_observation',
+        },
+    });
+    io.emit('message-receipt', {
+        jid: transition.jid,
+        state: transition.state,
+        label: transition.label,
+        status: transition.status,
+        timestamp: new Date(transition.receiptAt).toISOString(),
+        latencyMs: transition.latencyMs,
+    });
 }
 
 function getMessageType(message: any): string {
@@ -990,7 +1068,7 @@ function getMessageType(message: any): string {
 
 function publishCallLiveState(call: any, source: 'baileys' | 'raw-node' = 'baileys') {
     const resolvedCallJid = normalizeLiveJid(call.from) || normalizeLiveJid(call.chatId) || normalizeLiveJid(call.callerPn);
-    console.log(`[CALL] Event: ${call.status} | From: ${call.from} | Resolved: ${resolvedCallJid || 'unmapped'} | ID: ${call.id} | Video: ${call.isVideo || false} | Source: ${source}`);
+    console.log(`[CALL] Event ${call.status} | mapped: ${Boolean(resolvedCallJid)} | video: ${Boolean(call.isVideo)} | source: ${source}`);
     if (resolvedCallJid) updateLiveSignal(resolvedCallJid, {
         source: 'call',
         value: call.status,
@@ -998,10 +1076,7 @@ function publishCallLiveState(call: any, source: 'baileys' | 'raw-node' = 'baile
         confidence: isActiveCallStatus(call.status) ? 'high' : 'medium',
         timestamp: call.date ? new Date(call.date).getTime() : Date.now(),
         details: {
-            callId: call.id,
-            rawFrom: call.from,
-            chatId: call.chatId || null,
-            callerPn: call.callerPn || null,
+            callIdHash: call.id ? fingerprintMessageId(String(call.id)) : null,
             detector: source,
             isVideo: call.isVideo || false,
             offline: call.offline,
@@ -1055,8 +1130,10 @@ function shouldPersistActivitySignal(jid: string, trackingSessionId: string, sig
     if (signal.source === 'rtt_probe' || signal.source === 'system') return false;
     const keyParts = [trackingSessionId, jid, signal.source, signal.value];
     const details = signal.details || {};
-    if (signal.source === 'message' && details.messageId) keyParts.push(String(details.messageId));
-    if (signal.source === 'call' && details.callId) keyParts.push(String(details.callId));
+    if ((signal.source === 'message' || signal.source === 'receipt') && details.messageIdHash) {
+        keyParts.push(String(details.messageIdHash));
+    }
+    if (signal.source === 'call' && details.callIdHash) keyParts.push(String(details.callIdHash));
     const key = keyParts.join(':');
     const now = Date.now();
     const previous = persistedActivityEventKeys.get(key) || 0;
@@ -1119,6 +1196,7 @@ function liveSignalMaxAge(signal: LiveSignal): number {
         return isActiveCallStatus(signal.value) ? ACTIVE_CALL_TTL_MS : ENDED_CALL_TTL_MS;
     }
     if (signal.source === 'message') return 5 * 60_000;
+    if (signal.source === 'receipt') return 5 * 60_000;
     if (signal.source === 'rtt_probe') return 2 * 60_000;
     return 30_000;
 }
@@ -1162,6 +1240,7 @@ function buildContactLiveState(jid: string): ContactLiveState {
     const call = rawCall ? fresh('call', liveSignalMaxAge(rawCall)) : null;
     const presence = rawPresence ? fresh('presence', liveSignalMaxAge(rawPresence)) : null;
     const message = fresh('message', 5 * 60_000);
+    const receipt = fresh('receipt', 5 * 60_000);
     const rtt = fresh('rtt_probe', 2 * 60_000);
 
     let selected: LiveSignal | null = null;
@@ -1173,6 +1252,9 @@ function buildContactLiveState(jid: string): ContactLiveState {
     } else if (presence && ['composing', 'recording', 'available'].includes(presence.value)) {
         selected = presence;
         explanation = 'Presence realtime de WhatsApp indica actividad directa del contacto.';
+    } else if (receipt) {
+        selected = receipt;
+        explanation = 'Confirmación reciente de un mensaje real observada por WhatsApp.';
     } else if (message) {
         selected = message;
         explanation = 'Mensaje reciente observado por Baileys; confirma actividad de mensajeria en la conversacion.';
@@ -1917,13 +1999,13 @@ async function connectToWhatsApp() {
             // Push name (the name the contact set in their WhatsApp profile)
             if (update.notify) {
                 changes.pushName = update.notify;
-                console.log(`[CONTACTS] Push name for ${jid}: "${update.notify}"`);
+                console.log('[CONTACTS] Tracked profile name updated');
             }
 
             // Status/about text
             if (update.status !== undefined) {
                 changes.about = update.status || null;
-                console.log(`[CONTACTS] About for ${jid}: "${update.status}"`);
+                console.log('[CONTACTS] Tracked profile status updated');
             }
 
             // Profile picture update
@@ -1959,7 +2041,7 @@ async function connectToWhatsApp() {
             if (Object.keys(changes).length > 0) {
                 await updateContactProfile(jid, changes);
                 io.emit('contact-profile-update', { jid, ...changes });
-                console.log(`[CONTACTS UPSERT] Updated ${jid}:`, changes);
+                console.log(`[CONTACTS] Tracked profile synchronized (${Object.keys(changes).length} field(s))`);
             }
         }
     });
@@ -1968,7 +2050,14 @@ async function connectToWhatsApp() {
         for (const update of updates) {
             const remoteJid = normalizeLiveJid(update?.key?.remoteJid);
             if (!remoteJid || !trackers.has(remoteJid)) continue;
-            console.log(`[MSG UPDATE] JID: ${remoteJid}, ID: ${update.key.id}, Status: ${update.update.status}, FromMe: ${update.key.fromMe}`);
+            if (!update?.key?.fromMe || isSyntheticProbeId(update?.key?.id)) continue;
+            const transition = messageReceiptRegistry.recordStatus(
+                update?.key?.id,
+                remoteJid,
+                update?.update?.status,
+                Date.now(),
+            );
+            publishMessageReceipt(transition);
         }
     });
 
@@ -1985,9 +2074,11 @@ async function connectToWhatsApp() {
             }
             const timestamp = Number(message?.messageTimestamp || 0);
             const signalTimestamp = timestamp > 0 ? timestamp * 1000 : Date.now();
+            const messageId = typeof message?.key?.id === 'string' ? message.key.id : null;
+            const messageIdHash = messageId ? fingerprintMessageId(messageId) : null;
             const payload = {
                 jid: remoteJid,
-                messageId: message?.key?.id || null,
+                messageIdHash,
                 direction,
                 messageType,
                 syntheticProbe: false,
@@ -1995,7 +2086,13 @@ async function connectToWhatsApp() {
                 timestamp: new Date(signalTimestamp).toISOString(),
             };
 
-            console.log(`[MSG UPSERT] ${remoteJid} ${direction} ${messageType} (${type || 'unknown'})`);
+            const pendingTransition = direction === 'outgoing' && messageId
+                ? messageReceiptRegistry.registerOutgoing(
+                    messageId,
+                    remoteJid,
+                    Date.now(),
+                )
+                : null;
             updateLiveSignal(remoteJid, {
                 source: 'message',
                 value: direction,
@@ -2004,6 +2101,7 @@ async function connectToWhatsApp() {
                 timestamp: signalTimestamp,
                 details: payload,
             });
+            publishMessageReceipt(pendingTransition);
             io.emit('message-activity', payload);
         }
     });
@@ -2022,7 +2120,7 @@ async function connectToWhatsApp() {
                 }
                 const caseCheck = await checkCaseCanCapture(defaultContext);
                 if (!caseCheck.ok) {
-                    console.log(`[CALL] Auto-capture skipped: case ${defaultContext.caseId} is not available for capture`);
+                    console.log('[CALL] Auto-capture skipped: configured case is not available for capture');
                     continue;
                 }
                 const iface = autoDetectInterface();
@@ -2044,7 +2142,7 @@ async function connectToWhatsApp() {
                             isVideo: call.isVideo || false,
                             trigger: 'auto',
                         }, call.from);
-                        console.log(`[CALL] Auto-capture started for call ${call.id}`);
+                        console.log('[CALL] Auto-capture started');
                         io.emit('call-capture-started', { callId: call.id, targetJid: call.from });
                     }
                 } else {
@@ -2132,9 +2230,14 @@ async function createTrackerEntry(
         return null;
     }
 
-    const tracker = new WhatsAppTracker(sock, jid);
+    const tracker = new WhatsAppTracker(sock, jid, false, {
+        intervalMs: PROBE_INTERVAL_MS,
+        timeoutMs: PROBE_TIMEOUT_MS,
+        maxBackoffMs: PROBE_MAX_BACKOFF_MS,
+    });
     tracker.setProbeMethod(probeMethod);
     const entry: TrackerEntry = { tracker, trackingSession };
+    clearContactObservationState(jid);
     trackers.set(jid, entry);
     wireTrackerCallbacks(entry);
 
@@ -2145,7 +2248,7 @@ async function createTrackerEntry(
         trackers.delete(jid);
         tracker.stopTracking();
         await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'tracker_start_failed');
-        console.error(`[TRACKERS] Failed to start scoped session ${trackingSession.trackingSessionId}:`, err);
+        console.error('[TRACKERS] Failed to start scoped session:', err);
         return null;
     }
 }
@@ -2197,7 +2300,7 @@ function wireTrackerCallbacks(entry: TrackerEntry) {
     };
 
     tracker.onPresenceChange = (data) => {
-        console.log(`[PRESENCE] ${jid}: ${data.presence}`);
+        console.log(`[PRESENCE] Tracked contact state: ${data.presence}`);
         updateLiveSignal(jid, {
             source: 'presence',
             value: data.presence,
@@ -2209,7 +2312,7 @@ function wireTrackerCallbacks(entry: TrackerEntry) {
     };
 
     tracker.onNewDevice = (data) => {
-        console.log(`[NEW DEVICE] ${jid}: new device ${data.deviceJid} (total: ${data.totalDevices})`);
+        console.log(`[TRACKING] Additional technical destination observed (total: ${data.totalDevices})`);
         io.emit('device-alert', data);
     };
 }
@@ -2223,12 +2326,13 @@ function stopAllTrackers(reason: string) {
     if (trackers.size === 0) return;
 
     console.log(`[TRACKERS] Stopping ${trackers.size} active tracker(s): ${reason}`);
-    for (const { tracker } of trackers.values()) {
+    for (const [jid, { tracker }] of trackers) {
         try {
             tracker.stopTracking();
         } catch (err: any) {
             console.log(`[TRACKERS] Warning: failed to stop tracker (${err?.message || err})`);
         }
+        clearContactObservationState(jid);
     }
     trackers.clear();
 }
@@ -2263,7 +2367,7 @@ async function autoRestoreContacts() {
 
         for (const trackingSession of activeSessions) {
             if (trackers.has(trackingSession.jid)) {
-                console.log(`[AUTO-RESTORE] ${trackingSession.jid} already tracked, skipping`);
+                console.log('[AUTO-RESTORE] Duplicate active target skipped');
                 continue;
             }
 
@@ -2275,12 +2379,23 @@ async function autoRestoreContacts() {
                         'interrupted',
                         `restore_blocked_case_${caseRecord?.status || 'missing'}`,
                     );
-                    console.log(`[AUTO-RESTORE] ${trackingSession.jid} blocked: case ${trackingSession.caseId} is not active`);
+                    console.log('[AUTO-RESTORE] Session blocked because its case is not active');
                     continue;
                 }
 
-                const tracker = new WhatsAppTracker(sock, trackingSession.jid);
-                tracker.setProbeMethod(trackingSession.probeMethod);
+                const restoredProbeMethod: ProbeMethod = EXPERIMENTAL_PROBES_ENABLED
+                    ? trackingSession.probeMethod
+                    : 'passive';
+                const tracker = new WhatsAppTracker(sock, trackingSession.jid, false, {
+                    intervalMs: PROBE_INTERVAL_MS,
+                    timeoutMs: PROBE_TIMEOUT_MS,
+                    maxBackoffMs: PROBE_MAX_BACKOFF_MS,
+                });
+                tracker.setProbeMethod(restoredProbeMethod);
+                if (trackingSession.probeMethod !== restoredProbeMethod) {
+                    trackingSession.probeMethod = restoredProbeMethod;
+                    await updateTrackingSessionProbeMethod(trackingSession.trackingSessionId, restoredProbeMethod);
+                }
                 const entry: TrackerEntry = { tracker, trackingSession };
                 trackers.set(trackingSession.jid, entry);
                 wireTrackerCallbacks(entry);
@@ -2312,12 +2427,12 @@ async function autoRestoreContacts() {
                 }, trackingSession.jid);
 
                 restored++;
-                console.log(`[AUTO-RESTORE] ✓ ${contact.number} (${displayName})`);
+                console.log('[AUTO-RESTORE] Authorized tracking session restored');
             } catch (err) {
                 trackers.get(trackingSession.jid)?.tracker.stopTracking();
                 trackers.delete(trackingSession.jid);
                 await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'auto_restore_failed');
-                console.error(`[AUTO-RESTORE] ✗ Failed to restore ${trackingSession.jid}:`, err);
+                console.error('[AUTO-RESTORE] Failed to restore an authorized tracking session:', err);
             }
         }
 
@@ -2329,35 +2444,34 @@ async function autoRestoreContacts() {
 
 // REST endpoint: get measurement history for a contact
 app.get('/api/history/:jid', async (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
-        return;
-    }
-    const jid = jidResult.value!;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const limit = parseLimit(req.query.limit, 200, 1000);
-    const trackingSessionId = trackers.get(jid)?.trackingSession.trackingSessionId;
-    const history = await getRecentMeasurements(jid, limit, trackingSessionId);
+    const history = await getRecentMeasurements(
+        context.jid,
+        limit,
+        context.entry.trackingSession.trackingSessionId,
+    );
     res.json(history);
 });
 
 // REST endpoint: get all saved contacts
 app.get('/api/contacts', async (_req, res) => {
     const savedContacts = await getSavedContacts();
-    res.json(savedContacts);
+    const activeJids = new Set(trackers.keys());
+    res.json(savedContacts.filter(contact => activeJids.has(contact.jid)));
 });
 
 // REST endpoint: get activity history (state transitions)
 app.get('/api/activity/:jid', async (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
-        return;
-    }
-    const jid = jidResult.value!;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const limit = parseLimit(req.query.limit, 50, 1000);
-    const trackingSessionId = trackers.get(jid)?.trackingSession.trackingSessionId;
-    const history = await getActivityHistory(jid, limit, trackingSessionId);
+    const history = await getActivityHistory(
+        context.jid,
+        limit,
+        context.entry.trackingSession.trackingSessionId,
+    );
     res.json(history);
 });
 
@@ -2389,40 +2503,36 @@ app.get('/api/contact/:jid/activity', async (req, res) => {
 });
 
 app.get('/api/contact/:jid/live-state', (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
-        return;
-    }
-    res.json(buildContactLiveState(jidResult.value!));
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    res.json(buildContactLiveState(context.jid));
 });
 
 app.get('/api/contact/:jid/signals', (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
-        return;
-    }
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const limit = parseLimit(req.query.limit, 50, 200);
-    res.json((liveSignalHistory.get(jidResult.value!) || []).slice(0, limit));
+    res.json((liveSignalHistory.get(context.jid) || []).slice(0, limit));
 });
 
 // REST endpoint: get state distribution stats
 app.get('/api/stats/:jid', async (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
-        return;
-    }
-    const jid = jidResult.value!;
-    const caseId = trackers.get(jid)?.trackingSession.caseId;
-    const stats = await getStateDistribution(jid, caseId);
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid, entry } = context;
+    const stats = await getStateDistribution(
+        jid,
+        entry.trackingSession.caseId,
+        entry.trackingSession.trackingSessionId,
+    );
     res.json(stats);
 });
 
 // REST endpoint: get full contact profile from DB + WhatsApp
 app.get('/api/profile/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid } = context;
     try {
         // Get stored profile from MongoDB
         const stored = await getContactProfile(jid);
@@ -2442,7 +2552,7 @@ app.get('/api/profile/:jid', async (req, res) => {
                     freshAboutSetAt = status.setAt ? new Date(status.setAt * 1000) : null;
                 }
             } catch (e: any) {
-                console.log(`[PROFILE] Could not fetch status for ${jid}:`, e.message);
+                console.log('[PROFILE] Could not refresh tracked profile status:', e.message);
             }
 
             // Fetch business profile
@@ -2504,13 +2614,9 @@ app.get('/api/profile/:jid', async (req, res) => {
 });
 
 app.get('/api/contact/:jid/profile-picture', async (req, res) => {
-    const jidResult = validateJid(req.params.jid);
-    if (!jidResult.ok) {
-        res.status(400).json({ error: jidResult.errors?.join(', ') || 'Invalid JID' });
-        return;
-    }
-
-    const jid = jidResult.value!;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid } = context;
     const stored = await getContactProfile(jid);
     let profilePicUrl = stored?.profilePic || null;
 
@@ -2550,8 +2656,12 @@ app.get('/api/contact/:jid/profile-picture', async (req, res) => {
 
 // REST endpoint: get online activity patterns
 app.get('/api/patterns/:jid', async (req, res) => {
-    const jid = req.params.jid;
-    const patterns = await getOnlinePatterns(jid);
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const patterns = await getOnlinePatterns(
+        context.jid,
+        context.entry.trackingSession.trackingSessionId,
+    );
     res.json(patterns);
 });
 
@@ -2570,9 +2680,14 @@ app.get('/api/contacts/history', async (_req, res) => {
 
 // REST endpoint: generate comprehensive report for a contact
 app.get('/api/report/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     try {
-        const report = await generateReport(jid);
+        const report = await generateReport(
+            context.jid,
+            context.entry.trackingSession.caseId,
+            context.entry.trackingSession.trackingSessionId,
+        );
         res.json(report);
     } catch (err) {
         console.error('[REPORT] Error generating report:', err);
@@ -2582,9 +2697,15 @@ app.get('/api/report/:jid', async (req, res) => {
 
 // REST endpoint: download report as formatted JSON file
 app.get('/api/report/:jid/download', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid, entry } = context;
     try {
-        const report = await generateReport(jid);
+        const report = await generateReport(
+            jid,
+            entry.trackingSession.caseId,
+            entry.trackingSession.trackingSessionId,
+        );
         const number = jid.replace('@s.whatsapp.net', '');
         const filename = `report-${number}-${new Date().toISOString().slice(0, 10)}.json`;
 
@@ -2599,10 +2720,42 @@ app.get('/api/report/:jid/download', async (req, res) => {
 
 // ── Behavior Intelligence REST endpoints ─────────────────────
 
+// Keep static routes before /api/intel/:jid so Express does not treat
+// "correlation" as a contact identifier.
+app.get('/api/intel/correlation', async (req, res) => {
+    const { jid1, jid2, days } = req.query;
+    if (!jid1 || !jid2) {
+        res.status(400).json({ error: 'jid1 and jid2 required' });
+        return;
+    }
+    const context1 = requireActiveObservationContext(jid1 as string, res);
+    if (!context1) return;
+    const context2 = requireActiveObservationContext(jid2 as string, res);
+    if (!context2) return;
+    if (context1.entry.trackingSession.caseId !== context2.entry.trackingSession.caseId) {
+        res.status(409).json({ error: 'Contacts must belong to the same active case', code: 'CASE_SCOPE_MISMATCH' });
+        return;
+    }
+    const d = parseLimit(days, 7, 365);
+    res.json(await getCorrelation(
+        context1.jid,
+        context2.jid,
+        d,
+        context1.entry.trackingSession.trackingSessionId,
+        context2.entry.trackingSession.trackingSessionId,
+    ));
+});
+
 app.get('/api/intel/:jid', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     try {
         const days = parseLimit(req.query.days, 14, 365);
-        const intel = await getFullIntelligence(req.params.jid, days);
+        const intel = await getFullIntelligence(
+            context.jid,
+            days,
+            context.entry.trackingSession.trackingSessionId,
+        );
         res.json(intel);
     } catch (err) {
         console.error('[API] Intel error:', err);
@@ -2611,48 +2764,60 @@ app.get('/api/intel/:jid', async (req, res) => {
 });
 
 app.get('/api/intel/:jid/routine', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const days = parseLimit(req.query.days, 14, 365);
-    res.json(await getDailyRoutine(req.params.jid, days));
+    res.json(await getDailyRoutine(context.jid, days, context.entry.trackingSession.trackingSessionId));
 });
 
 app.get('/api/intel/:jid/availability', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const days = parseLimit(req.query.days, 14, 365);
-    res.json(await getAvailabilityProfile(req.params.jid, days));
+    res.json(await getAvailabilityProfile(context.jid, days, context.entry.trackingSession.trackingSessionId));
 });
 
 app.get('/api/intel/:jid/sessions', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const days = parseLimit(req.query.days, 14, 365);
-    res.json(await getSessionStats(req.params.jid, days));
+    res.json(await getSessionStats(context.jid, days, context.entry.trackingSession.trackingSessionId));
 });
 
 app.get('/api/intel/:jid/heatmap', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const weeks = parseLimit(req.query.weeks, 4, 52);
-    res.json(await getWeeklyHeatmap(req.params.jid, weeks));
+    res.json(await getWeeklyHeatmap(context.jid, weeks, context.entry.trackingSession.trackingSessionId));
 });
 
 app.get('/api/intel/:jid/habits', async (req, res) => {
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const days = parseLimit(req.query.days, 14, 365);
-    res.json(await getHabitProfile(req.params.jid, days));
-});
-
-app.get('/api/intel/correlation', async (req, res) => {
-    const { jid1, jid2, days } = req.query;
-    if (!jid1 || !jid2) {
-        res.status(400).json({ error: 'jid1 and jid2 required' });
-        return;
-    }
-    const d = parseLimit(days, 7, 365);
-    res.json(await getCorrelation(jid1 as string, jid2 as string, d));
+    res.json(await getHabitProfile(context.jid, days, context.entry.trackingSession.trackingSessionId));
 });
 
 // ── Privacy / OPSEC Score ─────────────────────────────────────
 
 app.get('/api/privacy-score/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid, entry } = context;
     try {
-        const [profile, observedActivity] = await Promise.all([
+        const [profile, observedActivity, distribution] = await Promise.all([
             getContactProfile(jid),
-            getObservedActivitySummary(jid, 30),
+            getObservedActivitySummary(
+                jid,
+                30,
+                entry.trackingSession.caseId,
+                entry.trackingSession.trackingSessionId,
+            ),
+            getStateDistribution(
+                jid,
+                entry.trackingSession.caseId,
+                entry.trackingSession.trackingSessionId,
+            ),
         ]);
         let score = 100; // Perfect privacy = 100
         const deductions: { reason: string; points: number }[] = [];
@@ -2683,9 +2848,11 @@ app.get('/api/privacy-score/:jid', async (req, res) => {
         // Push name set (reveals real name)
         if (profile?.pushName) { score -= 10; deductions.push({ reason: 'Nombre de perfil (Push Name) visible', points: 10 }); }
 
-        // Online activity trackable (we can always detect this — universal deduction)
-        score -= 15;
-        deductions.push({ reason: 'Actividad online rastreable via RTT', points: 15 });
+        // RTT exposure is counted only when this exact session produced validated acknowledgements.
+        if ((distribution.acknowledgedRttMeasurements || 0) > 0) {
+            score -= 15;
+            deductions.push({ reason: 'Latencia de entrega medible en esta sesión', points: 15 });
+        }
 
         // Presence/call/message observability is deducted only when actually observed.
         const typingSignals = observedActivity.byType
@@ -2707,19 +2874,26 @@ app.get('/api/privacy-score/:jid', async (req, res) => {
         }
 
         // Multiple devices detectable
-        const entry = trackers.get(jid);
         if (entry) {
             const deviceMetricSize = (entry.tracker as any).knownDeviceJids?.size ?? 0;
             if (deviceMetricSize > 1) {
                 score -= 5;
-                deductions.push({ reason: `${deviceMetricSize} dispositivos detectados`, points: 5 });
+                deductions.push({ reason: `${deviceMetricSize} destinos técnicos observados`, points: 5 });
             }
         }
 
         score = Math.max(0, score);
         const level = score >= 70 ? 'Alto' : score >= 40 ? 'Medio' : 'Bajo';
 
-        res.json({ score, level, deductions });
+        res.json({
+            score,
+            level,
+            deductions,
+            scope: {
+                caseId: entry.trackingSession.caseId,
+                trackingSessionId: entry.trackingSession.trackingSessionId,
+            },
+        });
     } catch (err) {
         console.error('[PRIVACY] Error:', err);
         res.status(500).json({ error: 'Failed to calculate privacy score' });
@@ -2729,14 +2903,18 @@ app.get('/api/privacy-score/:jid', async (req, res) => {
 // ── Anomaly Detection ─────────────────────────────────────────
 
 app.get('/api/anomalies/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
+    const { jid, entry } = context;
     try {
         const days = parseLimit(req.query.days, 14, 365);
-        const [habits, sessions, availability] = await Promise.all([
-            getHabitProfile(jid, days),
-            getSessionStats(jid, days),
-            getAvailabilityProfile(jid, days),
-        ]);
+        const intelligence = await getFullIntelligence(jid, days, entry.trackingSession.trackingSessionId);
+        const { habits, sessionStats: sessions, availability, coverage } = intelligence;
+
+        if (!coverage.available) {
+            res.json({ anomalies: [], totalAnalyzedDays: availability.daysAnalyzed, coverage });
+            return;
+        }
 
         const anomalies: { type: string; severity: 'info' | 'warning' | 'critical'; description: string; timestamp: number }[] = [];
         const now = new Date();
@@ -2825,7 +3003,7 @@ app.put('/api/contact/:jid/custom-name', async (req, res) => {
             return;
         }
         const trimmed = cleanText(customName, 120) || null;
-        console.log(`[CUSTOM NAME REST] ${jidResult.value!} → "${trimmed}"`);
+        console.log('[CONTACTS] Custom alias updated');
         await updateCustomName(jidResult.value!, trimmed);
         io.emit('custom-name-updated', { jid: jidResult.value!, customName: trimmed });
         res.json({ ok: true, jid: jidResult.value!, customName: trimmed });
@@ -2882,16 +3060,15 @@ app.get('/api/network/export/csv', (req, res) => {
 // ── Call IP Analyzer REST endpoints ───────────────────────────
 
 app.get('/api/call-analysis/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     try {
-        // Try in-memory first, fallback to MongoDB
-        const latest = getLatestCallAnalysis(jid);
-        if (latest) {
-            res.json(await enrichCallAnalysis(latest));
-        } else {
-            const fromDB = await getCallAnalyses(jid, 1);
-            res.json(fromDB[0] ? await enrichCallAnalysis(fromDB[0]) : null);
-        }
+        const fromDB = await getCallAnalyses(
+            context.jid,
+            1,
+            context.entry.trackingSession.caseId,
+        );
+        res.json(fromDB[0] ? await enrichCallAnalysis(fromDB[0]) : null);
     } catch (err) {
         console.error('[CALL-API] Error:', err);
         res.status(500).json({ error: 'Failed to get call analysis' });
@@ -2899,25 +3076,16 @@ app.get('/api/call-analysis/:jid', async (req, res) => {
 });
 
 app.get('/api/call-history/:jid', async (req, res) => {
-    const jid = req.params.jid;
+    const context = requireActiveObservationContext(req.params.jid, res);
+    if (!context) return;
     const limit = parseLimit(req.query.limit, 20, 100);
     try {
-        // Merge in-memory and MongoDB results
-        const inMemory = getCallAnalysisHistory(jid);
-        const fromDB = await getCallAnalyses(jid, limit);
-
-        // Deduplicate by callId
-        const seen = new Set<string>();
-        const merged = [];
-        for (const r of [...inMemory, ...fromDB]) {
-            if (!seen.has(r.callId)) {
-                seen.add(r.callId);
-                merged.push(await enrichCallAnalysis(r));
-            }
-        }
-        // Sort by startTime descending
-        merged.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-        res.json(merged.slice(0, limit));
+        const fromDB = await getCallAnalyses(
+            context.jid,
+            limit,
+            context.entry.trackingSession.caseId,
+        );
+        res.json(await Promise.all(fromDB.map(enrichCallAnalysis)));
     } catch (err) {
         console.error('[CALL-API] Error:', err);
         res.status(500).json({ error: 'Failed to get call history' });
@@ -3064,7 +3232,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        console.log(`Request to track: ${number}${customName ? ` (alias: ${customName})` : ''}`);
+        console.log('[TRACKING] Authorized add-contact request received');
         const cleanNumber = number.replace(/\D/g, '');
         if (cleanNumber.length < 6 || cleanNumber.length > 20) {
             socketValidationError(socket, ['number must contain 6-20 digits']);
@@ -3123,7 +3291,7 @@ io.on('connection', (socket) => {
                 io.emit('contact-name', { jid: result.jid, name: displayName });
 
                 // Persist contact to MongoDB (with custom name)
-                saveContact(result.jid, cleanNumber, contactName, ppUrl, customName);
+                await saveContact(result.jid, cleanNumber, contactName, ppUrl, customName);
                 await linkEvidenceToCase(auditContext, 'contact', result.jid, `Contact ${displayName}`, {
                     number: cleanNumber,
                     displayName,
@@ -3208,7 +3376,7 @@ io.on('connection', (socket) => {
                             customName,
                         });
 
-                        console.log(`[PROFILE] Enriched profile saved for ${result.jid}`);
+                        console.log('[PROFILE] Enriched profile saved');
                     } catch (err) {
                         console.log('[PROFILE] Could not enrich profile:', err);
                     }
@@ -3217,7 +3385,7 @@ io.on('connection', (socket) => {
                 socket.emit('error', { jid: targetJid, message: 'Number not on WhatsApp' });
             }
         } catch (err) {
-            console.error(err);
+            console.error('[TRACKING] Add-contact request failed');
             socket.emit('error', { jid: targetJid, message: 'Verification failed' });
         }
     });
@@ -3230,7 +3398,7 @@ io.on('connection', (socket) => {
             return;
         }
         const jid = jidResult.value!;
-        console.log(`Request to stop tracking: ${jid}`);
+        console.log('[TRACKING] Authorized stop request received');
         const entry = trackers.get(jid);
         if (entry) {
             const stopReason = cleanText(typeof data === 'object' ? data.stopReason : '', 500) || 'Stopped by operator';
@@ -3245,6 +3413,7 @@ io.on('connection', (socket) => {
             }
             entry.tracker.stopTracking();
             trackers.delete(jid);
+            clearContactObservationState(jid);
             io.emit('contact-removed', jid);
             await removeContact(jid);
             await auditEvent({
@@ -3269,7 +3438,7 @@ io.on('connection', (socket) => {
             return;
         }
         const trimmed = cleanText(customName, 120) || null;
-        console.log(`[CUSTOM NAME] ${jid} → "${trimmed}"`);
+        console.log('[CONTACTS] Custom alias updated');
         await updateCustomName(jidResult.value!, trimmed);
         // Broadcast to all clients so the name updates everywhere
         io.emit('custom-name-updated', { jid: jidResult.value!, customName: trimmed });
@@ -3297,7 +3466,7 @@ io.on('connection', (socket) => {
             socket.emit('error', { status: caseCheck.status, ...caseCheck.payload });
             return;
         }
-        console.log(`Request to reactivate: ${jid}`);
+        console.log('[TRACKING] Authorized reactivation request received');
 
         if (trackers.has(jid)) {
             socket.emit('error', { jid, message: 'Already tracking this contact' });
@@ -3336,7 +3505,7 @@ io.on('connection', (socket) => {
                 io.emit('profile-pic', { jid, url: ppUrl || null });
             } catch (_e) {}
 
-            console.log(`[REACTIVATE] ✓ ${jid}`);
+            console.log('[TRACKING] Authorized session reactivated');
         } catch (err) {
             console.error(`[REACTIVATE] Error:`, err);
             socket.emit('error', { jid, message: 'Failed to reactivate contact' });
@@ -3370,7 +3539,7 @@ io.on('connection', (socket) => {
             socketValidationError(socket, ['interfaceAddr is required']);
             return;
         }
-        console.log(`[NETWORK] Start capture on ${interfaceAddr}`);
+        console.log('[NETWORK] Capture start requested');
         const ok = startCapture(interfaceAddr, data.filter || {}, (packet: PacketMeta) => {
             io.emit('network-packet', packet);
         });
@@ -3433,9 +3602,12 @@ io.on('connection', (socket) => {
     });
 
     socket.on('set-probe-method', async (method: ProbeMethod) => {
-        console.log(`Request to change probe method to: ${method}`);
-        if (method !== 'delete' && method !== 'reaction') {
+        if (method !== 'passive' && method !== 'delete' && method !== 'reaction') {
             socket.emit('error', { message: 'Invalid probe method' });
+            return;
+        }
+        if (method !== 'passive' && !EXPERIMENTAL_PROBES_ENABLED) {
+            socket.emit('error', { message: 'Experimental probes are disabled in this deployment' });
             return;
         }
 
@@ -3448,7 +3620,7 @@ io.on('connection', (socket) => {
         }
 
         io.emit('probe-method', method);
-        console.log(`Probe method changed to: ${method}`);
+        console.log(`[TRACKING] Mode changed to ${method}`);
     });
 
     // ── Call IP Analyzer Socket events ──────────────────────────
@@ -3502,7 +3674,7 @@ io.on('connection', (socket) => {
                 trigger: 'socket',
             }, jid);
             io.emit('call-capture-started', { callId: cid, targetJid: jid });
-            console.log(`[CALL] Manual capture started: ${cid} for ${jid}`);
+            console.log('[CALL] Manual capture started');
         } else {
             socket.emit('error', { message: 'Failed to start call capture. Already capturing or run as administrator.' });
         }
@@ -3587,8 +3759,9 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM') {
     if (shutdownStarted) return;
     shutdownStarted = true;
     console.log(`\nShutting down after ${signal}...`);
-    for (const entry of trackers.values()) {
+    for (const [jid, entry] of trackers) {
         entry.tracker.stopTracking();
+        clearContactObservationState(jid);
     }
     trackers.clear();
     stopCapture();

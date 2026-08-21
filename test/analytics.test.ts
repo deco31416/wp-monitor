@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getAvailabilityProfile, getWeeklyHeatmap, setAnalyticsDb } from '../src/analytics.js';
+import { evaluateIntelligenceCoverage, getAvailabilityProfile, getWeeklyHeatmap, setAnalyticsDb } from '../src/analytics.js';
 
 function useAggregateRows(rows: unknown[]): void {
     setAnalyticsDb({
@@ -46,4 +46,18 @@ test('weekly heatmap separates conclusive data points from all attempts', async 
     assert.equal(heatmap.totalDataPoints, 4);
     assert.equal(heatmap.totalAttempts, 16);
     assert.equal(heatmap.weeksAnalyzed, 2);
+});
+
+test('behavioral intelligence stays unavailable until coverage is sufficient', () => {
+    const tooFewMeasurements = evaluateIntelligenceCoverage(99, 900, 14);
+    assert.equal(tooFewMeasurements.available, false);
+    assert.equal(tooFewMeasurements.reason, 'insufficient_conclusive_measurements');
+
+    const tooFewDays = evaluateIntelligenceCoverage(100, 100, 2);
+    assert.equal(tooFewDays.available, false);
+    assert.equal(tooFewDays.reason, 'insufficient_active_days');
+
+    const sufficient = evaluateIntelligenceCoverage(100, 100, 3);
+    assert.equal(sufficient.available, true);
+    assert.equal(sufficient.reason, 'sufficient');
 });

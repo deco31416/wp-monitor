@@ -227,7 +227,7 @@ export function startCallCapture(
 
         const device = findDevice(interfaceAddr);
         if (!device) {
-            console.error('[CALL-ANALYZER] Could not find network device for:', interfaceAddr);
+            console.error('[CALL-ANALYZER] Could not resolve the requested network interface');
             resetCaptureState();
             return false;
         }
@@ -302,7 +302,7 @@ export function startCallCapture(
         });
 
         isCapturing = true;
-        console.log(`[CALL-ANALYZER] ✅ Capture started on ${device} for call ${callId} (${isVideo ? 'video' : 'voice'})`);
+        console.log(`[CALL-ANALYZER] Capture started (${isVideo ? 'video' : 'voice'})`);
         return true;
     } catch (err) {
         console.error('[CALL-ANALYZER] Failed to start capture:', err);

@@ -397,7 +397,7 @@ export function startCapture(
 
         const device = findDevice(interfaceAddress);
         if (!device) {
-            console.error('[CAPTURE] Could not find network device for:', interfaceAddress);
+            console.error('[CAPTURE] Could not resolve the requested network interface');
             resetCaptureState(false);
             return false;
         }
@@ -481,7 +481,7 @@ export function startCapture(
         });
 
         isCapturing = true;
-        console.log(`[CAPTURE] Started on ${device} | filter: "${bpfFilter}" | linkType: ${linkType}`);
+        console.log(`[CAPTURE] Started | protocol filter: ${filter.protocol || 'all'} | linkType: ${linkType || 'unknown'}`);
         return true;
     } catch (err) {
         console.error('[CAPTURE] Failed to start:', err);

@@ -23,7 +23,7 @@ interface TrackerData {
 interface LiveState {
     state: string;
     label: string;
-    source: 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+    source: 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
     confidence: 'none' | 'low' | 'medium' | 'high';
     lastSignalAt: string | null;
     explanation?: string;
@@ -40,7 +40,25 @@ function isNoAckState(value: string): boolean {
 }
 
 function formatProbeState(value: string): string {
-    return isNoAckState(value) ? 'Sin ACK' : value;
+    if (isNoAckState(value)) return 'No concluyente';
+    if (value === 'Unknown') return 'Sin clasificar';
+    return value;
+}
+
+function formatSignalSource(source: LiveState['source']): string {
+    if (source === 'presence') return 'presencia';
+    if (source === 'call') return 'llamada';
+    if (source === 'message') return 'mensaje';
+    if (source === 'receipt') return 'confirmación';
+    if (source === 'rtt_probe') return 'medición técnica';
+    return 'sistema';
+}
+
+function formatConfidence(confidence: LiveState['confidence']): string {
+    if (confidence === 'high') return 'alta';
+    if (confidence === 'medium') return 'media';
+    if (confidence === 'low') return 'baja';
+    return 'no disponible';
 }
 
 interface ProfileData {
@@ -155,6 +173,15 @@ interface IntelData {
     sessionStats: IntelSession;
     heatmap: IntelHeatmap;
     habits: IntelHabits;
+    coverage: {
+        available: boolean;
+        conclusiveMeasurements: number;
+        totalAttempts: number;
+        activeDays: number;
+        minimumConclusiveMeasurements: number;
+        minimumActiveDays: number;
+        reason: 'sufficient' | 'insufficient_conclusive_measurements' | 'insufficient_active_days';
+    };
 }
 
 interface ContactCardProps {
@@ -422,7 +449,7 @@ export function ContactCard({
     const blurredNumber = privacyMode ? displayNumber.replace(/\d/g, '•') : displayNumber;
 
     const statusColor = isNoAckState(currentStatus) ? 'warning'
-        : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'call' ? 'success'
+        : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'receipt' || liveState?.source === 'call' ? 'success'
         : currentStatus === 'Standby' ? 'warning' : 'neutral';
 
     const statusConfig = {
@@ -574,7 +601,7 @@ export function ContactCard({
             case 'recording':
                 return 'Grabando audio';
             default:
-                return value || 'Sin presencia';
+                return value || 'Presencia no disponible';
         }
     };
 
@@ -652,7 +679,7 @@ export function ContactCard({
                             )}
                             {profile?.isBusinessAccount && (
                                 <span className="badge-neutral !text-[9px] !py-0 !px-1.5 flex items-center gap-0.5">
-                                    <Briefcase size={9} /> Business
+                                    <Briefcase size={9} /> Empresa
                                 </span>
                             )}
                         </div>
@@ -685,7 +712,7 @@ export function ContactCard({
                             </span>
                             {liveState && liveState.source !== 'system' && (
                                 <span className="text-[10px] text-txt-dim">
-                                    via {liveState.source} · {liveState.confidence}
+                                    vía {formatSignalSource(liveState.source)} · confianza {formatConfidence(liveState.confidence)}
                                 </span>
                             )}
                             {profile?.about && !privacyMode && (
@@ -712,12 +739,12 @@ export function ContactCard({
                         type="button"
                         onClick={downloadFullReport}
                         className="btn-ghost flex items-center gap-1.5 !text-xs !py-1.5 !px-3"
-                        title="Download full report"
+                        title="Descargar informe completo"
                     >
-                        <FileDown size={12} /> Report
+                        <FileDown size={12} /> Informe
                     </button>
                     <button onClick={onRemove} className="btn-danger flex items-center gap-1.5 !text-xs !py-1.5 !px-3">
-                        <Square size={12} /> Stop
+                        <Square size={12} /> Finalizar
                     </button>
                 </div>
             </div>
@@ -783,7 +810,7 @@ export function ContactCard({
                                     </div>
                                 )}
                                 <div className="flex justify-between items-center text-txt-secondary">
-                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Status</span>
+                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Presencia</span>
                                     <span className="font-medium text-txt-primary">{formatPresence(presence)}</span>
                                 </div>
                                 {/* Connection type */}
@@ -799,19 +826,19 @@ export function ContactCard({
                                     </div>
                                 )}
                                 <div className="flex justify-between items-center text-txt-secondary">
-                                    <span className="flex items-center gap-1.5"><Smartphone size={14} className="text-txt-dim" /> Devices</span>
+                                    <span className="flex items-center gap-1.5"><Smartphone size={14} className="text-txt-dim" /> Destinos técnicos</span>
                                     <span className="font-medium text-txt-primary">{deviceCount || 0}</span>
                                 </div>
                                 {/* Device alerts */}
                                 {deviceAlerts && deviceAlerts.length > 0 && (
                                     <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-1.5 text-xs text-amber-400">
-                                        <span className="font-bold">⚠️ Nuevo dispositivo detectado</span>
-                                        <span className="text-txt-dim ml-1">({deviceCount || 1} observable)</span>
+                                        <span className="font-bold">⚠️ Nuevo destino técnico observado</span>
+                                        <span className="text-txt-dim ml-1">({deviceCount || 1} en esta sesión)</span>
                                     </div>
                                 )}
                                 {stats?.lastOnline && (
                                     <div className="flex justify-between items-center text-txt-secondary">
-                                        <span className="flex items-center gap-1.5"><Clock size={14} className="text-success" /> Last Online</span>
+                                        <span className="flex items-center gap-1.5"><Clock size={14} className="text-success" /> Última conexión</span>
                                         <span className="font-medium text-success">{formatTime(stats.lastOnline)}</span>
                                     </div>
                                 )}
@@ -823,14 +850,14 @@ export function ContactCard({
                                 )}
                                 {stats?.firstSeen && (
                                     <div className="flex justify-between items-center text-txt-secondary">
-                                        <span className="flex items-center gap-1.5"><History size={14} className="text-txt-dim" /> Tracking</span>
+                                        <span className="flex items-center gap-1.5"><History size={14} className="text-txt-dim" /> Inicio de seguimiento</span>
                                         <span className="font-medium text-txt-primary text-[11px]">{formatDateTime(stats.firstSeen)}</span>
                                     </div>
                                 )}
                                 {profile?.isBusinessAccount && (
                                     <div className="flex justify-between items-center text-txt-secondary">
                                         <span className="flex items-center gap-1.5"><Briefcase size={14} className="text-accent" /> Tipo</span>
-                                        <span className="font-medium text-accent text-[11px]">Business</span>
+                                        <span className="font-medium text-accent text-[11px]">Empresa</span>
                                     </div>
                                 )}
                             </div>
@@ -868,7 +895,7 @@ export function ContactCard({
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-warning mx-auto mb-1" />
                                         <span className="text-warning font-bold">{stats.standby}%</span>
-                                        <p className="text-txt-dim">Standby</p>
+                                        <p className="text-txt-dim">En espera</p>
                                     </div>
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-accent mx-auto mb-1" />
@@ -878,7 +905,7 @@ export function ContactCard({
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-orange-500 mx-auto mb-1" />
                                         <span className="text-orange-400 font-bold">{stats.noAck ?? stats.offline}%</span>
-                                        <p className="text-txt-dim">Sin ACK</p>
+                                        <p className="text-txt-dim">No concluyente</p>
                                     </div>
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-txt-dim mx-auto mb-1" />
@@ -899,7 +926,7 @@ export function ContactCard({
                         {/* Device list */}
                         {devices.length > 0 && (
                             <div className="bg-surface-overlay rounded-xl border border-surface-border p-4">
-                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3">Devices</h5>
+                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3">Destinos técnicos observados</h5>
                                 <div className="space-y-1.5">
                                     {devices.map((device, idx) => {
                                         const dColor = isNoAckState(device.state) ? 'warning'
@@ -909,7 +936,7 @@ export function ContactCard({
                                             <div key={device.jid} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-surface-hover transition-colors">
                                                 <div className="flex items-center gap-2">
                                                     <Monitor size={13} className="text-txt-dim" />
-                                                    <span className="text-xs text-txt-secondary">Device {idx + 1}</span>
+                                                    <span className="text-xs text-txt-secondary">Destino {idx + 1}</span>
                                                 </div>
                                                 <span className={`badge-${dColor} !text-[10px] !py-0.5 !px-2`}>
                                                     {formatProbeState(device.state)}
@@ -927,21 +954,21 @@ export function ContactCard({
                         {/* Metric cards */}
                         <div className="grid grid-cols-3 gap-3">
                             <MetricCard
-                                label="Current Avg RTT"
+                                label="Latencia actual"
                                 value={lastData?.avg.toFixed(0) || '—'}
                                 unit={lastData ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="accent"
                             />
                             <MetricCard
-                                label="Median (50)"
+                                label="Mediana (50)"
                                 value={lastData && lastData.median > 0 ? lastData.median.toFixed(0) : '—'}
                                 unit={lastData && lastData.median > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="success"
                             />
                             <MetricCard
-                                label="Threshold"
+                                label="Umbral"
                                 value={lastData && lastData.threshold > 0 ? lastData.threshold.toFixed(0) : '—'}
                                 unit={lastData && lastData.threshold > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
@@ -952,11 +979,11 @@ export function ContactCard({
                         {/* Panel tabs */}
                         <div className="flex gap-1 bg-surface-overlay rounded-lg p-1 border border-surface-border">
                             {([
-                                { key: 'chart', label: 'RTT Chart', icon: <BarChart3 size={13} /> },
-                                { key: 'activity', label: 'Activity', icon: <History size={13} /> },
-                                { key: 'stats', label: 'Stats', icon: <Database size={13} /> },
-                                { key: 'intel', label: 'Intel', icon: <Brain size={13} /> },
-                                { key: 'profile', label: 'Profile', icon: <User size={13} /> },
+                                { key: 'chart', label: 'Medición', icon: <BarChart3 size={13} /> },
+                                { key: 'activity', label: 'Actividad', icon: <History size={13} /> },
+                                { key: 'stats', label: 'Resumen', icon: <Database size={13} /> },
+                                { key: 'intel', label: 'Patrones', icon: <Brain size={13} /> },
+                                { key: 'profile', label: 'Perfil', icon: <User size={13} /> },
                                 ...(callTrafficAvailable ? [{ key: 'call' as const, label: 'Llamada', icon: <Phone size={13} /> }] : []),
                             ] as const).map(tab => (
                                 <button
@@ -978,7 +1005,7 @@ export function ContactCard({
                         {activePanel === 'chart' && (
                             <>
                             <div className="bg-surface-overlay rounded-xl border border-surface-border p-5 h-[300px]">
-                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">RTT History & Threshold</h5>
+                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">Historial de latencia confirmada</h5>
                                 {acknowledgedRttData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height={220}>
                                     <AreaChart data={acknowledgedRttData}>
@@ -1032,9 +1059,9 @@ export function ContactCard({
                                 ) : (
                                     <div className="h-[220px] flex flex-col items-center justify-center text-center px-6">
                                         <Activity size={30} className="text-warning mb-3" />
-                                        <p className="text-sm font-medium text-txt-secondary">RTT no disponible</p>
+                                        <p className="text-sm font-medium text-txt-secondary">Medición de latencia no disponible</p>
                                         <p className="text-xs text-txt-dim mt-1 max-w-md">
-                                            WhatsApp no entrego ACK de cliente para las sondas. Los timeouts se conservan como evidencia inconclusa y no se grafican como RTT valido.
+                                            Esta sesión no dispone de confirmaciones compatibles para calcular una latencia confiable. La actividad observada continúa registrándose normalmente.
                                         </p>
                                     </div>
                                 )}

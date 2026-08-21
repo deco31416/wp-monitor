@@ -2,13 +2,14 @@
 
 ## Proposito
 
-Mostrar como RTT, presencia, mensajes y llamadas llegan al dashboard sin perder su fuente.
+Mostrar como RTT experimental, presencia, mensajes reales, receipts y llamadas llegan al dashboard sin perder su fuente.
 
 ```mermaid
 flowchart LR
-    RTT[Probe RTT]
+    RTT[Probe RTT experimental]
     Presence[Presencia Baileys]
-    Message[Evento de mensaje]
+    Message[Mensaje real sin contenido]
+    Receipt[Receipt real correlacionado]
     Call[Evento de llamada]
 
     Normalize[Resolver JID y normalizar]
@@ -21,6 +22,7 @@ flowchart LR
     RTT --> Normalize
     Presence --> Normalize
     Message --> Normalize
+    Receipt --> Normalize
     Call --> Normalize
     Normalize --> Classify
     Classify --> Ephemeral
@@ -33,7 +35,9 @@ flowchart LR
 
 ## Reglas de interpretacion
 
-- RTT es una medicion heuristica, no presencia oficial.
+- El modo predeterminado es pasivo y no genera probes; RTT solo existe cuando el modo experimental fue habilitado y seleccionado.
+- RTT es una medicion heuristica, no presencia oficial; un timeout queda como no concluyente.
+- Mensaje y Receipt no contienen texto ni ID crudo persistido; la correlacion durable usa una huella opaca.
 - `composing` y `recording` caducan aunque no llegue un evento de pausa.
 - Llamadas conservan direccion y ciclo; no se suman silenciosamente a RTT.
 - El dashboard reconstruye historial por REST y recibe actualidad por Socket.IO.

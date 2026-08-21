@@ -98,7 +98,7 @@ export function ActivityJournalPanel({
             <div className="px-5 py-3 border-b border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                     <FileText size={14} className="text-accent" />
-                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitacora RTT</h5>
+                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Historial técnico</h5>
                     <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{entries.length} eventos</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -117,7 +117,7 @@ export function ActivityJournalPanel({
                         className="btn-ghost !text-[10px] !py-1 !px-2 flex items-center gap-1"
                         title="Reporte completo"
                     >
-                        <Download size={10} /> Full
+                        <Download size={10} /> Completo
                     </button>
                 </div>
             </div>
@@ -282,14 +282,14 @@ function toDateStr(ts: string | number) {
 function describeState(state: string, rtt: number): string {
     if (state.includes('Online')) return `El contacto se CONECTO - Dispositivo activo (respuesta: ${rtt}ms)`;
     if (state === 'Standby') return `El contacto paso a ESPERA - App abierta en segundo plano (respuesta: ${rtt}ms)`;
-    if (isNoAckState(state)) return 'No se recibio ACK del probe; resultado no concluyente';
+    if (isNoAckState(state)) return 'No se recibió una confirmación compatible; resultado no concluyente';
     return `Estado cambiado a ${state} (respuesta: ${rtt}ms)`;
 }
 
 function describeStateShort(state: string): string {
     if (state.includes('Online')) return 'CONECTADO';
     if (state === 'Standby') return 'EN ESPERA';
-    if (isNoAckState(state)) return 'SIN ACK';
+    if (isNoAckState(state)) return 'NO CONCLUYENTE';
     return state;
 }
 
@@ -375,10 +375,10 @@ function buildActivityReportHtml(
     <section class="meta-grid" aria-label="Distribucion">
       <div class="metric"><span>Conectado</span><strong>${summary.online}</strong></div>
       <div class="metric"><span>En espera</span><strong>${summary.standby}</strong></div>
-      <div class="metric"><span>Sin ACK</span><strong>${summary.noAck}</strong></div>
-      <div class="metric"><span>RTT con ACK</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
+      <div class="metric"><span>No concluyentes</span><strong>${summary.noAck}</strong></div>
+      <div class="metric"><span>Latencia confirmada</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
     </section>
-    <p class="note">Lectura tecnica: estos eventos describen actividad observada por RTT y cambios de estado. No sustituyen corroboracion externa ni prueban por si solos identidad, ubicacion exacta o titularidad del dispositivo.</p>
+    <p class="note">Lectura técnica: estos registros describen intentos de medición y sus resultados. Los intentos no concluyentes no prueban actividad o inactividad; ningún registro sustituye corroboración externa ni acredita por sí solo identidad, ubicación exacta o titularidad del dispositivo.</p>
     <section class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Estado</th><th>RTT</th><th>Descripcion</th></tr></thead>
@@ -387,7 +387,7 @@ function buildActivityReportHtml(
     </section>
     <footer class="footer">
       <span>Generado: ${escapeHtml(generatedAt.toLocaleString('es-CO'))}</span>
-      <span>WP MONITOR · Activity Journal</span>
+      <span>WP MONITOR · Historial técnico</span>
     </footer>
   </main>
 </body>

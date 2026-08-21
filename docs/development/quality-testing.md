@@ -19,6 +19,8 @@ pnpm run qa:report-fixture
 | Runtime | modos, captura, cuenta/sesion, Redis y proxy |
 | Autenticacion | password scrypt, bootstrap, rate limit, cookies, origen, revocacion y Socket.IO |
 | Runtime routes | health y capacidades |
+| Seguimiento pasivo | cero trafico generado, limpieza al finalizar, recibos monotonos/idempotentes y aislamiento por contacto |
+| Sesiones/casos | procedencia, consultas activas, aislamiento de llamadas y precedencia de rutas |
 | Scoring | candidatas y coherencia telefonica |
 | GeoIP | proveedor principal/fallback y contradicciones |
 | Check-In | modelo, consentimiento e integridad |
@@ -53,6 +55,9 @@ pnpm run qa:report-fixture
 
 - QR/restauracion;
 - agregar y detener contacto;
+- modo pasivo sin mensajes sinteticos;
+- mensajes/receipts reales sin contenido ni ID crudo;
+- finalizar/reactivar sin heredar estado en vivo;
 - estado efimero y expiracion;
 - datos despues de refrescar;
 - informe completo sin placeholders.
@@ -104,3 +109,5 @@ Revisa navegacion colapsada, textos largos, tablas, scroll, botones, tooltips y 
 ## Evidencia de QA
 
 Registra version, commit, sistema, Node/pnpm, comandos, resultados, fecha UTC, capturas anonimizadas y responsable. Un `PASS` sin salida verificable no es suficiente para una auditoria formal.
+
+Linea base de `Unreleased` validada el 2026-08-21: 127 pruebas backend y 11 frontend, typechecks, lint y builds exitosos; `pnpm audit` sin vulnerabilidades conocidas. El smoke local observo una sesion `passive` con cero mediciones tecnicas y persistio un mensaje real saliente mas su receipt `delivered`, sin identificadores crudos en detalles.

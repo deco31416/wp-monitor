@@ -352,7 +352,7 @@ function PrivacyScoreCard({ privacyScore }: { privacyScore: PrivacyScore }) {
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
             <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                <Shield size={13} /> Puntaje de Privacidad (OPSEC)
+                <Shield size={13} /> Indicador de privacidad observada
             </h5>
             <div className="flex items-center gap-4 mb-4">
                 <div className={clsx(
@@ -370,7 +370,7 @@ function PrivacyScoreCard({ privacyScore }: { privacyScore: PrivacyScore }) {
                         privacyScore.score >= 40 ? "text-amber-400" :
                         "text-red-400"
                     )}>
-                        Privacidad: {privacyScore.level}
+                        Protección observada: {privacyScore.level}
                     </p>
                     <p className="text-[10px] text-txt-dim mt-1">
                         {privacyScore.score >= 70 ? 'Dificil de perfilar' :

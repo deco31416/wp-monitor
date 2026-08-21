@@ -130,14 +130,14 @@ test('Redis disconnect supersedes an in-flight connection without leaking a read
     client.connectGate = new Promise<void>(resolve => {
         releaseConnection = resolve;
     });
-    const service = new RedisService(configuredRedis(), () => client);
+    const service = new RedisService({ ...configuredRedis(), connectTimeoutMs: 1_000 }, () => client);
 
-    const pendingCommand = service.sendCommand(['PING']);
+    const pendingCommand = assert.rejects(service.sendCommand(['PING']), /Redis connection failed/);
     await new Promise<void>(resolve => setImmediate(resolve));
     await service.disconnect();
     releaseConnection();
 
-    await assert.rejects(pendingCommand, /Redis connection failed/);
+    await pendingCommand;
     assert.ok(client.destroyCalls >= 1);
     assert.deepEqual(service.getHealth(), { configured: true, required: true, connected: false });
 });

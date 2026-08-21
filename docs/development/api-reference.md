@@ -65,6 +65,8 @@ Creacion minima:
 
 `GET /api/stats/:jid` informa `online`, `standby`, `calibrating`, `noAck` y `unknown` como porcentajes separados. `offline` se conserva unicamente como alias de compatibilidad de `noAck`.
 
+Las rutas de historia, actividad, estado, estadisticas, perfil, patrones, inteligencia, privacidad, reportes y llamadas por JID requieren una sesion de tracking activa. Sus consultas de evidencia se limitan al `trackingSessionId` o `caseId` correspondiente; no son vistas globales por numero.
+
 ## Inteligencia e informes de contacto
 
 | Metodo | Ruta |
@@ -132,14 +134,14 @@ Las rutas de captura responden `403` en `railway-dashboard`.
 - `set-custom-name`
 - `reactivate-contact` con `{ jid, caseId, operatorName, authorizationNote }`
 - `network-start`, `network-stop`, `network-filter`, `network-get-status`
-- `set-probe-method`
+- `set-probe-method` (`passive` siempre; `delete`/`reaction` solo cuando el despliegue habilita probes experimentales)
 - `start-call-capture`, `stop-call-capture`, `get-call-capture-status`
 
 ## Socket.IO: servidor a cliente
 
 - `qr`, `connection-open`
 - `tracked-contacts`, `contact-added`, `contact-removed`
-- `tracker-update`, `contact-live-state`, `presence-change`, `message-activity`
+- `tracker-update`, `contact-live-state`, `presence-change`, `message-activity`, `message-receipt`
 - `call-event`, `call-packet`, `call-capture-started`, `call-analysis`
 - `network-packet`, `network-status`
 - `profile-pic`, `contact-name`, `contact-profile-update`, `custom-name-updated`
@@ -148,3 +150,5 @@ Las rutas de captura responden `403` en `railway-dashboard`.
 Los payloads son contratos internos TypeScript. Antes de integrarlos externamente revisa `client/src/types.ts` y el emisor vigente; no existe garantia semantica para consumidores de terceros sin versionado adicional.
 
 Agregar o reactivar un contacto crea una sesion durable en `tracking_sessions`. Cada medicion y evento observado nuevo conserva `caseId` y `trackingSessionId`. Detener tracking cierra primero esa sesion en MongoDB; si no puede persistirse el cierre, el backend no finge que la operacion termino.
+
+`message-activity` no incluye contenido. `message-receipt` informa estado, etiqueta, timestamp y latencia local cuando puede calcularse; MongoDB conserva una huella opaca de 24 caracteres y no el ID crudo del mensaje.

@@ -15,6 +15,14 @@ test('renders persisted human activity without presenting it as RTT', () => {
                     timestampUtc: '2026-08-21T17:40:00.000Z',
                 },
                 {
+                    source: 'receipt',
+                    type: 'delivered',
+                    label: 'Mensaje entregado',
+                    confidence: 'high',
+                    timestamp: '2026-08-21T17:40:01.000Z',
+                    timestampUtc: '2026-08-21T17:40:01.000Z',
+                },
+                {
                     source: 'presence',
                     type: 'composing',
                     label: 'Escribiendo',
@@ -28,12 +36,14 @@ test('renders persisted human activity without presenting it as RTT', () => {
     );
 
     expect(screen.getByText('Mensaje enviado (text)')).toBeInTheDocument();
+    expect(screen.getByText('Mensaje entregado')).toBeInTheDocument();
+    expect(screen.getByText(/Confirmación · confianza alta/)).toBeInTheDocument();
     expect(screen.getByText('Escribiendo')).toBeInTheDocument();
-    expect(screen.getByText('2 eventos reales')).toBeInTheDocument();
+    expect(screen.getByText('3 eventos observados')).toBeInTheDocument();
     expect(screen.queryByText(/RTT:/)).not.toBeInTheDocument();
 });
 
 test('explains when no attributable activity exists', () => {
     render(<ActivityLogPanel events={[]} formatDateTime={value => value || '-'} />);
-    expect(screen.getByText('Sin actividad real observada')).toBeInTheDocument();
+    expect(screen.getByText('Sin actividad observada')).toBeInTheDocument();
 });

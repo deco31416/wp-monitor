@@ -10,6 +10,15 @@ test('builds case-scoped observation queries without changing legacy contact-wid
     assert.deepEqual(buildObservationScope('synthetic-contact@s.whatsapp.net'), {
         jid: 'synthetic-contact@s.whatsapp.net',
     });
+    assert.deepEqual(buildObservationScope(
+        'synthetic-contact@s.whatsapp.net',
+        'CASE-UNIT-001',
+        'tracking-unit-001',
+    ), {
+        jid: 'synthetic-contact@s.whatsapp.net',
+        caseId: 'CASE-UNIT-001',
+        trackingSessionId: 'tracking-unit-001',
+    });
 });
 
 test('retains case and tracking session provenance in persisted activity events', () => {
