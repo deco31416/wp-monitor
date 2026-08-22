@@ -1,0 +1,87 @@
+name: wp-monitor-develop
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_VERSION: ${NODE_VERSION:-24.19.0}
+        PORT: 4000
+    environment:
+      NODE_ENV: production
+      DEPLOYMENT_MODE: railway-dashboard
+      LOCAL_CAPTURE_ENABLED: "false"
+      ENABLE_EXPERIMENTAL_PROBES: "false"
+      PORT: 4000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
+      MONGODB_DB: ${MONGODB_DB:?MONGODB_DB is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      REDIS_REQUIRED: "true"
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-wp-monitor-develop}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:?INITIAL_ADMIN_USERNAME is required}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD is required}
+      AUTH_IDENTITY_SECRET: ${AUTH_IDENTITY_SECRET:?AUTH_IDENTITY_SECRET is required}
+      AUTH_SESSION_TTL_SECONDS: ${AUTH_SESSION_TTL_SECONDS:-28800}
+      AUTH_PASSWORD_VERIFY_CONCURRENCY: ${AUTH_PASSWORD_VERIFY_CONCURRENCY:-1}
+      AUTH_LOGIN_RATE_WINDOW_MS: ${AUTH_LOGIN_RATE_WINDOW_MS:-900000}
+      AUTH_LOGIN_RATE_MAX_PER_IP: ${AUTH_LOGIN_RATE_MAX_PER_IP:-50}
+      AUTH_LOGIN_RATE_MAX_PER_USERNAME: ${AUTH_LOGIN_RATE_MAX_PER_USERNAME:-50}
+      AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP: ${AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP:-10}
+      CHECKIN_SUBMIT_RATE_WINDOW_MS: ${CHECKIN_SUBMIT_RATE_WINDOW_MS:-600000}
+      CHECKIN_SUBMIT_RATE_MAX_PER_IP: ${CHECKIN_SUBMIT_RATE_MAX_PER_IP:-60}
+      CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP: ${CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP:-8}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      ENABLE_SWAGGER: "false"
+      ENABLE_IP_ENRICHMENT: ${ENABLE_IP_ENRICHMENT:-true}
+      IP_ENRICHMENT_PRIMARY_PROVIDER: ${IP_ENRICHMENT_PRIMARY_PROVIDER:-db-ip}
+      DB_IP_API_KEY: ${DB_IP_API_KEY:-free}
+      IP_ENRICHMENT_CACHE_TTL_SEC: ${IP_ENRICHMENT_CACHE_TTL_SEC:-604800}
+      IP_ENRICHMENT_TIMEOUT_MS: ${IP_ENRICHMENT_TIMEOUT_MS:-3500}
+    volumes:
+      - baileys_auth:/app/auth_info_baileys
+      - checkin_uploads:/app/public/uploads
+    networks:
+      - app
+      - data
+      - dokploy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        NODE_VERSION: ${NODE_VERSION:-24.19.0}
+        PORT: 4001
+        VITE_API_URL: ${BACKEND_URL:?BACKEND_URL is required}
+    environment:
+      PORT: 4001
+    depends_on:
+      - backend
+    networks:
+      - app
+      - dokploy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  baileys_auth:
+    name: wp-monitor-develop-baileys-auth
+  checkin_uploads:
+    name: wp-monitor-develop-checkin-uploads
+
+networks:
+  app:
+    name: wp-monitor-develop-app
+  data:
+    external: true
+    name: wp-monitor-data
+  dokploy:
+    external: true
+    name: dokploy-network
