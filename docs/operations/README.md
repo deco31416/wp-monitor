@@ -8,6 +8,7 @@ Runbooks para administrar WP MONITOR en desarrollo, laboratorio autorizado y das
 | --- | --- |
 | Ejecutar en Windows/Linux con captura local | [Runbook local](local-runbook.md) |
 | Preparar un Ubuntu 26.04 VPS publico | [Ubuntu VPS](ubuntu-vps.md) |
+| Actualizar una instalacion `2.x` a `3.0.0` | [Migracion 3.0](migration-3.0.md) |
 | Instalar Npcap/libpcap y validar `cap` | [Motor de captura](packet-capture-setup.md) |
 | Construir y validar contenedores | [Docker](docker.md) |
 | Operar Redis en Docker o Ubuntu/VPS | [Redis](redis.md) |

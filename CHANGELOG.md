@@ -11,7 +11,7 @@ The changelog is organized in a format inspired by *Keep a Changelog*. Version n
 
 | Channel | Version | Date |
 |---|---:|---:|
-| Current stable release | `2.9.4` | `2026-06-28` |
+| Current stable release | `3.0.0` | `2026-08-21` |
 | Development branch | `Unreleased` | Not yet released |
 
 <!--
@@ -28,7 +28,15 @@ Maintainer guidance:
 
 ## [Unreleased]
 
-> Changes in this section are part of the development branch and are not included in the current stable release.
+> Changes after `3.0.0` will be recorded here while development continues.
+
+No unreleased changes yet.
+
+---
+
+## [3.0.0] - 2026-08-21
+
+> **Current stable release.** Major operational release introducing Node.js 24, pnpm, Redis-backed authentication/rate limits, passive-by-default observation, durable case-scoped tracking, and expanded evidence reporting. Review the migration notes before upgrading from `2.x`.
 
 ### Added
 
@@ -57,6 +65,8 @@ Maintainer guidance:
 - Scoped persisted call analyses by both case and call ID, and blocked closing/deactivating cases that still have active tracking sessions.
 - Removed tracker-specific Baileys listeners when tracking stops, preventing stopped/reactivated contacts from accumulating duplicate handlers.
 - Evidence packages now resolve the running package version instead of falling back to the stale `2.9.1` label.
+- Centralized software-version resolution so startup metadata, provider User-Agent, QA fixtures and evidence reports all publish `3.0.0` from the root manifest.
+- Exposed the running version through public capabilities/health contracts and the dashboard footer so operators can correlate a deployed process with release evidence.
 - Restored the declared `qa:report-fixture` command with synthetic, non-production JSON/HTML/PDF/ZIP artifacts and integrity validation.
 - Ensured Docker builds copy the tracked `cap` Node.js 24 compatibility patch before frozen pnpm installation; the static frontend build now skips unrelated backend lifecycle scripts instead of attempting to compile `cap`.
 
@@ -81,6 +91,16 @@ Maintainer guidance:
 - Removed a location-specific consumer ISP heuristic so runtime classification depends on generic scoring and current enrichment data instead of a captured local range.
 - Standardized the backend runtime tag as `WP-MONITOR`.
 
+### Security and Compliance
+
+- Hardened Git and Docker exclusions for environment files, Baileys/WhatsApp sessions and backups, browser profiles/cookies, local data stores, uploads, packet captures, reports, evidence archives, logs and private tooling state.
+- Verified that neither `main`, `develop` nor repository history tracks a real `.env` or Baileys session; only the safe `.env.example` template is versioned.
+
+### Documentation
+
+- Published a `2.x` to `3.0.0` migration/rollback runbook and synchronized README, security support policy, architecture catalog, API/report contracts, release procedure and Mermaid views with the implemented runtime.
+- Updated activity/evidence diagrams to expose page limits and truncation, and added Redis to context and failure-recovery views.
+
 ### Removed
 
 - Removed the remaining obsolete Signal integration artifacts, including Signal sidecar configuration and the unused direct WebSocket dependency.
@@ -91,7 +111,7 @@ Maintainer guidance:
 
 ### Verification
 
-- Backend tests: 133/133 passed.
+- Backend tests: 135/135 passed.
 - Frontend tests: 16/16 passed.
 - Backend/frontend typechecks, frontend lint, and production builds passed.
 - Full and production-only pnpm audits reported no known vulnerabilities.
@@ -100,12 +120,13 @@ Maintainer guidance:
 - Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, passive-activity JSON/CSV, and per-artifact SHA-256 metadata.
 - Native PDF inspection with `pdfinfo`/`pdftoppm` confirmed a valid two-page A4 document with readable passive-signal, technical-measurement, candidate-IP, audit, integrity, and limitation sections without visible clipping.
 - Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set.
-- Documentation relative-link validation passed across 61 Markdown files.
+- Documentation relative-link validation passed across 62 Markdown files.
+- Static Mermaid validation passed for 21 blocks across the 14 diagram documents and canonical architecture view.
 
 ### Migration Notes
 
-- The next release changes dependency management from the historical split workflow to a single root pnpm workspace.
-- Contributor, CI, Docker, and deployment commands should use the root workspace and its lockfile after this release is published.
+- Version `3.0.0` changes dependency management from the historical split workflow to a single root pnpm workspace.
+- Contributor, CI, Docker, and deployment commands must use the root workspace and its lockfile in `3.0.0` and later.
 - The legacy CLI is no longer a supported application entry point; use the web backend and dashboard workflow.
 - Existing local installations may bootstrap the first `admin` operator from the old `DASHBOARD_TOKEN`; sign in once, rotate username/password from Account, then remove the legacy value. Fresh/production deployments must use explicit `INITIAL_ADMIN_USERNAME`, `INITIAL_ADMIN_PASSWORD`, and `AUTH_IDENTITY_SECRET` secrets.
 - Existing measurements and activity events have no case/session provenance and remain available only through legacy contact-wide views; case evidence exports intentionally include only newly scoped observations.
@@ -117,7 +138,7 @@ Maintainer guidance:
 
 ## [2.9.4] - 2026-06-28
 
-> **Current stable release.** Focused on authentication recovery, sensitive-log suppression, live activity signals, and more reliable Baileys call-event handling.
+> Previous `2.x` release focused on authentication recovery, sensitive-log suppression, live activity signals, and more reliable Baileys call-event handling.
 
 ### Added
 

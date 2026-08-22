@@ -5,6 +5,7 @@ import {
     buildRuntimeCapabilities,
 } from '../runtime.js';
 import type { RuntimeConfig } from '../runtime.js';
+import { SOFTWARE_VERSION } from '../version.js';
 
 export interface RuntimeHealthProviders {
     mongoConfigured?: () => boolean;
@@ -36,6 +37,7 @@ export function buildRuntimeHealth(config: RuntimeConfig, providers: RuntimeHeal
 
     return {
         service: 'wp-monitor',
+        version: SOFTWARE_VERSION,
         developedBy: 'WP MONITOR',
         status: degradedReasons.length > 0 ? 'degraded' : 'operational',
         generatedAt: new Date().toISOString(),

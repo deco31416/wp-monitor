@@ -17,14 +17,14 @@ Publicar una version reproducible con codigo, contratos, documentacion y evidenc
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm run test:unit
-pnpm run test:client
-pnpm run build:all
+pnpm run qa
+pnpm audit --prod
+pnpm audit
 pnpm run qa:report-fixture
 git diff --check
 ```
 
-Ademas ejecuta smoke local, QA responsive, Docker y Railway staging cuando el alcance los afecte.
+Ademas valida enlaces Markdown, sintaxis/renderizado Mermaid, exclusiones Git/Docker, smoke local, QA responsive, Docker y Railway staging cuando el alcance los afecte.
 
 ## Compatibilidad Baileys
 
@@ -36,14 +36,16 @@ Si cambian documentos MongoDB, define lectura compatible, migracion, conteos, ba
 
 ## Publicacion
 
-1. congelar commit validado;
-2. crear tag semantico;
-3. generar notas desde changelog;
-4. publicar imagen/artefacto si aplica;
-5. desplegar staging y luego produccion;
-6. ejecutar smoke post-deploy;
-7. conservar rollback;
-8. monitorear ventana inicial.
+1. congelar commit validado en `develop`;
+2. abrir y revisar PR `develop` hacia `main` sin reescribir historial;
+3. mergear solo con gates verdes;
+4. crear tag semantico sobre el commit exacto de `main`;
+5. publicar GitHub Release con notas del changelog;
+6. volver a `develop` para continuar QA posterior;
+7. publicar imagen/artefacto si aplica;
+8. desplegar staging y luego produccion;
+9. ejecutar smoke post-deploy;
+10. conservar rollback y monitorear la ventana inicial.
 
 ## Rollback
 

@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/version-2.9.4-2563EB?style=flat-square" alt="Version 2.9.4" />
+    <img src="https://img.shields.io/badge/version-3.0.0-2563EB?style=flat-square" alt="Version 3.0.0" />
   </a>
   <img src="https://img.shields.io/badge/Node.js-24.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24.19" />
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.7+" />
@@ -37,7 +37,7 @@
 
 WP MONITOR is an open-source research platform that combines WhatsApp activity analysis, behavioral analytics, local network metadata capture, consent-based check-ins, case management, audit logging, and evidence-oriented reporting.
 
-The project was originally forked from [gommzystudio/device-activity-tracker](https://github.com/gommzystudio/device-activity-tracker) and extensively redesigned by [deco31416](https://www.deco31416.com). The v2.x architecture adds MongoDB persistence, contact history and auto-restore, a human-readable activity bitácora, JSON/HTML/PDF reporting, behavior intelligence, local packet metadata analysis, call-window analysis, case records, audit exports, evidence packages, and separate local and Railway runtime modes.
+The project was originally forked from [gommzystudio/device-activity-tracker](https://github.com/gommzystudio/device-activity-tracker) and extensively redesigned by [deco31416](https://www.deco31416.com). Version 3.0 establishes a Node.js 24/pnpm workspace, durable case-scoped sessions, passive-by-default observation, single-operator cookie authentication, Redis-backed sessions/rate limits, evidence-oriented reporting, and explicit local/cloud capability boundaries.
 
 The RTT research foundation follows the paper **“Careless Whisper: Exploiting Silent Delivery Receipts to Monitor Users on Mobile Instant Messengers”** by Gabriel K. Gegenhuber et al. from the University of Vienna and SBA Research.
 
@@ -96,6 +96,7 @@ flowchart LR
 
     WhatsApp[WhatsApp Session via Baileys]
     Mongo[(MongoDB)]
+    Redis[(Redis Sessions and Rate Limits)]
     Exports[JSON / CSV / HTML / PDF / ZIP]
 
     Dashboard --> API
@@ -112,6 +113,8 @@ flowchart LR
     Intelligence --> Mongo
     Cases --> Mongo
     Reports --> Mongo
+    API --> Redis
+    Realtime --> Redis
 
     Network --> IPIntel
     Calls --> IPIntel
@@ -895,7 +898,7 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 
 | Problem | Resolution |
 |---|---|
-| WhatsApp session does not connect | Remove the stale `auth_info_baileys/` directory and scan a new QR code |
+| WhatsApp session does not connect | Confirm `401/loggedOut`; let the backend rotate the invalid session and then scan the new QR. Do not delete session files for a transient warning |
 | Baileys fails after an upgrade | Restore the lockfile version and repeat the QR/session compatibility smoke tests |
 | Packet capture does not start | Run with administrator/root privileges and verify Npcap WinPcap compatibility mode on Windows |
 | Network Monitor is hidden | Confirm `DEPLOYMENT_MODE=local-full` and `LOCAL_CAPTURE_ENABLED=true` |
@@ -909,6 +912,15 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 ---
 
 ## Release Highlights
+
+### v3.0.0
+
+- Moves the supported runtime to Node.js 24.19.x and a single pnpm workspace
+- Adds MongoDB-backed single-operator identity, opaque Redis sessions, shared rate limits and hardened cookie/origin controls
+- Makes contact observation passive by default and separates real messages/receipts from optional experimental RTT probes
+- Scopes tracking, activity, call analysis and evidence to durable authorized case sessions
+- Expands JSON/HTML/PDF/ZIP reports with passive activity, integrity metadata and explicit partial-data limits
+- Publishes reproducible QA, Docker/VPS runbooks, Mermaid architecture views and migration guidance
 
 ### v2.9.4
 

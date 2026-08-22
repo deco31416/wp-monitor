@@ -105,12 +105,14 @@ Aplica limites, consentimiento y payload valido; observa IP segun proxy trust; n
 
 1. consultar caso y enlaces;
 2. reunir auditoria y evidencias relacionadas;
-3. normalizar orden/fechas;
-4. construir representacion canonica;
-5. calcular hashes;
-6. renderizar formatos;
-7. registrar accion de exportacion;
-8. entregar archivo con content type y nombre seguro.
+3. contar el total disponible y cargar la pagina acotada de señales por target;
+4. declarar `returned`, `total`, `truncated` y `limit` sin presentar una muestra parcial como completa;
+5. normalizar orden/fechas;
+6. construir representacion canonica;
+7. calcular hashes;
+8. renderizar formatos;
+9. registrar accion de exportacion;
+10. entregar archivo con content type y nombre seguro.
 
 ## Fallos y compensacion
 

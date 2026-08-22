@@ -1,6 +1,6 @@
 # Especificacion Verificable: Actividad Pasiva e Informes
 
-Estado: implementada en `develop`
+Estado: publicada en `3.0.0`
 
 Version de contrato Evidence Package: `1.1`
 

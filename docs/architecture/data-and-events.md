@@ -85,6 +85,9 @@ sequenceDiagram
     API->>DB: persistir cuando corresponde
     API->>IO: emitir estado/evento
     IO->>UI: actualizacion en tiempo real
+    UI->>API: GET actividad de la sesion
+    API->>DB: eventos acotados + conteo total
+    API-->>UI: page returned/total/truncated/limit
     API->>API: expirar estado efimero
     API->>IO: emitir estado corregido
 ```
@@ -117,6 +120,7 @@ sequenceDiagram
 - Las observaciones de tracking deben incluir `caseId` y `trackingSessionId`; el operador y la autorizacion pertenecen a la sesion durable.
 - Los detalles persistidos de mensajes/receipts pueden incluir `messageIdHash`, pero no el ID crudo ni contenido del mensaje.
 - El reporte de contacto conserva `caseId`, `trackingSessionId`, la lista pasiva atribuible y la duracion calculada con señales pasivas aunque no exista RTT.
+- La API de actividad y los reportes declaran `returned`, `total`, `truncated` y `limit`; el total no se infiere del tamano de una pagina acotada.
 - El Evidence Package 1.1 incorpora `observedActivity`; el ZIP materializa `observed-activity.json` y `annexes/observed-activity.csv`, ambos cubiertos por hashes de integridad.
 - Un hash se calcula sobre una representacion canonica o archivo concreto; cualquier regeneracion produce un nuevo hash.
 - La procedencia debe viajar con el dato, no depender de memoria del operador.

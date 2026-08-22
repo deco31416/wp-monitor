@@ -5,6 +5,7 @@ import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import { buildRuntimeHealth, localCaptureGuard, registerRuntimeRoutes } from '../src/routes/runtime.js';
 import { buildRuntimeConfig } from '../src/runtime.js';
+import { SOFTWARE_VERSION } from '../src/version.js';
 
 async function withServer(app: express.Express, run: (baseUrl: string) => Promise<void>) {
     const server: Server = app.listen(0);
@@ -33,6 +34,7 @@ test('GET /api/runtime-capabilities returns Railway dashboard capabilities over 
         const response = await fetch(`${baseUrl}/api/runtime-capabilities`);
         assert.equal(response.status, 200);
         assert.deepEqual(await response.json(), {
+            version: SOFTWARE_VERSION,
             mode: 'railway-dashboard',
             localCapture: false,
             localCaptureAvailable: false,
@@ -62,6 +64,7 @@ test('buildRuntimeHealth marks service degraded without leaking secrets', () => 
     );
 
     assert.equal(health.status, 'degraded');
+    assert.equal(health.version, SOFTWARE_VERSION);
     assert.deepEqual(health.degradedReasons, ['mongodb_disconnected', 'redis_disconnected']);
     assert.equal(health.dependencies.mongodb.configured, true);
     assert.equal(health.dependencies.mongodb.connected, false);

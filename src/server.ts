@@ -51,6 +51,7 @@ import { extractCookieValue, getSessionCookieName, isTrustedRequestOrigin } from
 import { OperatorAuthService } from './operator-auth.js';
 import { createApiOriginGuard, createApiSessionGuard, registerAuthRoutes } from './routes/auth.js';
 import { buildPageMetadata } from './page-metadata.js';
+import { SOFTWARE_VERSION } from './version.js';
 
 const originalConsoleLog = console.log.bind(console);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -129,7 +130,7 @@ const PROBE_MAX_BACKOFF_MS = parsePositiveInteger(process.env.PROBE_MAX_BACKOFF_
 const LEGACY_DASHBOARD_TOKEN = (process.env.DASHBOARD_TOKEN || '').trim();
 const ENABLE_SWAGGER = process.env.ENABLE_SWAGGER === 'true' && NODE_ENV !== 'production';
 const TRUST_PROXY = resolveTrustProxy(process.env);
-const APP_VERSION = process.env.npm_package_version || '2.9.1';
+const APP_VERSION = SOFTWARE_VERSION;
 const CHECKIN_SUBMIT_RATE_WINDOW_MS = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_WINDOW_MS, 10 * 60_000, 60_000);
 const CHECKIN_SUBMIT_RATE_MAX_PER_IP = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_MAX_PER_IP, 60);
 const CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP = parsePositiveInteger(process.env.CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP, 8);

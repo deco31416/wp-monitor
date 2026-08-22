@@ -16,8 +16,11 @@ flowchart LR
     Classify[Clasificar por fuente]
     Ephemeral[Estado efimero con expiracion]
     Durable[(MongoDB)]
+    Count[Conteo total por sesion]
+    ActivityAPI[REST page: returned total truncated limit]
     Socket[Socket.IO]
-    UI[Contact Card y paneles]
+    UI[Grafica, timeline y aviso parcial]
+    FullReport[Reporte ampliado hasta 5000 eventos]
 
     RTT --> Normalize
     Presence --> Normalize
@@ -29,7 +32,12 @@ flowchart LR
     Classify --> Durable
     Ephemeral --> Socket
     Durable --> Socket
+    Durable --> Count --> ActivityAPI
+    Durable --> ActivityAPI
+    Durable --> FullReport
     Socket --> UI
+    ActivityAPI --> UI
+    FullReport --> UI
     Ephemeral -. timeout .-> Socket
 ```
 
@@ -41,7 +49,8 @@ flowchart LR
 - `composing` y `recording` caducan aunque no llegue un evento de pausa.
 - Llamadas conservan direccion y ciclo; no se suman silenciosamente a RTT.
 - El dashboard reconstruye historial por REST y recibe actualidad por Socket.IO.
+- La vista carga hasta 200 eventos y declara `returned`, `total`, `truncated` y `limit`; el reporte ampliado declara su propio limite de 5000.
 
 ## Fallo que evita
 
-Sin expiracion, `Escribiendo` puede quedar congelado. Sin `source`, las estadisticas pueden mezclar senales incompatibles y producir porcentajes falsos.
+Sin expiracion, `Escribiendo` puede quedar congelado. Sin `source`, las estadisticas pueden mezclar senales incompatibles y producir porcentajes falsos. Sin metadata de pagina, una muestra parcial podria presentarse incorrectamente como historial completo.

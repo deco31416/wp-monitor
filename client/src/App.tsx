@@ -18,6 +18,7 @@ export interface ConnectionState {
 }
 
 interface RuntimeCapabilities {
+    version: string;
     mode: string;
     localCapture: boolean;
     localCaptureAvailable: boolean;
@@ -154,6 +155,7 @@ function App() {
                 }
             })
             .catch(() => setCapabilities({
+                version: 'unknown',
                 mode: 'unavailable',
                 localCapture: false,
                 localCaptureAvailable: false,
@@ -345,6 +347,11 @@ function App() {
                         <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
                             <div className="w-2 h-2 rounded-full bg-success animate-pulse-slow" />
                             <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WhatsApp conectado</span>
+                        </div>
+                    )}
+                    {capabilities?.version && capabilities.version !== 'unknown' && (
+                        <div className={`text-[10px] text-txt-dim ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                            Versión {capabilities.version}
                         </div>
                     )}
                 </div>

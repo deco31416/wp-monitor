@@ -34,7 +34,7 @@ El endpoint devuelve `503` cuando existe una razon degradada. Un monitor debe le
 
 ## Capabilities
 
-`GET /api/runtime-capabilities` es contrato de funcion, no health. Puede indicar correctamente `networkMonitor: false` en un backend totalmente operativo de Railway.
+`GET /api/runtime-capabilities` es contrato de funcion, no health. Publica la version ejecutada y puede indicar correctamente `networkMonitor: false` en un backend totalmente operativo de Railway. `/api/health` repite la version en la raiz para correlacionar incidentes, logs y artefactos.
 
 ## IDs de correlacion
 

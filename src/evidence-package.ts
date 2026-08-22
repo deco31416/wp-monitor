@@ -1,20 +1,7 @@
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
 import { countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
 import { buildPageMetadata } from './page-metadata.js';
-
-function resolveSoftwareVersion(): string {
-    if (process.env.npm_package_version) return process.env.npm_package_version;
-    try {
-        const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-        if (typeof manifest.version === 'string' && manifest.version.trim()) return manifest.version.trim();
-    } catch {
-        // Keep evidence generation available if packaging omits package.json.
-    }
-    return 'unknown';
-}
-
-const SOFTWARE_VERSION = resolveSoftwareVersion();
+import { SOFTWARE_VERSION } from './version.js';
 
 export function hashJson(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(value, null, 2)).digest('hex');

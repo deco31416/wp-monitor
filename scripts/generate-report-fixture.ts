@@ -7,6 +7,7 @@ import {
     renderFinalCaseReportHtml,
     renderFinalCaseReportPdf,
 } from '../src/evidence-package.js';
+import { SOFTWARE_VERSION } from '../src/version.js';
 
 const OUTPUT_DIRECTORY = resolve('.runtime-logs/report-fixture');
 
@@ -19,7 +20,7 @@ function syntheticEvidencePackage(): any {
             version: '1.1',
             software: {
                 name: 'WP MONITOR',
-                version: '2.9.4',
+                version: SOFTWARE_VERSION,
                 developedBy: 'WP MONITOR',
             },
             caseId,

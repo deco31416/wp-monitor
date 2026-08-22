@@ -18,6 +18,7 @@ flowchart LR
 
     WhatsApp[WhatsApp]
     Mongo[(MongoDB)]
+    Redis[(Redis)]
     Adapter[Interfaz de red local]
     Geo[DB-IP e ip-api]
     Browser[APIs del navegador]
@@ -26,6 +27,7 @@ flowchart LR
     Dashboard <--> Backend
     Backend <--> WhatsApp
     Backend <--> Mongo
+    Backend <--> Redis
     Backend --> Adapter
     Backend --> Geo
     Participant --> Browser --> Backend
@@ -36,6 +38,7 @@ flowchart LR
 
 - El operador controla el dashboard, pero la captura ocurre en el backend local autorizado.
 - WhatsApp y los proveedores GeoIP son dependencias externas; WP MONITOR no controla su disponibilidad ni exactitud.
+- MongoDB conserva identidad y evidencia durable; Redis conserva sesiones opacas y contadores compartidos con TTL.
 - El participante entrega datos de Check-In mediante APIs del navegador y consentimiento.
 - El auditor recibe artefactos derivados; los hashes permiten verificar integridad desde su generacion.
 

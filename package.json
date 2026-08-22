@@ -1,6 +1,6 @@
 {
   "name": "@deco31416/wp-monitor",
-  "version": "2.9.4",
+  "version": "3.0.0",
   "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=24.19.0 <25"

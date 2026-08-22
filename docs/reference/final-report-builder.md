@@ -28,6 +28,8 @@ El informe no reemplaza el `Evidence Package`; lo resume y referencia sus hashes
   - Incluye anexos CSV en `annexes/` para auditoria, evidencias, actividad pasiva, estadisticas tecnicas, analisis de llamada, IPs candidatas y capturas de red.
   - Incluye `annexes/csv-integrity.json` con SHA-256 por CSV.
 
+Los reportes conservan metadata `returned`, `total`, `truncated` y `limit` por target. El JSON y las representaciones humanas deben advertir cuando el limite de 5000 eventos deja un anexo parcial; el conteo total nunca se deriva solo del numero de filas exportadas.
+
 ## Estructura UX del HTML
 
 1. Portada con caso, estado, fecha, version y marca.

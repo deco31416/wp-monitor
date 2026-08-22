@@ -83,6 +83,10 @@ Define modelo y renderizado de landing, consentimiento, metadata del cliente y r
 
 Construye estructura canonica, manifiesto, hashes y ZIP. Debe ser determinista en contenido canonico y excluir secretos. Los tiempos de exportacion pueden hacer distinto un paquete posterior.
 
+### `src/page-metadata.ts` y `src/version.ts`
+
+`page-metadata.ts` normaliza `returned`, `total`, `truncated` y `limit` para que API, UI e informes no contradigan una pagina parcial. `version.ts` resuelve una unica version desde el entorno de ejecucion o el `package.json` raiz; startup, User-Agent, fixtures e informes deben reutilizarla.
+
 ### `src/validation.ts`
 
 Frontera de entrada para Case ID, JID, limites, texto, estados y listas. Validar en un solo lugar evita que REST y Socket.IO acepten formatos diferentes.
@@ -115,7 +119,8 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | `Cases.tsx` | Expedientes y exports finales | Cases/Reports API |
 | `Dashboard.tsx` | Orquestar contactos y paneles | REST + Socket.IO |
 | `ContactCard.tsx` | Estado actual y resumen | live state, tracker update |
-| `ActivityLogPanel.tsx` | Bitacora y exportacion | activity/report endpoints |
+| `ActivityLogPanel.tsx` | Timeline y grafica horaria con aviso de pagina parcial | activity endpoint |
+| `ActivityJournalPanel.tsx` | Bitacora tecnica/pasiva y exportacion rapida | activity/report endpoints |
 | `StatsPanel.tsx` | Cobertura y tendencias | stats |
 | `IntelPanel.tsx` | Rutina, sesiones, heatmap | intel endpoints |
 | `ProfilePanel.tsx` | Perfil y OPSEC | profile/privacy APIs |

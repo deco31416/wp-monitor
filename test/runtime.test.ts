@@ -10,6 +10,7 @@ import {
     resolveLocalCaptureEnabled,
     validateProductionSecurity,
 } from '../src/runtime.js';
+import { SOFTWARE_VERSION } from '../src/version.js';
 
 test('resolves Railway mode from Railway environment name and disables local capture by default', () => {
     const env = { RAILWAY_ENVIRONMENT_NAME: 'production' };
@@ -19,6 +20,7 @@ test('resolves Railway mode from Railway environment name and disables local cap
     assert.equal(resolveDeploymentMode(env), 'railway-dashboard');
     assert.equal(resolveLocalCaptureEnabled(env), false);
     assert.deepEqual(capabilities, {
+        version: SOFTWARE_VERSION,
         mode: 'railway-dashboard',
         localCapture: false,
         localCaptureAvailable: false,

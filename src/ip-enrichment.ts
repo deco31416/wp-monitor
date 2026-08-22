@@ -2,6 +2,7 @@ import { isPrivateIP } from './meta-ip-ranges.js';
 import type { CallAnalysisResult, CandidateIP } from './call-analyzer.js';
 import { scoreCandidate } from './call-scoring.js';
 import type { CandidateConfidence, NetworkIntelligenceCategory } from './call-scoring.js';
+import { SOFTWARE_VERSION } from './version.js';
 
 export interface IpEnrichment {
     ip: string;
@@ -410,7 +411,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
         return await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': 'WP-MONITOR/2.9.1 ip-enrichment',
+                'User-Agent': `WP-MONITOR/${SOFTWARE_VERSION} ip-enrichment`,
             },
         });
     } finally {

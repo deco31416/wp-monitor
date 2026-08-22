@@ -1,6 +1,6 @@
 # Arquitectura
 
-Documento canonico de arquitectura de WP MONITOR `2.9.4`, inspirado en los puntos de vista de ISO/IEC/IEEE 42010. Describe el sistema implementado; las ideas futuras permanecen en el roadmap interno.
+Documento canonico de arquitectura de WP MONITOR `3.0.0`, inspirado en los puntos de vista de ISO/IEC/IEEE 42010. Describe el sistema implementado; las ideas futuras permanecen en el roadmap interno.
 
 ## Proposito y alcance
 
@@ -42,6 +42,7 @@ flowchart LR
     API[Backend Express y Socket.IO]
     WA[WhatsApp mediante Baileys]
     DB[(MongoDB)]
+    Redis[(Redis)]
     Capture[Npcap o libpcap]
     Geo[DB-IP e ip-api]
     Files[Sesion, uploads y reportes]
@@ -50,6 +51,7 @@ flowchart LR
     Browser <--> API
     API <--> WA
     API <--> DB
+    API <--> Redis
     API <--> Capture
     API --> Geo
     API <--> Files

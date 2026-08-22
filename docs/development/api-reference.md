@@ -21,8 +21,8 @@ Los errores de validacion responden `400`; autenticacion `401`; recurso ausente 
 
 | Metodo | Ruta | Uso |
 | --- | --- | --- |
-| GET | `/api/runtime-capabilities` | Modo y funciones disponibles |
-| GET | `/api/health` | Estado de MongoDB, Redis, WhatsApp y captura |
+| GET | `/api/runtime-capabilities` | Version, modo y funciones disponibles |
+| GET | `/api/health` | Version y estado de MongoDB, Redis, WhatsApp y captura |
 | GET | `/docs` | Swagger solo fuera de produccion y con flag |
 | GET | `/docs/openapi.json` | Especificacion OpenAPI bajo la misma condicion |
 

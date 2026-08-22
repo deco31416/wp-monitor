@@ -1,3 +1,5 @@
+import { SOFTWARE_VERSION } from './version.js';
+
 export interface RuntimeConfig {
     deploymentMode: string;
     localCaptureEnabled: boolean;
@@ -8,6 +10,7 @@ export interface RuntimeConfig {
 export type TrustProxySetting = boolean | number | string;
 
 export interface RuntimeCapabilities {
+    version: string;
     mode: string;
     localCapture: boolean;
     localCaptureAvailable: boolean;
@@ -138,6 +141,7 @@ export function buildRuntimeCapabilities(
 ): RuntimeCapabilities {
     const captureOperational = config.localCaptureEnabled && localCaptureAvailable;
     return {
+        version: SOFTWARE_VERSION,
         mode: config.deploymentMode,
         localCapture: config.localCaptureEnabled,
         localCaptureAvailable: captureOperational,
