@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Copy, ExternalLink, MapPin, Pencil, Plus, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { API_URL, authFetch } from '../auth';
 import { CaseRecord } from '../types';
-import { socket } from '../App';
+import { socket } from '../socket';
 
 interface CheckInItem {
     token: string;
@@ -129,10 +129,16 @@ const STATUS_CLASS: Record<CheckInItem['status'], string> = {
 const DEFAULT_CONSENT_GPS = 'Acepto enviar este check-in autorizado. Entiendo que se registrara mi IP publica observada por el servidor, sistema operativo, navegador, tipo de dispositivo, pantalla, idioma, zona horaria, datos basicos de red del navegador y, si doy permiso, mi ubicacion aproximada.';
 const DEFAULT_CONSENT_NO_GPS = 'Acepto enviar este check-in autorizado. Entiendo que se registrara mi IP publica observada por el servidor, sistema operativo, navegador, tipo de dispositivo, pantalla, idioma, zona horaria y datos basicos de red del navegador.';
 
-async function readJson<T = any>(response: Response): Promise<T> {
+interface ApiResponse {
+    details?: string[];
+    error?: string;
+    url?: string;
+}
+
+async function readJson<T>(response: Response): Promise<T> {
     const text = await response.text();
     try {
-        return text ? JSON.parse(text) : {} as T;
+        return (text ? JSON.parse(text) : {}) as T;
     } catch {
         const short = text.replace(/\s+/g, ' ').slice(0, 160);
         throw new Error(`HTTP ${response.status}: respuesta no JSON (${short || 'sin contenido'})`);
@@ -141,7 +147,7 @@ async function readJson<T = any>(response: Response): Promise<T> {
 
 export function CheckIns() {
     const [items, setItems] = useState<CheckInItem[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [cases, setCases] = useState<CaseRecord[]>([]);
     const [caseMode, setCaseMode] = useState<'existing' | 'new'>('existing');
@@ -214,8 +220,9 @@ export function CheckIns() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ dataUrl }),
         });
-        const data = await readJson(res);
+        const data = await readJson<ApiResponse>(res);
         if (!res.ok) throw new Error(data.details?.join(', ') || data.error || `HTTP ${res.status}`);
+        if (!data.url) throw new Error('La API no devolvio la URL de la imagen');
         return data.url;
     };
 
@@ -238,7 +245,7 @@ export function CheckIns() {
         try {
             const res = await authFetch(`${API_URL}/api/cases?limit=100`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await readJson(res);
+            const data = await readJson<CaseRecord[]>(res);
             const activeCases = Array.isArray(data)
                 ? data.filter((item: CaseRecord) => item.status !== 'closed' && item.status !== 'archived')
                 : [];
@@ -259,12 +266,10 @@ export function CheckIns() {
     }, []);
 
     const fetchItems = useCallback(async () => {
-        setLoading(true);
-        setError(null);
         try {
             const res = await authFetch(`${API_URL}/api/checkins?limit=50`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await readJson(res);
+            const data = await readJson<CheckInItem[]>(res);
             setItems(Array.isArray(data) ? data : []);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'No se pudieron cargar check-ins');
@@ -274,9 +279,22 @@ export function CheckIns() {
     }, []);
 
     useEffect(() => {
-        fetchCases();
-        fetchItems();
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (cancelled) return;
+            void fetchCases();
+            void fetchItems();
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [fetchCases, fetchItems]);
+
+    const refreshItems = () => {
+        setLoading(true);
+        setError(null);
+        void fetchItems();
+    };
 
     useEffect(() => {
         const refresh = (event?: { action?: string; timestamp?: string }) => {
@@ -342,8 +360,9 @@ export function CheckIns() {
                     redirectUrl: form.redirectUrl.trim() || null,
                 }),
             });
-            const data = await readJson(res);
+            const data = await readJson<ApiResponse>(res);
             if (!res.ok) throw new Error(data.details?.join(', ') || data.error || `HTTP ${res.status}`);
+            if (!data.url) throw new Error('La API no devolvio la URL del check-in');
             setCreatedUrl(data.url);
             setForm(prev => ({ ...prev, label: '', targetName: '', targetJid: '' }));
             await fetchItems();
@@ -416,7 +435,7 @@ export function CheckIns() {
                     redirectUrl: editForm.redirectUrl.trim() || null,
                 }),
             });
-            const data = await readJson(res);
+            const data = await readJson<ApiResponse>(res);
             if (!res.ok) throw new Error(data.details?.join(', ') || data.error || `HTTP ${res.status}`);
             setEditingToken(null);
             await fetchItems();
@@ -433,7 +452,7 @@ export function CheckIns() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'revoke' }),
             });
-            const data = await readJson(res);
+            const data = await readJson<ApiResponse>(res);
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
             await fetchItems();
         } catch (err) {
@@ -447,7 +466,7 @@ export function CheckIns() {
             const res = await authFetch(`${API_URL}/api/checkins/${encodeURIComponent(item.token)}`, {
                 method: 'DELETE',
             });
-            const data = await readJson(res);
+            const data = await readJson<ApiResponse>(res);
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
             await fetchItems();
         } catch (err) {
@@ -596,7 +615,7 @@ export function CheckIns() {
                         {lastRealtimeUpdate ? `Actualizado ${formatTime(lastRealtimeUpdate)}` : 'Tiempo real activo'}
                     </span>
                 </div>
-                <button onClick={fetchItems} className="btn-secondary flex items-center gap-2" type="button">
+                <button onClick={refreshItems} className="btn-secondary flex items-center gap-2" type="button">
                     <RefreshCw size={15} />
                     Refrescar
                 </button>

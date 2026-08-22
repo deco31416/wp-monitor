@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Code, Download, FileDown, FileText, Globe } from 'lucide-react';
 import clsx from 'clsx';
+import type { ObservedActivityEvent } from '../types';
 
 interface ActivityEntry {
     state: string;
@@ -21,6 +22,9 @@ interface JournalEntry {
 
 interface ActivityJournalPanelProps {
     activity: ActivityEntry[];
+    observedEvents: ObservedActivityEvent[];
+    observedEventTotal?: number;
+    observedEventsTruncated?: boolean;
     jid: string;
     displayNumber: string;
     privacyMode: boolean;
@@ -29,8 +33,15 @@ interface ActivityJournalPanelProps {
 
 const LOG_PAGE_SIZE = 15;
 
+function isNoAckState(value: string): boolean {
+    return value === 'NO_ACK' || value === 'OFFLINE';
+}
+
 export function ActivityJournalPanel({
     activity,
+    observedEvents,
+    observedEventTotal = observedEvents.length,
+    observedEventsTruncated = false,
     jid,
     displayNumber,
     privacyMode,
@@ -46,8 +57,22 @@ export function ActivityJournalPanel({
             contact: privacyMode ? '***' : displayNumber,
             jid: privacyMode ? '***' : jid,
             generatedAt: new Date().toISOString(),
-            totalEvents: entries.length,
-            events: entries.map(entry => ({
+            summary: {
+                observedEvents: observedEvents.length,
+                observedEventsAvailable: observedEventTotal,
+                observedEventsTruncated,
+                technicalEvents: entries.length,
+                totalEvents: observedEvents.length + entries.length,
+                rttAvailable: entries.some(entry => entry.rtt > 0 && !isNoAckState(entry.state)),
+            },
+            observedActivity: observedEvents.map(entry => ({
+                timestampUtc: entry.timestampUtc,
+                source: entry.source,
+                type: entry.type,
+                label: entry.label,
+                confidence: entry.confidence,
+            })),
+            technicalMeasurements: entries.map(entry => ({
                 utc: entry.utc,
                 local: entry.local,
                 date: entry.date,
@@ -63,7 +88,7 @@ export function ActivityJournalPanel({
     };
 
     const exportHtml = () => {
-        const html = buildActivityReportHtml(entries, {
+        const html = buildActivityReportHtml(entries, observedEvents, {
             contact: privacyMode ? '***' : displayNumber,
             jid: privacyMode ? '***' : jid,
             mode: 'html',
@@ -75,7 +100,7 @@ export function ActivityJournalPanel({
     };
 
     const exportPdf = () => {
-        const html = buildActivityReportHtml(entries, {
+        const html = buildActivityReportHtml(entries, observedEvents, {
             contact: privacyMode ? '***' : displayNumber,
             jid: privacyMode ? '***' : jid,
             mode: 'print',
@@ -94,8 +119,10 @@ export function ActivityJournalPanel({
             <div className="px-5 py-3 border-b border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                     <FileText size={14} className="text-accent" />
-                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitacora de Actividad</h5>
-                    <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{entries.length} eventos</span>
+                    <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Bitácora de sesión</h5>
+                    <span className="badge-neutral !text-[9px] !py-0 !px-1.5">
+                        {observedEventsTruncated ? `${observedEvents.length} de ${observedEventTotal}` : observedEvents.length} observados · {entries.length} técnicos
+                    </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                     <button onClick={exportJson} className="btn-ghost !text-[10px] !py-1 !px-2 flex items-center gap-1" title="Exportar JSON">
@@ -113,22 +140,25 @@ export function ActivityJournalPanel({
                         className="btn-ghost !text-[10px] !py-1 !px-2 flex items-center gap-1"
                         title="Reporte completo"
                     >
-                        <Download size={10} /> Full
+                        <Download size={10} /> Completo
                     </button>
                 </div>
             </div>
 
+            {observedEventsTruncated && (
+                <div className="border-b border-warning/30 bg-warning/10 px-5 py-2 text-[11px] text-warning">
+                    Esta exportación rápida incluye {observedEvents.length} de {observedEventTotal} señales. Usa “Completo” para el reporte ampliado de la sesión.
+                </div>
+            )}
+
             {entries.length === 0 ? (
-                <div className="p-4 space-y-3">
-                    {[...Array(5)].map((_, index) => (
-                        <div key={index} className="flex items-center gap-3 animate-pulse">
-                            <div className="w-16 h-4 bg-surface-hover rounded" />
-                            <div className="w-16 h-4 bg-surface-hover rounded" />
-                            <div className="w-20 h-4 bg-surface-hover rounded" />
-                            <div className="flex-1 h-4 bg-surface-hover rounded" />
-                        </div>
-                    ))}
-                    <p className="text-center text-[10px] text-txt-dim mt-2">Esperando cambios de estado...</p>
+                <div className="p-6 text-center">
+                    <p className="text-sm font-medium text-txt-secondary">Sin mediciones técnicas en esta sesión</p>
+                    <p className="text-xs text-txt-dim mt-1">
+                        {observedEvents.length > 0
+                            ? `La bitácora contiene ${observedEvents.length} evento(s) de actividad real, incluidos en las exportaciones.`
+                            : 'El seguimiento pasivo permanece activo sin generar tráfico de prueba.'}
+                    </p>
                 </div>
             ) : (
                 <>
@@ -166,9 +196,9 @@ export function ActivityJournalPanel({
 function JournalRow({ entry }: { entry: JournalEntry }) {
     const rowColor = entry.state.includes('Online') ? 'text-success'
         : entry.state === 'Standby' ? 'text-warning'
-        : entry.state === 'OFFLINE' ? 'text-danger' : 'text-txt-secondary';
+        : isNoAckState(entry.state) ? 'text-warning' : 'text-txt-secondary';
     const bgHover = entry.state.includes('Online') ? 'hover:bg-success/5'
-        : entry.state === 'OFFLINE' ? 'hover:bg-danger/5'
+        : isNoAckState(entry.state) ? 'hover:bg-warning/5'
         : 'hover:bg-surface-hover';
 
     return (
@@ -278,26 +308,27 @@ function toDateStr(ts: string | number) {
 function describeState(state: string, rtt: number): string {
     if (state.includes('Online')) return `El contacto se CONECTO - Dispositivo activo (respuesta: ${rtt}ms)`;
     if (state === 'Standby') return `El contacto paso a ESPERA - App abierta en segundo plano (respuesta: ${rtt}ms)`;
-    if (state === 'OFFLINE') return 'El contacto se DESCONECTO - No hay actividad detectada';
+    if (isNoAckState(state)) return 'No se recibió una confirmación compatible; resultado no concluyente';
     return `Estado cambiado a ${state} (respuesta: ${rtt}ms)`;
 }
 
 function describeStateShort(state: string): string {
     if (state.includes('Online')) return 'CONECTADO';
     if (state === 'Standby') return 'EN ESPERA';
-    if (state === 'OFFLINE') return 'DESCONECTADO';
+    if (isNoAckState(state)) return 'NO CONCLUYENTE';
     return state;
 }
 
 function stateColor(state: string, print = false): string {
     if (state.includes('Online')) return print ? '#1faa59' : '#25d366';
     if (state === 'Standby') return print ? '#ca8a04' : '#eab308';
-    if (state === 'OFFLINE') return print ? '#dc2626' : '#ef4444';
+    if (isNoAckState(state)) return print ? '#ca8a04' : '#eab308';
     return print ? '#64748b' : '#94a3b8';
 }
 
 function buildActivityReportHtml(
     entries: JournalEntry[],
+    observedEvents: ObservedActivityEvent[],
     options: { contact: string; jid: string; mode: 'html' | 'print' },
 ): string {
     const generatedAt = new Date();
@@ -315,8 +346,21 @@ function buildActivityReportHtml(
         </tr>`;
     }).join('\n');
     const emptyRows = entries.length === 0
-        ? '<tr><td colspan="6" class="empty">Sin eventos registrados para este contacto.</td></tr>'
+        ? '<tr><td colspan="6" class="empty">Sin mediciones técnicas en esta sesión.</td></tr>'
         : rows;
+    const observedRows = observedEvents.length > 0
+        ? observedEvents.map((entry, index) => {
+            const date = new Date(entry.timestamp);
+            return `<tr>
+                <td class="idx">${index + 1}</td>
+                <td class="date">${escapeHtml(date.toLocaleDateString('es-CO'))}</td>
+                <td class="time"><strong>${escapeHtml(date.toLocaleTimeString('es-CO'))}</strong><span>${escapeHtml(entry.timestampUtc)} UTC</span></td>
+                <td>${escapeHtml(observedSourceLabel(entry.source))}</td>
+                <td><span class="state" style="color:#16a34a;border-color:#16a34a33;background:#16a34a12">${escapeHtml(entry.label)}</span></td>
+                <td class="desc">Confianza ${escapeHtml(observedConfidenceLabel(entry.confidence))}</td>
+            </tr>`;
+        }).join('\n')
+        : '<tr><td colspan="6" class="empty">Sin actividad observable atribuible a esta sesión.</td></tr>';
 
     return `<!DOCTYPE html>
 <html lang="es">
@@ -359,22 +403,30 @@ function buildActivityReportHtml(
   <main class="page">
     <section class="hero">
       <div class="brand">WP MONITOR</div>
-      <h1>Bitacora de Actividad</h1>
-      <p class="subtitle">Registro cronologico de cambios observados para el contacto ${escapeHtml(options.contact)}.</p>
+      <h1>Bitácora de Sesión</h1>
+      <p class="subtitle">Actividad observada y mediciones técnicas del contacto ${escapeHtml(options.contact)}.</p>
     </section>
     <section class="meta-grid" aria-label="Resumen">
       <div class="metric"><span>Contacto</span><strong>${escapeHtml(options.contact)}</strong></div>
       <div class="metric"><span>JID</span><strong style="font-size:13px;overflow-wrap:anywhere">${escapeHtml(options.jid)}</strong></div>
-      <div class="metric"><span>Eventos</span><strong>${entries.length}</strong></div>
-      <div class="metric"><span>Rango</span><strong style="font-size:13px">${escapeHtml(summary.range)}</strong></div>
+      <div class="metric"><span>Señales observadas</span><strong>${observedEvents.length}</strong></div>
+      <div class="metric"><span>Intentos técnicos</span><strong>${entries.length}</strong></div>
     </section>
     <section class="meta-grid" aria-label="Distribucion">
       <div class="metric"><span>Conectado</span><strong>${summary.online}</strong></div>
       <div class="metric"><span>En espera</span><strong>${summary.standby}</strong></div>
-      <div class="metric"><span>Desconectado</span><strong>${summary.offline}</strong></div>
-      <div class="metric"><span>RTT promedio</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
+      <div class="metric"><span>No concluyentes</span><strong>${summary.noAck}</strong></div>
+      <div class="metric"><span>Latencia confirmada</span><strong>${summary.averageRtt ? `${summary.averageRtt} ms` : '-'}</strong></div>
     </section>
-    <p class="note">Lectura tecnica: estos eventos describen actividad observada por RTT y cambios de estado. No sustituyen corroboracion externa ni prueban por si solos identidad, ubicacion exacta o titularidad del dispositivo.</p>
+    <p class="note">Lectura técnica: las señales observadas documentan eventos atribuibles a esta sesión. Las mediciones RTT se presentan por separado y un intento no concluyente no prueba actividad o inactividad. Ningún registro acredita por sí solo identidad, ubicación exacta o titularidad del dispositivo.</p>
+    <h2>Actividad observada</h2>
+    <section class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Fuente</th><th>Evento</th><th>Calidad</th></tr></thead>
+        <tbody>${observedRows}</tbody>
+      </table>
+    </section>
+    <h2 style="margin-top:22px">Mediciones técnicas</h2>
     <section class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Estado</th><th>RTT</th><th>Descripcion</th></tr></thead>
@@ -383,23 +435,43 @@ function buildActivityReportHtml(
     </section>
     <footer class="footer">
       <span>Generado: ${escapeHtml(generatedAt.toLocaleString('es-CO'))}</span>
-      <span>WP MONITOR · Activity Journal</span>
+      <span>WP MONITOR · Bitácora de sesión</span>
     </footer>
   </main>
 </body>
 </html>`;
 }
 
+function observedSourceLabel(source: ObservedActivityEvent['source']): string {
+    if (source === 'message') return 'Mensaje';
+    if (source === 'receipt') return 'Confirmación';
+    if (source === 'presence') return 'Presencia';
+    return 'Llamada';
+}
+
+function observedConfidenceLabel(confidence: ObservedActivityEvent['confidence']): string {
+    if (confidence === 'high') return 'alta';
+    if (confidence === 'medium') return 'media';
+    if (confidence === 'low') return 'baja';
+    return 'no disponible';
+}
+
 function buildActivitySummary(entries: JournalEntry[]) {
     const online = entries.filter(entry => entry.state.includes('Online')).length;
     const standby = entries.filter(entry => entry.state === 'Standby').length;
-    const offline = entries.filter(entry => entry.state === 'OFFLINE').length;
-    const rtts = entries.map(entry => entry.rtt).filter(value => value > 0);
+    const noAck = entries.filter(entry => isNoAckState(entry.state)).length;
+    const rtts = entries
+        .filter(entry => {
+            const state = entry.state.trim().toUpperCase();
+            return state.startsWith('ONLINE') || state === 'STANDBY' || state.startsWith('CALIBRATING');
+        })
+        .map(entry => entry.rtt)
+        .filter(value => value > 0);
     const averageRtt = rtts.length ? Math.round(rtts.reduce((sum, value) => sum + value, 0) / rtts.length) : 0;
     const last = entries[0];
     const first = entries[entries.length - 1];
     const range = first && last ? `${first.date} ${first.local} - ${last.date} ${last.local}` : '-';
-    return { online, standby, offline, averageRtt, range };
+    return { online, standby, noAck, averageRtt, range };
 }
 
 function escapeHtml(value: unknown): string {

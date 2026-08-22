@@ -58,10 +58,10 @@ Un evento faltante se documenta; no se inventa ni se elimina evidencia para mejo
 | Salida | Audiencia | Uso |
 | --- | --- | --- |
 | JSON de auditoria | Tecnica | Eventos y hash canonico |
-| Bitacora HTML/PDF | Operativa | Actividad de contacto |
+| Bitacora HTML/PDF | Operativa | Señales pasivas y mediciones tecnicas separadas para la sesion activa |
 | Final JSON | Integracion | Caso completo estructurado |
-| Final HTML/PDF | Revision humana | Informe formal del caso |
-| Evidence Package ZIP | Archivo/auditoria | Manifiesto, datos, anexos y hashes |
+| Final HTML/PDF | Revision humana | Informe formal con timeline pasivo, medicion tecnica, auditoria y hallazgos |
+| Evidence Package ZIP | Archivo/auditoria | Manifiesto, actividad pasiva JSON/CSV, datos, anexos y hashes |
 
 ## Revision antes de entregar
 

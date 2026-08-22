@@ -2,6 +2,7 @@ import { isPrivateIP } from './meta-ip-ranges.js';
 import type { CallAnalysisResult, CandidateIP } from './call-analyzer.js';
 import { scoreCandidate } from './call-scoring.js';
 import type { CandidateConfidence, NetworkIntelligenceCategory } from './call-scoring.js';
+import { SOFTWARE_VERSION } from './version.js';
 
 export interface IpEnrichment {
     ip: string;
@@ -11,29 +12,29 @@ export interface IpEnrichment {
         provider: 'db-ip' | 'ip-api';
         sourceUrl: string;
         status: 'success' | 'fail' | 'skipped';
-        message?: string;
+        message?: string | undefined;
         fetchedAt: string;
-    }>;
+    }> | undefined;
     status: 'success' | 'fail' | 'skipped';
-    message?: string;
-    continent?: string;
-    country?: string;
-    countryCode?: string;
-    region?: string;
-    regionName?: string;
-    city?: string;
-    postalCode?: string;
-    lat?: number;
-    lon?: number;
-    timezone?: string;
-    isp?: string;
-    org?: string;
-    asn?: number | null;
-    asName?: string;
-    mobile?: boolean;
-    proxy?: boolean;
-    hosting?: boolean;
-    mapsUrl?: string;
+    message?: string | undefined;
+    continent?: string | undefined;
+    country?: string | undefined;
+    countryCode?: string | undefined;
+    region?: string | undefined;
+    regionName?: string | undefined;
+    city?: string | undefined;
+    postalCode?: string | undefined;
+    lat?: number | undefined;
+    lon?: number | undefined;
+    timezone?: string | undefined;
+    isp?: string | undefined;
+    org?: string | undefined;
+    asn?: number | null | undefined;
+    asName?: string | undefined;
+    mobile?: boolean | undefined;
+    proxy?: boolean | undefined;
+    hosting?: boolean | undefined;
+    mapsUrl?: string | undefined;
     fetchedAt: string;
     cacheTtlSec: number;
     accuracyNote: string;
@@ -188,6 +189,7 @@ export function applyEnrichmentClassification(candidate: CandidateIP, enrichment
                 asn: enrichment.asn ?? candidate.networkIntelligence.asn,
                 org: infrastructure.org,
                 category: infrastructure.category,
+                source: 'enrichment',
                 isDatacenterLikely: true,
                 caution: 'Clasificacion ajustada por enriquecimiento ASN/ISP/ORG. Red cloud/CDN/hosting/proxy observada; no identifica usuario final.',
             },
@@ -217,6 +219,7 @@ export function applyEnrichmentClassification(candidate: CandidateIP, enrichment
                 asn: enrichment.asn ?? candidate.networkIntelligence.asn,
                 org: enrichedOrg,
                 category: 'consumer_isp_or_unknown',
+                source: 'enrichment',
                 isDatacenterLikely: false,
                 caution: 'ASN/ORG enriquecido desde proveedor externo. Puede ser ISP, CGNAT o infraestructura no catalogada; requiere corroboracion externa.',
             },
@@ -239,7 +242,7 @@ function reScoreEnrichedCandidate(candidate: CandidateIP, targetJid: string, dur
         ports: candidate.ports,
         durationSec,
         targetJid,
-        observedCountryCode,
+        observedCountryCode: observedCountryCode ?? null,
     });
 
     return {
@@ -408,7 +411,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
         return await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': 'WP-MONITOR/2.9.1 ip-enrichment',
+                'User-Agent': `WP-MONITOR/${SOFTWARE_VERSION} ip-enrichment`,
             },
         });
     } finally {

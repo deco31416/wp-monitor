@@ -10,18 +10,18 @@ La instalacion paso a paso del driver, dependencias nativas, verificacion de `ca
 
 ### Windows
 
-- Node.js 20 o superior.
+- Node.js 24.19.x.
 - Dependencias del workspace instaladas con `pnpm install --frozen-lockfile` desde la raiz.
-- MongoDB accesible si se requiere persistencia completa y auditoria.
+- MongoDB y Redis accesibles para persistencia, sesiones y limites.
 - Npcap instalado.
 - PowerShell o terminal ejecutada como Administrador para captura de paquetes.
 - WhatsApp Web o WhatsApp Desktop ejecutandose en la misma maquina donde corre la captura.
 
 ### Linux, VM o VPS
 
-- Node.js 20 o superior.
+- Node.js 24.19.x.
 - Dependencias del workspace instaladas con pnpm desde la raiz.
-- MongoDB accesible si se requiere persistencia completa y auditoria.
+- MongoDB y Redis accesibles para persistencia, sesiones y limites.
 - `libpcap` disponible.
 - Permisos `root` o capabilities equivalentes para captura de paquetes.
 - Navegador/sesion WhatsApp Web ejecutandose en la misma maquina, VM o entorno donde se observa el trafico.
@@ -38,16 +38,17 @@ PORT=4000
 PUBLIC_BASE_URL=http://127.0.0.1:4000
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB=activity-tracker
-```
-
-Opcionalmente, proteger dashboard, API y sockets con token:
-
-```env
-DASHBOARD_TOKEN=un-token-largo-y-privado-de-32-caracteres-o-mas
+REDIS_URL=redis://127.0.0.1:6379
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-local
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=use-a-unique-password-with-15-plus-characters
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
+AUTH_SESSION_TTL_SECONDS=28800
 TRUST_PROXY=false
 ```
 
-En `NODE_ENV=production`, `DASHBOARD_TOKEN` es obligatorio y debe tener al menos 32 caracteres. En local puede omitirse para pruebas cerradas.
+La autenticacion no es opcional. En la primera ejecucion se crea un solo operador en MongoDB; despues el usuario y la contrasena se cambian desde **Account**. Editar los valores iniciales no modifica una cuenta existente. Redis debe estar operativo antes de iniciar el backend.
 
 Si se quiere permitir captura automatica vinculada a eventos de llamada, tambien se deben configurar estos campos:
 
@@ -140,7 +141,7 @@ Si `ENABLE_SWAGGER=true` y `NODE_ENV` no es `production`, la documentacion API q
 http://127.0.0.1:4000/docs
 ```
 
-Si `DASHBOARD_TOKEN` esta activo, ingresar el token en la pantalla inicial.
+Ingresa con la cuenta operadora. La instalacion local migrada puede usar inicialmente `admin` y la antigua contrasena local; cambiala desde **Account** y no publiques esos valores.
 
 ## Flujo Operativo
 
@@ -164,8 +165,8 @@ La herramienta tiene varios reportes. No todos significan lo mismo:
 
 | Reporte | Donde se genera | Alcance | Contenido principal | Cuando usarlo |
 |---------|-----------------|---------|---------------------|---------------|
-| **Bitacora de Actividad JSON/HTML/PDF** | Tarjeta del contacto, seccion `Bitacora de Actividad` | Un contacto | Cambios de estado, hora local, UTC, RTT y descripcion legible | Revision rapida de actividad observada |
-| **Full Contact Report** | Boton `Full` del contacto o `/api/report/:jid/download` | Un contacto | Perfil, estadisticas RTT, distribucion de estados, patrones, historial y mediciones recientes | Informe tecnico del contacto monitoreado |
+| **Bitacora de Sesion JSON/HTML/PDF** | Tarjeta del contacto, seccion `Bitacora de sesion` | Sesion activa de un contacto | Señales pasivas con fuente/confianza y mediciones RTT separadas, hora local y UTC | Revision cronologica rapida |
+| **Full Contact Report** | Boton `Completo` del contacto o `/api/report/:jid/download` | Sesion activa de un contacto | Caso/sesion, eventos pasivos, perfil, estadisticas RTT, patrones, historial y mediciones recientes | Informe tecnico completo del contacto monitoreado |
 | **Historial de Llamadas** | Pestana `Llamada` del contacto | Un contacto y sus capturas locales | Mapa observado, paquetes, infraestructura, relays, IPs candidatas/no concluyentes, scoring y limitaciones | Revisar una captura de llamada/interaccion WhatsApp Web autorizada |
 | **Final Case Report JSON/HTML/PDF** | Vista `Cases` o `Audit Trail` | Caso completo | Caso, autorizacion, auditoria, evidencias, actividad, analisis de llamada, hashes y limitaciones | Informe formal de caso |
 | **Evidence Package JSON/ZIP** | Vista `Cases` o `Audit Trail` | Caso completo para archivo | Manifest, caso, auditoria, enlaces de evidencia, analisis, resumen de red, reportes, CSV anexos e integridad SHA-256 | Cadena de custodia, archivo y revision externa |
@@ -277,8 +278,10 @@ El `Evidence Package` incluye manifiesto, caso, enlaces directos de evidencia, e
 
 ### Error 401 o dashboard bloqueado
 
-- Verificar `DASHBOARD_TOKEN`.
-- Volver a iniciar sesion en el dashboard con el token correcto.
+- Confirmar MongoDB y Redis conectados.
+- Volver a iniciar sesion con el usuario vigente; la cuenta puede haber cambiado desde **Account**.
+- Confirmar que el frontend usa un origen presente exactamente en `ALLOWED_ORIGINS`.
+- No usar `Authorization: Bearer`; ese contrato fue retirado.
 
 ### WhatsApp pide QR frecuentemente
 

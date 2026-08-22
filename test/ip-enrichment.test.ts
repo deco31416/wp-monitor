@@ -88,6 +88,7 @@ test('demotes enriched CDN/cloud IPs even when initial traffic score is high', (
     assert.equal(adjusted.isP2P, false);
     assert.equal(adjusted.networkCategory, 'cdn');
     assert.equal(adjusted.networkIntelligence.isDatacenterLikely, true);
+    assert.equal(adjusted.networkIntelligence.source, 'enrichment');
     assert.equal(adjusted.confidence, 'low');
     assert.ok(adjusted.confidenceScore <= 30);
     assert.ok(adjusted.reasonCodes.some(reason => reason.code === 'ENRICHED_CDN_PROVIDER'));
@@ -124,6 +125,7 @@ test('keeps enriched consumer ISP candidates eligible for corroboration', () => 
     assert.equal(adjusted.networkCategory, 'consumer_isp_or_unknown');
     assert.equal(adjusted.confidenceScore, 87);
     assert.equal(adjusted.networkIntelligence.asn, 64503);
+    assert.equal(adjusted.networkIntelligence.source, 'enrichment');
     assert.match(adjusted.networkIntelligence.org, /residencial/i);
 });
 

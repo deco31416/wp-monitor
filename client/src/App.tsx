@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
 import { Login } from './components/Login';
-import { Dashboard } from './components/Dashboard';
-import { NetworkMonitor } from './components/NetworkMonitor';
-import { AuditTrail } from './components/AuditTrail';
-import { Cases } from './components/Cases';
-import { CheckIns } from './components/CheckIns';
-import { Smartphone, Globe, Activity, ClipboardList, Briefcase, MapPin, Drone, Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
-import { API_URL, clearDashboardToken, getDashboardToken, setDashboardToken } from './auth';
+import { DashboardAccess } from './components/DashboardAccess';
+import { AccountSettings } from './components/AccountSettings';
+import { Smartphone, Globe, Activity, ClipboardList, Briefcase, MapPin, Drone, Menu, PanelLeftClose, PanelLeftOpen, Settings, X } from 'lucide-react';
+import { API_URL, AUTH_UNAUTHORIZED_EVENT, clearLegacyDashboardToken, sessionFetch, type AuthSessionResponse } from './auth';
+import { socket } from './socket';
 
-// Create socket with autoConnect disabled so we can add listeners before connecting
-export const socket: Socket = io(API_URL, { autoConnect: false });
+const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
+const NetworkMonitor = React.lazy(() => import('./components/NetworkMonitor').then(module => ({ default: module.NetworkMonitor })));
+const AuditTrail = React.lazy(() => import('./components/AuditTrail').then(module => ({ default: module.AuditTrail })));
+const Cases = React.lazy(() => import('./components/Cases').then(module => ({ default: module.Cases })));
+const CheckIns = React.lazy(() => import('./components/CheckIns').then(module => ({ default: module.CheckIns })));
 
 export interface ConnectionState {
     whatsapp: boolean;
@@ -18,10 +18,14 @@ export interface ConnectionState {
 }
 
 interface RuntimeCapabilities {
+    version: string;
     mode: string;
     localCapture: boolean;
+    localCaptureAvailable: boolean;
     networkMonitor: boolean;
     callTrafficAnalysis: boolean;
+    passiveMessageReceipts?: boolean;
+    experimentalProbes?: boolean;
     authRequired?: boolean;
 }
 
@@ -34,13 +38,14 @@ interface RuntimeHealth {
     };
 }
 
-type AppTab = 'cases' | 'tracker' | 'network' | 'checkins' | 'audit';
+type AppTab = 'cases' | 'tracker' | 'network' | 'checkins' | 'audit' | 'account';
+type AuthStatus = 'checking' | 'authenticated' | 'anonymous';
 const ACTIVE_TAB_KEY = 'dat_active_tab';
 const SIDEBAR_COLLAPSED_KEY = 'dat_sidebar_collapsed';
 
 function getInitialTab(): AppTab {
     const saved = localStorage.getItem(ACTIVE_TAB_KEY);
-    return saved === 'cases' || saved === 'tracker' || saved === 'network' || saved === 'checkins' || saved === 'audit'
+    return saved === 'cases' || saved === 'tracker' || saved === 'network' || saved === 'checkins' || saved === 'audit' || saved === 'account'
         ? saved
         : 'cases';
 }
@@ -49,8 +54,9 @@ function App() {
     const [isConnected, setIsConnected] = useState(socket.connected);
     const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
     const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
-    const [authToken, setAuthToken] = useState(getDashboardToken());
-    const [authInput, setAuthInput] = useState(getDashboardToken());
+    const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
+    const [operatorUsername, setOperatorUsername] = useState('');
+    const [authError, setAuthError] = useState<string | null>(null);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const [connectionState, setConnectionState] = useState<ConnectionState>({
@@ -80,17 +86,15 @@ function App() {
             setConnectionState(prev => ({ ...prev, whatsappQr: qr }));
         }
 
-        socket.auth = authToken ? { token: authToken } : {};
-
         socket.on('connect', onConnect);
         socket.on('disconnect', onDisconnect);
         socket.on('qr', onWhatsAppQr);
         socket.on('connection-open', onWhatsAppConnectionOpen);
 
-        const requiresAuth = capabilities?.authRequired;
-        const canConnect = !requiresAuth || !!authToken;
-        if (canConnect && !socket.connected) {
+        if (authStatus === 'authenticated' && !socket.connected) {
             socket.connect();
+        } else if (authStatus !== 'authenticated' && socket.connected) {
+            socket.disconnect();
         }
 
         return () => {
@@ -99,17 +103,64 @@ function App() {
             socket.off('qr', onWhatsAppQr);
             socket.off('connection-open', onWhatsAppConnectionOpen);
         };
-    }, [authToken, capabilities?.authRequired]);
+    }, [authStatus]);
+
+    useEffect(() => {
+        clearLegacyDashboardToken();
+        let cancelled = false;
+
+        sessionFetch('/api/auth/session')
+            .then(async response => ({ response, body: await response.json() as AuthSessionResponse }))
+            .then(({ response, body }) => {
+                if (cancelled) return;
+                if (response.ok && body.authenticated && body.username) {
+                    setOperatorUsername(body.username);
+                    setAuthStatus('authenticated');
+                    setAuthError(null);
+                    return;
+                }
+                setAuthStatus('anonymous');
+                if (response.status === 503) setAuthError(body.error || 'El servicio de autenticación no está disponible.');
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAuthStatus('anonymous');
+                    setAuthError('No se pudo conectar con el servicio de autenticación.');
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        function handleUnauthorized() {
+            socket.disconnect();
+            setOperatorUsername('');
+            setAuthStatus('anonymous');
+            setAuthError('La sesión expiró o fue revocada. Ingresa nuevamente.');
+        }
+        window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+        return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+    }, []);
 
     useEffect(() => {
         fetch(`${API_URL}/api/runtime-capabilities`)
             .then(r => r.json())
-            .then(setCapabilities)
+            .then((nextCapabilities: RuntimeCapabilities) => {
+                setCapabilities(nextCapabilities);
+                if (!nextCapabilities.networkMonitor) {
+                    setActiveTab(current => current === 'network' ? 'tracker' : current);
+                }
+            })
             .catch(() => setCapabilities({
-                mode: 'local-full',
-                localCapture: true,
-                networkMonitor: true,
-                callTrafficAnalysis: true,
+                version: 'unknown',
+                mode: 'unavailable',
+                localCapture: false,
+                localCaptureAvailable: false,
+                networkMonitor: false,
+                callTrafficAnalysis: false,
             }));
     }, []);
 
@@ -138,18 +189,6 @@ function App() {
     }, []);
 
     useEffect(() => {
-        if (capabilities?.authRequired && !authToken && socket.connected) {
-            socket.disconnect();
-        }
-    }, [authToken, capabilities?.authRequired]);
-
-    useEffect(() => {
-        if (activeTab === 'network' && capabilities && !capabilities.networkMonitor) {
-            setActiveTab('tracker');
-        }
-    }, [activeTab, capabilities]);
-
-    useEffect(() => {
         localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
     }, [activeTab]);
 
@@ -158,33 +197,65 @@ function App() {
     }, [sidebarCollapsed]);
 
     const tabs = [
-        { id: 'cases' as AppTab, label: 'Cases', icon: Briefcase },
-        { id: 'tracker' as AppTab, label: 'WhatsApp Tracker', icon: Smartphone },
-        ...(capabilities?.networkMonitor ? [{ id: 'network' as AppTab, label: 'Network Monitor', icon: Globe }] : []),
-        { id: 'checkins' as AppTab, label: 'Check-In', icon: MapPin },
-        { id: 'audit' as AppTab, label: 'Audit Trail', icon: ClipboardList },
+        { id: 'cases' as AppTab, label: 'Casos', icon: Briefcase },
+        { id: 'tracker' as AppTab, label: 'Seguimiento WhatsApp', icon: Smartphone },
+        ...(capabilities?.networkMonitor ? [{ id: 'network' as AppTab, label: 'Monitor de red', icon: Globe }] : []),
+        { id: 'checkins' as AppTab, label: 'Verificación', icon: MapPin },
+        { id: 'audit' as AppTab, label: 'Auditoría', icon: ClipboardList },
+        { id: 'account' as AppTab, label: 'Cuenta', icon: Settings },
     ];
 
     const pageTitle = {
-        cases: 'Cases',
-        tracker: 'WhatsApp Tracker',
-        network: 'Network Monitor',
-        checkins: 'Authorized Check-In',
-        audit: 'Audit Trail',
+        cases: 'Casos',
+        tracker: 'Seguimiento WhatsApp',
+        network: 'Monitor de red',
+        checkins: 'Verificación autorizada',
+        audit: 'Auditoría',
+        account: 'Cuenta del operador',
     }[activeTab];
 
-    const handleAuthSubmit = (event: React.FormEvent) => {
-        event.preventDefault();
-        setDashboardToken(authInput);
-        setAuthToken(authInput.trim());
-        if (socket.connected) socket.disconnect();
+    const handleLogin = async (username: string, password: string) => {
+        setAuthError(null);
+        const response = await sessionFetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+        const body = await response.json() as AuthSessionResponse;
+        if (!response.ok || !body.authenticated || !body.username) {
+            const retryAfter = response.headers.get('Retry-After');
+            const suffix = response.status === 429 && retryAfter ? ` Intenta de nuevo en ${retryAfter} segundos.` : '';
+            const message = `${body.error || 'No fue posible iniciar sesión.'}${suffix}`;
+            setAuthError(message);
+            throw new Error(message);
+        }
+        setOperatorUsername(body.username);
+        setAuthStatus('authenticated');
+        setAuthError(null);
     };
 
-    const handleLogout = () => {
-        clearDashboardToken();
-        setAuthToken('');
-        setAuthInput('');
+    const handleLogout = async () => {
+        setAuthError(null);
+        try {
+            const response = await sessionFetch('/api/auth/logout', { method: 'POST' });
+            if (!response.ok) {
+                const body = await response.json() as AuthSessionResponse;
+                setAuthError(body.error || 'No se pudo cerrar la sesión de forma segura.');
+                return;
+            }
+            socket.disconnect();
+            setOperatorUsername('');
+            setAuthStatus('anonymous');
+        } catch {
+            setAuthError('No se pudo cerrar la sesión de forma segura.');
+        }
+    };
+
+    const handleCredentialsChanged = (session: AuthSessionResponse) => {
+        if (session.username) setOperatorUsername(session.username);
+        setAuthError(null);
         socket.disconnect();
+        socket.connect();
     };
 
     const selectTab = (tab: AppTab) => {
@@ -192,28 +263,16 @@ function App() {
         setMobileSidebarOpen(false);
     };
 
-    if (capabilities?.authRequired && !authToken) {
+    if (authStatus === 'checking') {
         return (
             <div className="min-h-screen bg-surface bg-grid flex items-center justify-center p-6">
-                <form onSubmit={handleAuthSubmit} className="card max-w-md w-full p-6 space-y-4">
-                    <div>
-                        <h1 className="text-xl font-bold text-txt-primary">Dashboard Access</h1>
-                        <p className="text-sm text-txt-muted mt-1">Ingresa el token configurado en `DASHBOARD_TOKEN`.</p>
-                    </div>
-                    <input
-                        value={authInput}
-                        onChange={event => setAuthInput(event.target.value)}
-                        type="password"
-                        placeholder="Dashboard token"
-                        className="input-field"
-                        autoFocus
-                    />
-                    <button disabled={!authInput.trim()} className="btn-primary w-full" type="submit">
-                        Entrar
-                    </button>
-                </form>
+                <div className="card px-5 py-4 text-sm text-txt-muted" role="status">Verificando sesión segura…</div>
             </div>
         );
+    }
+
+    if (authStatus === 'anonymous') {
+        return <DashboardAccess error={authError} onLogin={handleLogin} />;
     }
 
     return (
@@ -282,12 +341,17 @@ function App() {
                 <div className={`px-4 py-4 border-t border-surface-border space-y-2 ${sidebarCollapsed ? 'lg:px-0' : ''}`}>
                     <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
                         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success animate-pulse-slow' : 'bg-danger'}`} />
-                        <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>{isConnected ? 'Server Connected' : 'Disconnected'}</span>
+                        <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>{isConnected ? 'Servidor conectado' : 'Servidor desconectado'}</span>
                     </div>
                     {isConnected && connectionState.whatsapp && (
                         <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
                             <div className="w-2 h-2 rounded-full bg-success animate-pulse-slow" />
-                            <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WhatsApp Active</span>
+                            <span className={`text-xs text-txt-muted ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WhatsApp conectado</span>
+                        </div>
+                    )}
+                    {capabilities?.version && capabilities.version !== 'unknown' && (
+                        <div className={`text-[10px] text-txt-dim ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                            Versión {capabilities.version}
                         </div>
                     )}
                 </div>
@@ -323,47 +387,72 @@ function App() {
                         {activeTab === 'tracker' && connectionState.whatsapp && (
                             <span className="badge-success">
                                 <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                                Connected
+                                Conectado
                             </span>
                         )}
                         {capabilities && !capabilities.localCapture && (
                             <span className="badge">
-                                Dashboard Mode
+                                Modo panel
                             </span>
                         )}
-                        {capabilities?.authRequired && (
-                            <button onClick={handleLogout} className="btn-ghost !py-1 !px-3 !text-xs">
-                                Logout
-                            </button>
+                        {capabilities?.localCapture && !capabilities.localCaptureAvailable && (
+                            <span className="badge-warning">
+                                Faltan permisos de captura
+                            </span>
                         )}
+                        {authError && <span className="badge-warning max-w-72 truncate" title={authError}>{authError}</span>}
+                        <span className="hidden sm:inline text-xs text-txt-muted">{operatorUsername}</span>
+                        <button onClick={() => void handleLogout()} className="btn-ghost !py-1 !px-3 !text-xs">
+                            Cerrar sesión
+                        </button>
                     </div>
                 </header>
 
                 {/* Page content */}
                 <div className="p-4 sm:p-6">
-                    {activeTab === 'cases' && (
-                        <Cases />
-                    )}
-                    {activeTab === 'tracker' && (
-                        <>
-                            {!connectionState.whatsapp ? (
-                                <Login connectionState={connectionState} />
-                            ) : (
-                                <Dashboard connectionState={connectionState} />
-                            )}
-                        </>
-                    )}
-                    {activeTab === 'network' && (
-                        <NetworkMonitor />
-                    )}
-                    {activeTab === 'checkins' && (
-                        <CheckIns />
-                    )}
-                    {activeTab === 'audit' && (
-                        <AuditTrail />
-                    )}
+                    <React.Suspense fallback={<PageLoadingState />}>
+                        {activeTab === 'cases' && (
+                            <Cases />
+                        )}
+                        {activeTab === 'tracker' && (
+                            <>
+                                {!connectionState.whatsapp ? (
+                                    <Login connectionState={connectionState} />
+                                ) : (
+                                    <Dashboard
+                                        connectionState={connectionState}
+                                        experimentalProbesEnabled={capabilities?.experimentalProbes === true}
+                                    />
+                                )}
+                            </>
+                        )}
+                        {activeTab === 'network' && (
+                            <NetworkMonitor />
+                        )}
+                        {activeTab === 'checkins' && (
+                            <CheckIns />
+                        )}
+                        {activeTab === 'audit' && (
+                            <AuditTrail />
+                        )}
+                        {activeTab === 'account' && (
+                            <AccountSettings
+                                username={operatorUsername}
+                                onCredentialsChanged={handleCredentialsChanged}
+                            />
+                        )}
+                    </React.Suspense>
                 </div>
             </main>
+        </div>
+    );
+}
+
+function PageLoadingState() {
+    return (
+        <div className="card p-8 flex items-center justify-center gap-3 text-sm text-txt-muted" role="status">
+            <span className="w-5 h-5 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+            Cargando modulo...
         </div>
     );
 }

@@ -27,7 +27,7 @@ interface ProfileData {
 }
 
 interface PatternsData {
-    hourly: Array<{ hour: number; total: number; online: number; pct: number }>;
+    hourly: Array<{ hour: number; total: number; conclusive?: number; online: number; pct: number }>;
     peakHour: number;
     avgSessionLength: number;
     totalOnlineMinutes: number;
@@ -43,6 +43,7 @@ interface ProfilePanelProps {
     profile: ProfileData | null;
     profileLoading: boolean;
     patterns: PatternsData | null;
+    trackingStartedAt: string | null;
     privacyScore: PrivacyScore | null;
     privacyMode: boolean;
     blurredNumber: string;
@@ -61,6 +62,7 @@ export function ProfilePanel({
     profile,
     profileLoading,
     patterns,
+    trackingStartedAt,
     privacyScore,
     privacyMode,
     blurredNumber,
@@ -102,13 +104,14 @@ export function ProfilePanel({
                 onStartEditName={onStartEditName}
                 onCancelEditName={onCancelEditName}
                 formatDateTime={formatDateTime}
+                trackingStartedAt={trackingStartedAt}
             />
 
             {profile?.isBusinessAccount && profile.businessProfile && (
                 <BusinessProfileCard profile={profile} />
             )}
 
-            {patterns && patterns.hourly.length > 0 && (
+            {patterns && patterns.hourly.some(item => (item.conclusive ?? item.online) > 0) && (
                 <ActivityPatternsCard patterns={patterns} />
             )}
 
@@ -132,6 +135,7 @@ function ContactInfoCard({
     onStartEditName,
     onCancelEditName,
     formatDateTime,
+    trackingStartedAt,
 }: Omit<ProfilePanelProps, 'profileLoading' | 'patterns' | 'privacyScore'>) {
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
@@ -201,7 +205,8 @@ function ContactInfoCard({
                     )}
                 </div>
                 <ProfileItem label="Verificado en WA" value={profile?.verifiedOnWhatsApp ? 'Si' : 'No'} />
-                <ProfileItem label="Tracking desde" value={profile?.addedAt ? formatDateTime(profile.addedAt) : '-'} />
+                <ProfileItem label="Sesión activa desde" value={trackingStartedAt ? formatDateTime(trackingStartedAt) : '-'} />
+                <ProfileItem label="Contacto registrado" value={profile?.addedAt ? formatDateTime(profile.addedAt) : '-'} />
                 {profile?.lastProfileUpdate && (
                     <ProfileItem label="Perfil actualizado" value={formatDateTime(profile.lastProfileUpdate)} />
                 )}
@@ -293,8 +298,8 @@ function ActivityPatternsCard({ patterns }: { patterns: PatternsData }) {
                         />
                         <YAxis tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
                         <Tooltip
-                            formatter={(value: any, name: any) => [value, name === 'online' ? 'Online' : 'Total']}
-                            labelFormatter={(label: any) => `${formatHour(Number(label))} - ${formatHour((Number(label) + 1) % 24)}`}
+                            formatter={(value, name) => [value, name === 'online' ? 'Online' : 'Total']}
+                            labelFormatter={(label) => `${formatHour(Number(label))} - ${formatHour((Number(label) + 1) % 24)}`}
                             contentStyle={{
                                 backgroundColor: '#0f1629',
                                 border: '1px solid #1e2545',
@@ -352,7 +357,7 @@ function PrivacyScoreCard({ privacyScore }: { privacyScore: PrivacyScore }) {
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
             <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                <Shield size={13} /> Puntaje de Privacidad (OPSEC)
+                <Shield size={13} /> Indicador de privacidad observada
             </h5>
             <div className="flex items-center gap-4 mb-4">
                 <div className={clsx(
@@ -370,7 +375,7 @@ function PrivacyScoreCard({ privacyScore }: { privacyScore: PrivacyScore }) {
                         privacyScore.score >= 40 ? "text-amber-400" :
                         "text-red-400"
                     )}>
-                        Privacidad: {privacyScore.level}
+                        Protección observada: {privacyScore.level}
                     </p>
                     <p className="text-[10px] text-txt-dim mt-1">
                         {privacyScore.score >= 70 ? 'Dificil de perfilar' :
@@ -429,7 +434,7 @@ function buildPrivacyExplanation(privacyScore: PrivacyScore): string {
     return `El calculo parte de 100 puntos y descuenta ${exposureCount} senal(es) observable(s): ${reasons}${extra}. ${interpretation}`;
 }
 
-function ProfileItem({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function ProfileItem({ label, value, accent = false }: { label: string; value: string; accent?: boolean | undefined }) {
     return (
         <div>
             <p className="text-[10px] text-txt-muted uppercase tracking-wider mb-0.5">{label}</p>

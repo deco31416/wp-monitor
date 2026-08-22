@@ -20,11 +20,10 @@
 | `BACKEND_URL` | Local/docs | URL de referencia del backend |
 | `PUBLIC_BASE_URL` | Check-In externo | Base usada para links y assets publicos |
 | `ALLOWED_ORIGINS` | Si | Lista CORS separada por comas |
-| `REACT_APP_API_URL` | Build frontend cloud | API incrustada en build de React |
-| `DASHBOARD_TOKEN` | Produccion | Secreto compartido; minimo 32 caracteres |
+| `VITE_API_URL` | Build frontend cloud | API incrustada en build de Vite |
 | `TRUST_PROXY` | Detras de proxy | `false` local, normalmente `1` en Railway |
 
-`REACT_APP_API_URL` se evalua al construir el frontend. Cambiarla requiere rebuild. No incluyas barra final en URLs.
+`VITE_API_URL` se evalua al construir el frontend. Cambiarla requiere rebuild. No incluyas barra final en URLs.
 
 ## Persistencia
 
@@ -32,8 +31,23 @@
 | --- | --- | --- |
 | `MONGODB_URI` | Para persistencia | URI privada de MongoDB |
 | `MONGODB_DB` | Recomendado | Base separada por entorno |
+| `REDIS_URL` | Si | Sesiones y contadores compartidos; `redis://` o `rediss://` |
+| `REDIS_KEY_PREFIX` | Recomendado | Namespace unico por despliegue |
 
-Sin MongoDB configurado/conectado, funciones durables quedan degradadas. No uses una base de produccion durante tests.
+El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son dependencias de autenticacion. No uses datos de produccion durante tests.
+
+## Operador unico
+
+| Variable | Regla |
+| --- | --- |
+| `INITIAL_ADMIN_USERNAME` | 3-64 letras ASCII, numeros, punto, guion o underscore; solo bootstrap |
+| `INITIAL_ADMIN_PASSWORD` | 15-128 caracteres; solo bootstrap y siempre desde secret manager |
+| `AUTH_IDENTITY_SECRET` | 32+ caracteres aleatorios obligatorios en produccion |
+| `AUTH_SESSION_TTL_SECONDS` | 300-604800; default 28800 |
+| `AUTH_PASSWORD_VERIFY_CONCURRENCY` | 1-4; mantener 1 en VPS pequeno |
+| `AUTH_LOGIN_RATE_*` | Ventana y maximos Redis para login |
+
+Las credenciales iniciales se leen unicamente si no existe `primary-operator` en MongoDB. Despues se cambian desde **Account**; editar `.env` no restablece la cuenta. `DASHBOARD_TOKEN` solo sirve como fallback de migracion local del primer arranque.
 
 ## Check-In publico
 
@@ -43,7 +57,7 @@ Sin MongoDB configurado/conectado, funciones durables quedan degradadas. No uses
 | `CHECKIN_SUBMIT_RATE_MAX_PER_IP` | `60` | Maximo por IP/ventana |
 | `CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP` | `8` | Maximo token+IP/ventana |
 
-Los contadores son memoria local: reinician con el proceso y no coordinan replicas. Antes de escalar horizontalmente se necesita un almacen compartido.
+Los contadores se incrementan atomicamente en Redis, conservan TTL, sobreviven despliegues normales y coordinan replicas con el mismo `REDIS_KEY_PREFIX`. Si Redis falla, login y submit publico fallan cerrados.
 
 ## Swagger
 
@@ -84,7 +98,12 @@ PUBLIC_BASE_URL=http://127.0.0.1:4000
 ALLOWED_ORIGINS=http://127.0.0.1:4001,http://localhost:4001
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=device-tracker-development
-DASHBOARD_TOKEN=
+REDIS_URL=redis://127.0.0.1:6379
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-development
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=use-a-unique-password-with-15-plus-characters
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
 TRUST_PROXY=false
 ENABLE_SWAGGER=false
 ```

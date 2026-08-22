@@ -11,7 +11,7 @@ The changelog is organized in a format inspired by *Keep a Changelog*. Version n
 
 | Channel | Version | Date |
 |---|---:|---:|
-| Current stable release | `2.9.4` | `2026-06-28` |
+| Current stable release | `3.0.0` | `2026-08-21` |
 | Development branch | `Unreleased` | Not yet released |
 
 <!--
@@ -28,12 +28,57 @@ Maintainer guidance:
 
 ## [Unreleased]
 
-> Changes in this section are part of the development branch and are not included in the current stable release.
+> Changes after `3.0.0` will be recorded here while development continues.
+
+No unreleased changes yet.
+
+---
+
+## [3.0.0] - 2026-08-21
+
+> **Current stable release.** Major operational release introducing Node.js 24, pnpm, Redis-backed authentication/rate limits, passive-by-default observation, durable case-scoped tracking, and expanded evidence reporting. Review the migration notes before upgrading from `2.x`.
+
+### Added
+
+- Added a real session-scoped hourly chart for passive WhatsApp signals, separating messages, delivery confirmations, presence, and calls from experimental RTT measurements.
+- Added passive activity timelines to contact JSON/HTML/PDF exports and case JSON/HTML/PDF/ZIP reports, including `observed-activity.json`, `annexes/observed-activity.csv`, per-source counts, confidence, timestamps, and integrity hashes.
+- Added an implementable passive-activity/report specification with requirement-to-test traceability and explicit REST, contact-report, and Evidence Package `1.1` contracts.
+- Added passive-by-default WhatsApp observation for real outgoing/incoming messages and delivery/read/playback receipts, with monotonic receipt correlation, bounded in-memory state, opaque message-ID fingerprints, and a dedicated confirmation count in the dashboard.
+- Added behavioral-intelligence coverage gates so routines, habits, availability, correlations, and anomalies remain unavailable until the active tracking session has at least 100 conclusive RTT measurements across 3 active days.
+- Added durable case-scoped tracking sessions with operator, authorization, probe method, lifecycle status, and per-JID active-session enforcement.
+- Added Redis-backed atomic rate limiting for public Check-In submissions, shared health reporting, fail-closed production behavior, Docker AOF persistence, and an Ubuntu/VPS operations runbook.
+- Added a single-operator account stored in MongoDB, memory-hard scrypt password hashing, opaque Redis sessions, persistent login rate limits, secure cookie authentication, origin protection, authentication audit events, and an Account screen for credential rotation.
+- Added automated coverage for authentication services/routes, password policy, Redis, capture lifecycle/permissions, rate limiting, tracker signals, session provenance, analytics, and critical flows.
+
+### Fixed
+
+- Replaced the permanent loading skeleton shown for an empty technical history with a definitive passive-session state, and changed the bitacora exports so real observed events remain available when RTT has no data.
+- Prevented the Profile tab from rendering a zero-only RTT pattern chart and separated the active tracking-session start from the contact's original registration date.
+- Corrected contact-report duration and totals for passive-only sessions; final reports now show unavailable RTT values as `—` instead of misleading zero percentages.
+- Prevented contact views and evidence exports from silently presenting limited event pages as complete; APIs and reports now declare returned, available, limit, and truncation metadata.
+- Prevented historical measurements, live signals, message receipts, profiles, and call-analysis history from crossing active tracking-session or case boundaries; stopping/reactivating a contact now starts a clean observation session without deleting prior evidence.
+- Fixed `/api/intel/correlation` route precedence so Express no longer consumes `correlation` as a dynamic JID.
+- Corrected real-message receipt races and cross-contact message-ID collisions, excluded synthetic probes from observed-message evidence, and stopped using ambiguous upstream timestamps as local delivery latency.
+- Replaced misleading zero-RTT charts and unsupported behavior labels with explicit unavailable/insufficient-coverage states; timeouts remain inconclusive and are never presented as valid RTT or proof of inactivity.
+- Isolated presence and receipt attribution per tracked JID (including scoped LIDs), prevented initial empty tracker updates from being persisted, replaced timeout-as-offline claims with the inconclusive `NO_ACK` state, and separated calibration/unknown samples from Standby statistics while preserving legacy API compatibility.
+- Scoped new RTT measurements and observed activity events to their case and tracking session so case evidence statistics no longer mix observations from other cases.
+- Scoped persisted call analyses by both case and call ID, and blocked closing/deactivating cases that still have active tracking sessions.
+- Removed tracker-specific Baileys listeners when tracking stops, preventing stopped/reactivated contacts from accumulating duplicate handlers.
+- Evidence packages now resolve the running package version instead of falling back to the stale `2.9.1` label.
+- Centralized software-version resolution so startup metadata, provider User-Agent, QA fixtures and evidence reports all publish `3.0.0` from the root manifest.
+- Exposed the running version through public capabilities/health contracts and the dashboard footer so operators can correlate a deployed process with release evidence.
+- Restored the declared `qa:report-fixture` command with synthetic, non-production JSON/HTML/PDF/ZIP artifacts and integrity validation.
+- Ensured Docker builds copy the tracked `cap` Node.js 24 compatibility patch before frozen pnpm installation; the static frontend build now skips unrelated backend lifecycle scripts instead of attempting to compile `cap`.
 
 ### Changed
 
+- Tracking now starts in `passive` mode and generates no probe traffic. Delete/reaction probes are experimental, disabled unless `ENABLE_EXPERIMENTAL_PROBES=true`, rate-bounded, single-flight, cancellable, and subject to exponential backoff.
+- Dashboard language now distinguishes observed messages/receipts from experimental RTT attempts, uses commercial Spanish labels, defaults to privacy-protected display, and requires confirmation before finalizing tracking.
+- Active observation, statistics, intelligence, privacy, reports, profiles, and call history now resolve through the current durable tracking session instead of contact-wide historical data.
 - Standardized backend and frontend dependency management on a single root **pnpm workspace** and root lockfile.
-- Pinned the Baileys dependency to a tested Git commit and declared `@hapi/boom` as a direct dependency.
+- Migrated the supported runtime to Node.js `24.19.x` and pnpm `11.22.0`, including an enforced runtime check and reproducible Debian-based Docker builds.
+- Migrated the frontend from Create React App/Jest to Vite/Vitest and retained production build, typecheck, lint, and component-test gates.
+- Migrated Baileys to the tested `7.0.0-rc14` package and declared `@hapi/boom` as a direct dependency.
 - Restricted dependency lifecycle scripts to the known build requirements for Baileys, `cap`, `esbuild`, and `protobufjs`.
 - Updated Docker builds and public setup instructions to use reproducible pnpm installations.
 - Refreshed the public web manifest metadata for WP MONITOR.
@@ -46,28 +91,55 @@ Maintainer guidance:
 - Removed a location-specific consumer ISP heuristic so runtime classification depends on generic scoring and current enrichment data instead of a captured local range.
 - Standardized the backend runtime tag as `WP-MONITOR`.
 
+### Security and Compliance
+
+- Hardened Git and Docker exclusions for environment files, Baileys/WhatsApp sessions and backups, browser profiles/cookies, local data stores, uploads, packet captures, reports, evidence archives, logs and private tooling state.
+- Hardened the backend runtime image to execute as the non-root `node` user while limiting writable paths to Baileys session state and authorized uploads.
+- Verified that neither `main`, `develop` nor repository history tracks a real `.env` or Baileys session; only the safe `.env.example` template is versioned.
+
+### Documentation
+
+- Published a `2.x` to `3.0.0` migration/rollback runbook and synchronized README, security support policy, architecture catalog, API/report contracts, release procedure and Mermaid views with the implemented runtime.
+- Updated activity/evidence diagrams to expose page limits and truncation, and added Redis to context and failure-recovery views.
+
 ### Removed
 
 - Removed the remaining obsolete Signal integration artifacts, including Signal sidecar configuration and the unused direct WebSocket dependency.
 - Removed the legacy WhatsApp CLI and its terminal QR dependencies. The supported entry point is now the web backend in `src/server.ts`.
 - Removed unused Create React App sample assets, stale Web Vitals wiring, and the obsolete sample test.
 - Removed startup warnings for Redis, Groq, and Resend because those integrations are not implemented product capabilities.
+- Removed shared Bearer-token authentication and browser token persistence. `DASHBOARD_TOKEN` remains only as a local first-start migration fallback and is never accepted by protected HTTP or Socket.IO contracts.
 
 ### Verification
 
-- Added a frontend login smoke test.
+- Backend tests: 135/135 passed.
+- Frontend tests: 16/16 passed.
+- Backend/frontend typechecks, frontend lint, and production builds passed.
+- Full and production-only pnpm audits reported no known vulnerabilities.
+- Local runtime smoke testing on Node.js 24.19.0 confirmed MongoDB, Redis, WhatsApp, and automatic restoration of one authorized passive session. The real contact report returned 5 persisted observed events, zero technical attempts, unavailable RTT, a 22-minute observation window, and the expected tracking-session scope without printing private identifiers.
+- Runtime authentication checks covered trusted/untrusted origins, login, session lookup, protected HTTP, logout/revocation, Socket.IO authentication/disconnection, cookie flags, MongoDB hash/index state, and Redis session cleanup.
+- Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, passive-activity JSON/CSV, and per-artifact SHA-256 metadata.
+- Native PDF inspection with `pdfinfo`/`pdftoppm` confirmed a valid two-page A4 document with readable passive-signal, technical-measurement, candidate-IP, audit, integrity, and limitation sections without visible clipping.
+- Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set; the backend image was also verified to run as UID/GID 1000 with writable runtime-data directories and read-only compiled code.
+- Documentation relative-link validation passed across 62 Markdown files.
+- Static Mermaid validation passed for 21 blocks across the 14 diagram documents and canonical architecture view.
 
 ### Migration Notes
 
-- The next release changes dependency management from the historical split workflow to a single root pnpm workspace.
-- Contributor, CI, Docker, and deployment commands should use the root workspace and its lockfile after this release is published.
+- Version `3.0.0` changes dependency management from the historical split workflow to a single root pnpm workspace.
+- Contributor, CI, Docker, and deployment commands must use the root workspace and its lockfile in `3.0.0` and later.
 - The legacy CLI is no longer a supported application entry point; use the web backend and dashboard workflow.
+- Existing local installations may bootstrap the first `admin` operator from the old `DASHBOARD_TOKEN`; sign in once, rotate username/password from Account, then remove the legacy value. Fresh/production deployments must use explicit `INITIAL_ADMIN_USERNAME`, `INITIAL_ADMIN_PASSWORD`, and `AUTH_IDENTITY_SECRET` secrets.
+- Existing measurements and activity events have no case/session provenance and remain available only through legacy contact-wide views; case evidence exports intentionally include only newly scoped observations.
+- Existing call analyses without `caseId` remain available in contact-wide history but are intentionally excluded from case evidence exports.
+- Existing active contacts without a durable `tracking_sessions` record are not auto-restored and must be reactivated with case, operator, and authorization metadata.
+- An active session that already contains historical experimental attempts retains them as evidence. Finalize and reactivate the contact once to open a clean passive session; this does not delete the earlier session or its retained records.
 
 ---
 
 ## [2.9.4] - 2026-06-28
 
-> **Current stable release.** Focused on authentication recovery, sensitive-log suppression, live activity signals, and more reliable Baileys call-event handling.
+> Previous `2.x` release focused on authentication recovery, sensitive-log suppression, live activity signals, and more reliable Baileys call-event handling.
 
 ### Added
 

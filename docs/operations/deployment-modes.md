@@ -23,8 +23,14 @@ ENABLE_SWAGGER=false
 PORT=4000
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB=activity-tracker
+REDIS_URL=rediss://USERNAME:PASSWORD@REDIS_HOST:PORT
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-production
+INITIAL_ADMIN_USERNAME=choose-a-non-default-username
+INITIAL_ADMIN_PASSWORD=store-a-unique-15-plus-character-password
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
+AUTH_SESSION_TTL_SECONDS=28800
 ALLOWED_ORIGINS=https://your-client.up.railway.app
-DASHBOARD_TOKEN=change-this-long-random-token-with-32-plus-chars
 TRUST_PROXY=1
 PUBLIC_BASE_URL=https://your-backend.up.railway.app
 ```
@@ -32,7 +38,7 @@ PUBLIC_BASE_URL=https://your-backend.up.railway.app
 Recommended frontend variable:
 
 ```env
-REACT_APP_API_URL=https://your-backend.up.railway.app
+VITE_API_URL=https://your-backend.up.railway.app
 ```
 
 If WhatsApp auth should survive redeploys, attach a Railway volume to:
@@ -71,12 +77,16 @@ ENABLE_SWAGGER=true
 PORT=4000
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB=activity-tracker
-# Optional in local development:
-# DASHBOARD_TOKEN=change-this-long-random-token-with-32-plus-chars
+REDIS_URL=redis://127.0.0.1:6379
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-local
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=use-a-unique-password-with-15-plus-characters
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
 # TRUST_PROXY=false
 ```
 
-Run the backend locally with administrator/root permissions when packet capture is needed, because `cap` needs access to the network interface.
+When packet capture is needed, grant only `CAP_NET_RAW`/`CAP_NET_ADMIN` to the dedicated backend service/process. Do not run dependency installation or the entire application as root.
 
 The call traffic analyzer reports observed IPs, relays, providers, ports, packet counts, direction, and geolocation hints. Treat non-infrastructure IPs as candidates only; WhatsApp/WebRTC may use relays, and the analysis should not claim that an observed IP identifies a person.
 
@@ -102,4 +112,4 @@ The export includes:
 - audit events
 - SHA-256 hash of the canonical payload
 
-When `DASHBOARD_TOKEN` is configured, the export endpoint requires the same dashboard token through `Authorization: Bearer <token>`. In production, the backend refuses to start without a strong token.
+The export requires the same Redis-backed operator session as every protected API route. A Bearer token is not supported. Production startup requires MongoDB, Redis, an explicit 32+ character `AUTH_IDENTITY_SECRET`, and exact HTTPS `ALLOWED_ORIGINS`; a fresh database also needs valid bootstrap credentials.

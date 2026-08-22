@@ -16,6 +16,7 @@ interface IntelSession {
 
 interface IntelAvailability {
     hourly: number[];
+    hourlyConclusiveDays?: number[];
     activeHours: number[];
     inactiveHours: number[];
     globalScore: number;
@@ -24,11 +25,13 @@ interface IntelAvailability {
 
 interface IntelHeatmap {
     matrix: number[][];
+    conclusiveMatrix?: number[][];
     dayLabels: string[];
     peakDay: number;
     peakHour: number;
     peakScore: number;
     totalDataPoints: number;
+    totalAttempts?: number;
     weeksAnalyzed: number;
 }
 
@@ -64,6 +67,15 @@ interface IntelData {
     sessionStats: IntelSession;
     heatmap: IntelHeatmap;
     habits: IntelHabits;
+    coverage: {
+        available: boolean;
+        conclusiveMeasurements: number;
+        totalAttempts: number;
+        activeDays: number;
+        minimumConclusiveMeasurements: number;
+        minimumActiveDays: number;
+        reason: 'sufficient' | 'insufficient_conclusive_measurements' | 'insufficient_active_days';
+    };
 }
 
 interface IntelPanelProps {
@@ -79,7 +91,7 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
                 <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
                     <div className="animate-pulse">
                         <Brain size={32} className="mx-auto text-accent mb-2" />
-                        <p className="text-txt-muted text-sm">Analizando patrones de comportamiento...</p>
+                        <p className="text-txt-muted text-sm">Analizando señales confirmadas...</p>
                     </div>
                 </div>
             </div>
@@ -91,9 +103,25 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
             <div className="space-y-4">
                 <div className="text-center py-8">
                     <Brain size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin datos de inteligencia</p>
-                    <p className="text-txt-dim text-xs mt-1">Se requieren al menos unas horas de tracking para generar analisis</p>
+                    <p className="text-txt-muted text-sm">Patrones aún no disponibles</p>
+                    <p className="text-txt-dim text-xs mt-1">Todavía no existe evidencia confirmada suficiente para generar un análisis.</p>
                 </div>
+            </div>
+        );
+    }
+
+    if (!intel.coverage.available) {
+        return (
+            <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
+                <Brain size={32} className="mx-auto text-txt-dim mb-2" />
+                <p className="text-txt-primary text-sm font-semibold">Patrones aún no disponibles</p>
+                <p className="text-txt-muted text-xs mt-2 max-w-xl mx-auto">
+                    Esta sesión no reúne suficientes mediciones confirmadas para inferir rutinas de forma responsable.
+                    La actividad observada permanece disponible en su propia sección.
+                </p>
+                <p className="text-txt-dim text-[10px] mt-3">
+                    Cobertura actual: {intel.coverage.conclusiveMeasurements.toLocaleString()} mediciones RTT concluyentes en {intel.coverage.activeDays} días.
+                </p>
             </div>
         );
     }
@@ -180,7 +208,8 @@ function WeeklyHeatmapCard({ heatmap }: { heatmap: IntelHeatmap }) {
             <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4 flex items-center gap-1.5">
                 <CalendarDays size={13} /> Heatmap Semanal
                 <span className="text-[9px] font-normal text-txt-dim ml-auto">
-                    {heatmap.weeksAnalyzed} semanas · {heatmap.totalDataPoints.toLocaleString()} datos
+                    {heatmap.weeksAnalyzed} semanas · {heatmap.totalDataPoints.toLocaleString()} concluyentes
+                    {typeof heatmap.totalAttempts === 'number' && ` / ${heatmap.totalAttempts.toLocaleString()} intentos`}
                 </span>
             </h5>
             <div className="overflow-x-auto">
@@ -200,16 +229,20 @@ function WeeklyHeatmapCard({ heatmap }: { heatmap: IntelHeatmap }) {
                             </div>
                             {row.map((value, hour) => {
                                 const isPeak = dayIndex === heatmap.peakDay && hour === heatmap.peakHour;
+                                const conclusiveSamples = heatmap.conclusiveMatrix?.[dayIndex]?.[hour];
+                                const hasConclusiveData = conclusiveSamples === undefined || conclusiveSamples > 0;
                                 return (
                                     <div
                                         key={hour}
                                         className={clsx("flex-1 h-5 rounded-[2px] mx-[0.5px] transition-colors", isPeak && "ring-1 ring-accent")}
                                         style={{
-                                            backgroundColor: value > 0
+                                            backgroundColor: hasConclusiveData && value > 0
                                                 ? `rgba(37,211,102,${Math.min(value * 1.2, 1)})`
-                                                : 'rgba(17,27,33,0.55)'
+                                                : hasConclusiveData ? 'rgba(17,27,33,0.55)' : 'rgba(100,116,139,0.12)'
                                         }}
-                                        title={`${heatmap.dayLabels[dayIndex]} ${hour}:00 - ${Math.round(value * 100)}% online`}
+                                        title={hasConclusiveData
+                                            ? `${heatmap.dayLabels[dayIndex]} ${hour}:00 - ${Math.round(value * 100)}% online · ${conclusiveSamples ?? 'N/D'} concluyentes`
+                                            : `${heatmap.dayLabels[dayIndex]} ${hour}:00 - sin datos concluyentes`}
                                     />
                                 );
                             })}

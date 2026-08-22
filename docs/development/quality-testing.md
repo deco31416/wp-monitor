@@ -5,11 +5,9 @@ Matriz inspirada en ISO/IEC 25010. No representa certificacion.
 ## Comandos oficiales
 
 ```powershell
-pnpm run test:unit
-pnpm run test:client
-pnpm run build
-pnpm --dir client run build
-pnpm run build:all
+pnpm run qa
+pnpm audit
+pnpm audit --prod
 pnpm run qa:report-fixture
 ```
 
@@ -18,15 +16,18 @@ pnpm run qa:report-fixture
 | Area | Pruebas |
 | --- | --- |
 | Validacion | Case ID, JID, limites y entradas |
-| Runtime | modos, captura, token y proxy |
+| Runtime | modos, captura, cuenta/sesion, Redis y proxy |
+| Autenticacion | password scrypt, bootstrap, rate limit, cookies, origen, revocacion y Socket.IO |
 | Runtime routes | health y capacidades |
+| Seguimiento pasivo | cero trafico generado, limpieza al finalizar, recibos monotonos/idempotentes y aislamiento por contacto |
+| Sesiones/casos | procedencia, consultas activas, aislamiento de llamadas y precedencia de rutas |
 | Scoring | candidatas y coherencia telefonica |
 | GeoIP | proveedor principal/fallback y contradicciones |
 | Check-In | modelo, consentimiento e integridad |
 | Evidence Package | manifiesto, hashes y ZIP |
 | Stats | insights y reglas derivadas |
 | Meta ranges | clasificacion de infraestructura |
-| Frontend | arranque y flujos cubiertos por Testing Library |
+| Frontend | arranque, autenticacion, actividad pasiva, agrupacion horaria, truncamiento, bitacora, fechas de perfil y semantica de evidencia cubiertos por Testing Library |
 
 ## Matriz de calidad
 
@@ -37,7 +38,7 @@ pnpm run qa:report-fixture
 | Compatibilidad | Builds Node/React y pruebas Windows/local |
 | Usabilidad | QA 360, 390, 1366 y 1440 px |
 | Fiabilidad | Health, estados degradados, reinicio y restauracion |
-| Seguridad | Token, CORS, proxy, validacion y revision de secretos |
+| Seguridad | Cuenta/sesion, CORS/origin, proxy, rate limits, validacion y revision de secretos |
 | Mantenibilidad | TypeScript, modulos, tests y docs por contrato |
 | Portabilidad | Local, Docker y Railway con capacidades explicitas |
 
@@ -54,6 +55,9 @@ pnpm run qa:report-fixture
 
 - QR/restauracion;
 - agregar y detener contacto;
+- modo pasivo sin mensajes sinteticos;
+- mensajes/receipts reales sin contenido ni ID crudo;
+- finalizar/reactivar sin heredar estado en vivo;
 - estado efimero y expiracion;
 - datos despues de refrescar;
 - informe completo sin placeholders.
@@ -105,3 +109,5 @@ Revisa navegacion colapsada, textos largos, tablas, scroll, botones, tooltips y 
 ## Evidencia de QA
 
 Registra version, commit, sistema, Node/pnpm, comandos, resultados, fecha UTC, capturas anonimizadas y responsable. Un `PASS` sin salida verificable no es suficiente para una auditoria formal.
+
+Linea base de `Unreleased` validada el 2026-08-21: la cifra exacta se registra en el changelog y salida de CI. La cobertura incluye duracion pasiva, agrupacion horaria, paginas truncadas, estados RTT vacios, reportes JSON/HTML/PDF/ZIP y privacidad de receipts; typechecks, lint, builds y `pnpm audit` forman parte de la misma puerta.

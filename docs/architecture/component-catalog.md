@@ -20,24 +20,36 @@ Relacionar carpetas y archivos con responsabilidades, entradas, salidas, estado 
 
 ### `src/runtime.ts` y `src/routes/runtime.ts`
 
-Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `TRUST_PROXY`, token de produccion, capacidades y health. Son el contrato que permite al frontend ocultar funciones imposibles en cloud.
+Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `TRUST_PROXY`, requisitos de produccion, capacidades y health. Son el contrato que permite al frontend ocultar funciones imposibles en cloud.
 
 Invariantes:
 
-- produccion necesita token de 32+ caracteres;
+- produccion necesita MongoDB, Redis, `AUTH_IDENTITY_SECRET` de 32+ caracteres y origenes HTTPS exactos;
 - captura por defecto solo en `local-full`;
 - Railway detectado usa dashboard si no se define modo;
 - health distingue configurado de conectado.
+
+### `src/redis.ts` y `src/rate-limit.ts`
+
+`redis.ts` mantiene la conexion al cliente oficial y expone health sin secretos. `rate-limit.ts` implementa el contrato fixed-window y contador Redis atomico mediante Lua; el fallback local solo sirve para pruebas aisladas del componente. El proceso real necesita Redis y falla cerrado si no esta disponible.
+
+### `src/operator-auth.ts`, `src/password-security.ts` y `src/routes/auth.ts`
+
+Implementan la cuenta unica, hash scrypt, bootstrap, sesiones opacas, rate limits de login, cookies, origen, revocacion y contratos HTTP. MongoDB es fuente de verdad de identidad/version; Redis es fuente de verdad de sesiones efimeras. Ningun Bearer token forma parte del contrato vigente.
 
 ### `src/db.ts`
 
 Propietario de MongoDB: tipos de dominio, colecciones, indices, TTL y operaciones CRUD. La inicializacion crea indices idempotentes. No expone credenciales ni debe contener presentacion HTML.
 
-Colecciones logicas: measurements, activity events, contacts, call analyses, audit events, case records, evidence links y check-ins.
+Colecciones logicas: operator users, measurements, activity events, contacts, tracking sessions, call analyses, audit events, case records, evidence links y check-ins.
 
 ### `src/tracker.ts`
 
-Ejecuta observaciones RTT y produce clasificacion/actualizaciones. Debe conservar metodo, timestamp, JID y resultado. Sus estados son heuristicas dependientes de cobertura.
+Mantiene la suscripcion pasiva predeterminada y, solo cuando el despliegue/operador lo habilitan, ejecuta probes RTT experimentales acotados. Produce clasificacion/actualizaciones con metodo, timestamp, JID y resultado; sus estados son heuristicas dependientes de cobertura.
+
+### `src/message-receipts.ts`
+
+Correlaciona mensajes reales salientes con transiciones accepted/delivered/read/played. El registro es monotono, idempotente, acotado por TTL/tamano, aislado por contacto y limpiable al cerrar sesion. Expone un fingerprint SHA-256 truncado y nunca el ID crudo.
 
 ### `src/analytics.ts` y `src/stats-insights.ts`
 
@@ -71,6 +83,10 @@ Define modelo y renderizado de landing, consentimiento, metadata del cliente y r
 
 Construye estructura canonica, manifiesto, hashes y ZIP. Debe ser determinista en contenido canonico y excluir secretos. Los tiempos de exportacion pueden hacer distinto un paquete posterior.
 
+### `src/page-metadata.ts` y `src/version.ts`
+
+`page-metadata.ts` normaliza `returned`, `total`, `truncated` y `limit` para que API, UI e informes no contradigan una pagina parcial. `version.ts` resuelve una unica version desde el entorno de ejecucion o el `package.json` raiz; startup, User-Agent, fixtures e informes deben reutilizarla.
+
 ### `src/validation.ts`
 
 Frontera de entrada para Case ID, JID, limites, texto, estados y listas. Validar en un solo lugar evita que REST y Socket.IO acepten formatos diferentes.
@@ -90,7 +106,7 @@ Compone layout, navegacion, capacidades, conexion, sesion y vista activa. Debe d
 
 ### `client/src/auth.ts`
 
-Fuente de `API_URL`, token y `authFetch`. Todo componente debe reutilizarlo para no omitir cabeceras o apuntar a puertos antiguos.
+Fuente de `API_URL`, estado de sesion y `authFetch` con cookies. Todo componente debe reutilizarlo para no omitir credenciales o apuntar a puertos antiguos.
 
 ### `client/src/types.ts`
 
@@ -103,7 +119,8 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | `Cases.tsx` | Expedientes y exports finales | Cases/Reports API |
 | `Dashboard.tsx` | Orquestar contactos y paneles | REST + Socket.IO |
 | `ContactCard.tsx` | Estado actual y resumen | live state, tracker update |
-| `ActivityLogPanel.tsx` | Bitacora y exportacion | activity/report endpoints |
+| `ActivityLogPanel.tsx` | Timeline y grafica horaria con aviso de pagina parcial | activity endpoint |
+| `ActivityJournalPanel.tsx` | Bitacora tecnica/pasiva y exportacion rapida | activity/report endpoints |
 | `StatsPanel.tsx` | Cobertura y tendencias | stats |
 | `IntelPanel.tsx` | Rutina, sesiones, heatmap | intel endpoints |
 | `ProfilePanel.tsx` | Perfil y OPSEC | profile/privacy APIs |
@@ -111,6 +128,8 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | `NetworkMonitor.tsx` | Captura, filtros, estadisticas | network REST/Socket |
 | `CheckIns.tsx` | Builder y lista en vivo | check-in REST/event |
 | `AuditTrail.tsx` | Timeline y paquetes | audit/case reports |
+| `DashboardAccess.tsx` | Login de operador | auth API |
+| `AccountSettings.tsx` | Cambio de usuario/contrasena | auth API y revocacion global |
 
 ## Dependencias externas
 
@@ -118,6 +137,7 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | --- | --- | --- |
 | WhatsApp/Baileys | Sesion y eventos | QR, reconexion o tracking no disponible |
 | MongoDB | Persistencia | Health degradado y perdida de funciones durables |
+| Redis | Sesiones, rate limits y contadores compartidos | El backend no inicia; login/submit fallan cerrados |
 | Npcap/libpcap | Captura local | Network/Call no disponibles |
 | DB-IP/ip-api | Enriquecimiento | Resultado sin metadata ampliada |
 | Navegador | GPS y metadata Check-In | Permiso denegado o campos no disponibles |

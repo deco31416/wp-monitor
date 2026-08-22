@@ -387,6 +387,24 @@ generated-reports/
 reports/generated/
 reports/private/
 
+# Standalone report/evidence downloads saved inside the workspace
+final-report*
+contact-report*
+activity-report*
+evidence-package*
+audit-export*
+*.pdf
+*.zip
+*.csv
+
+# Allow intentionally sanitized fixtures/examples when required
+!*.example.pdf
+!*.sample.pdf
+!*.fixture.pdf
+!*.example.csv
+!*.sample.csv
+!*.fixture.csv
+
 security-reports/
 security_reports/
 scan-results/
@@ -764,6 +782,7 @@ docker-compose.local.yml
 docker-compose.local.yaml
 compose.local.yml
 compose.local.yaml
+docker-compose.dokploy.yml
 
 docker-volumes/
 container-data/

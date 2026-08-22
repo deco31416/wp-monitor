@@ -1,0 +1,71 @@
+diff --git a/src/binding.cc b/src/binding.cc
+index 04f3d4b0b1c840340c6cef5aab3ba7721d29b3c8..69f6dee255b45d04a1173d361da6ec2198ded305 100644
+--- a/src/binding.cc
++++ b/src/binding.cc
+@@ -68,6 +68,8 @@ class Pcap : public Nan::ObjectWrap {
+     Nan::AsyncResource async_res;
+     bool closing;
+     bool handling_packets;
++    bool watcher_initialized;
++    bool referenced;
+ #ifdef _WIN32
+     HANDLE wait;
+     uv_async_t async;
+@@ -86,6 +88,8 @@ class Pcap : public Nan::ObjectWrap {
+       buffer_length = 0;
+       closing = false;
+       handling_packets = false;
++      watcher_initialized = false;
++      referenced = false;
+ #ifdef _WIN32
+       wait = nullptr;
+ #endif
+@@ -103,10 +107,13 @@ class Pcap : public Nan::ObjectWrap {
+           UnregisterWait(wait);
+           wait = nullptr;
+         }
+-        uv_close((uv_handle_t*)&async, cb_close);
++        if (watcher_initialized)
++          uv_close((uv_handle_t*)&async, cb_close);
+ #else
+-        uv_poll_stop(&poll_handle);
++        if (watcher_initialized)
++          uv_poll_stop(&poll_handle);
+ #endif
++        watcher_initialized = false;
+         closing = true;
+         cleanup();
+         return true;
+@@ -120,6 +127,9 @@ class Pcap : public Nan::ObjectWrap {
+         pcap_handle = nullptr;
+         buffer_data = nullptr;
+         buffer_length = 0;
+-        Unref();
++        if (referenced) {
++          Unref();
++          referenced = false;
++        }
+       }
+     }
+@@ -401,6 +411,7 @@ class Pcap : public Nan::ObjectWrap {
+                         &obj->async,
+                         (uv_async_cb)cb_packets);
+       assert(r == 0);
++      obj->watcher_initialized = true;
+       obj->async.data = obj;
+       r = RegisterWaitForSingleObject(
+         &obj->wait,
+@@ -427,7 +438,8 @@ class Pcap : public Nan::ObjectWrap {
+       obj->fd = pcap_get_selectable_fd(obj->pcap_handle);
+       r = uv_poll_init(uv_default_loop(), &obj->poll_handle, obj->fd);
+       assert(r == 0);
++      obj->watcher_initialized = true;
+       r = uv_poll_start(&obj->poll_handle, UV_READABLE, cb_packets);
+       assert(r == 0);
+       obj->poll_handle.data = obj;
+ #endif
+@@ -435,3 +447,4 @@ class Pcap : public Nan::ObjectWrap {
+       obj->Ref();
++      obj->referenced = true;
+       info.GetReturnValue().Set(ret);
+     }

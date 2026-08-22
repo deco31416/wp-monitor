@@ -25,7 +25,7 @@ flowchart TD
 
 **Revision:**
 
-- `REACT_APP_API_URL` durante build;
+- `VITE_API_URL` durante build;
 - `client/src/auth.ts` usa fallback `http://localhost:4000`;
 - limpia/reconstruye el frontend si la variable estaba incrustada;
 - confirma CORS para `4001`.
@@ -38,10 +38,18 @@ Comprueba en orden:
 2. `/api/health` accesible;
 3. protocolo HTTP/HTTPS compatible;
 4. origen permitido;
-5. token correcto si la guardia esta activa;
+5. sesion de operador vigente y cookie aceptada;
 6. respuesta JSON y no una pagina HTML de proxy/404.
 
 `Unexpected token '<'` suele significar que el cliente esperaba JSON y recibio HTML.
+
+## Login o API responde 401/403
+
+- `401`: confirma usuario actual, sesion no expirada, MongoDB/Redis conectados y vuelve a iniciar sesion;
+- `403` en una mutacion: confirma que el `Origin` del frontend coincide exactamente con `ALLOWED_ORIGINS`;
+- en produccion confirma HTTPS extremo a extremo para que el navegador envie la cookie `Secure`;
+- cambiar `INITIAL_ADMIN_USERNAME` o `INITIAL_ADMIN_PASSWORD` no restablece una cuenta ya creada; usa **Account** mientras conserves acceso;
+- no intentes autenticar con cabecera Bearer: el contrato anterior fue retirado.
 
 ## WhatsApp no muestra QR
 

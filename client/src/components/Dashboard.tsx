@@ -1,14 +1,17 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Plus, Trash2, Zap, Settings, History, RotateCcw, User } from 'lucide-react';
-import { socket, ConnectionState } from '../App';
+import { useEffect, useState, useCallback } from 'react';
+import { Eye, EyeOff, Plus, Trash2, Zap, Settings, History, RotateCcw, User, ShieldCheck } from 'lucide-react';
+import type { ConnectionState } from '../App';
 import { ContactCard } from './ContactCard';
 import { Login } from './Login';
 import { API_URL, authFetch } from '../auth';
+import { selectPrimaryTrackerDevice, type CaseRecord, type TrackerDeviceInfo } from '../types';
+import { socket } from '../socket';
 
-type ProbeMethod = 'delete' | 'reaction';
+type ProbeMethod = 'passive' | 'delete' | 'reaction';
 
 interface DashboardProps {
     connectionState: ConnectionState;
+    experimentalProbesEnabled?: boolean;
 }
 
 interface SavedContact {
@@ -34,18 +37,31 @@ interface TrackerData {
     timestamp: number;
 }
 
-interface DeviceInfo {
+interface HistoricalTrackerMeasurement {
+    rtt?: number;
+    avg?: number;
+    median?: number;
+    threshold?: number;
+    state?: string;
+    timestamp: string | number;
+}
+
+interface TrackerUpdateEvent {
     jid: string;
-    state: string;
-    rtt: number;
-    avg: number;
+    sampleKind: 'initial' | 'probe';
+    devices: TrackerDeviceInfo[];
+    deviceCount: number;
+    presence: string | null;
+    connectionType: 'wifi' | 'cellular' | 'unknown' | null;
+    median: number;
+    threshold: number;
 }
 
 interface LiveState {
     jid: string;
     state: string;
     label: string;
-    source: 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+    source: 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
     confidence: 'none' | 'low' | 'medium' | 'high';
     lastSignalAt: string | null;
     explanation?: string;
@@ -58,26 +74,28 @@ interface ContactInfo {
     customName: string | null;
     pushName: string | null;
     data: TrackerData[];
-    devices: DeviceInfo[];
+    devices: TrackerDeviceInfo[];
     deviceCount: number;
     presence: string | null;
     profilePic: string | null;
-    connectionType?: 'wifi' | 'cellular' | 'unknown';
-    typingState?: 'composing' | 'recording' | null;
-    liveState?: LiveState | null;
-    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[];
+    connectionType?: 'wifi' | 'cellular' | 'unknown' | undefined;
+    typingState?: 'composing' | 'recording' | null | undefined;
+    liveState?: LiveState | null | undefined;
+    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[] | undefined;
 }
 
-export function Dashboard({ connectionState }: DashboardProps) {
+export function Dashboard({ connectionState, experimentalProbesEnabled = false }: DashboardProps) {
     const [inputNumber, setInputNumber] = useState('');
     const [inputAlias, setInputAlias] = useState('');
     const [caseId, setCaseId] = useState('');
     const [operatorName, setOperatorName] = useState('');
     const [authorizationNote, setAuthorizationNote] = useState('');
+    const [cases, setCases] = useState<CaseRecord[]>([]);
+    const [casesLoading, setCasesLoading] = useState(true);
     const [contacts, setContacts] = useState<Map<string, ContactInfo>>(new Map());
     const [error, setError] = useState<string | null>(null);
-    const [privacyMode, setPrivacyMode] = useState(false);
-    const [probeMethod, setProbeMethod] = useState<ProbeMethod>('delete');
+    const [privacyMode, setPrivacyMode] = useState(true);
+    const [probeMethod, setProbeMethod] = useState<ProbeMethod>('passive');
     const [showConnections, setShowConnections] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
     const [savedContacts, setSavedContacts] = useState<SavedContact[]>([]);
@@ -120,8 +138,40 @@ export function Dashboard({ connectionState }: DashboardProps) {
             });
     }, [mergeSavedContacts]);
 
+    const selectCase = useCallback((selectedCase: CaseRecord | undefined) => {
+        setCaseId(selectedCase?.caseId || '');
+        setOperatorName(selectedCase?.primaryOperator || '');
+        setAuthorizationNote(selectedCase?.authorizationNote || '');
+    }, []);
+
+    const fetchCases = useCallback(async () => {
+        setCasesLoading(true);
+        try {
+            const response = await authFetch(`${API_URL}/api/cases?limit=100`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const data = await response.json();
+            const selectableCases = Array.isArray(data)
+                ? (data as CaseRecord[]).filter(item => (
+                    item.status !== 'closed'
+                    && item.status !== 'archived'
+                    && !item.caseId.toUpperCase().startsWith('SYSTEM-')
+                ))
+                : [];
+
+            setCases(selectableCases);
+            selectCase(selectableCases[0]);
+        } catch (err) {
+            console.error('Failed to fetch cases:', err);
+            setCases([]);
+            selectCase(undefined);
+            setError('No se pudieron cargar los casos disponibles');
+        } finally {
+            setCasesLoading(false);
+        }
+    }, [selectCase]);
+
     const fetchHistory = useCallback(() => {
-        setHistoryLoading(true);
         authFetch(`${API_URL}/api/contacts/history`)
             .then(r => r.json())
             .then((data: SavedContact[]) => {
@@ -135,11 +185,19 @@ export function Dashboard({ connectionState }: DashboardProps) {
     }, []);
 
     useEffect(() => {
-        fetchActiveContacts();
-    }, [fetchActiveContacts]);
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (cancelled) return;
+            fetchActiveContacts();
+            void fetchCases();
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchActiveContacts, fetchCases]);
 
     useEffect(() => {
-        function onTrackerUpdate(update: any) {
+        function onTrackerUpdate(update: TrackerUpdateEvent) {
             const { jid, ...data } = update;
             if (!jid) return;
 
@@ -159,17 +217,18 @@ export function Dashboard({ connectionState }: DashboardProps) {
                     if (data.devices !== undefined) {
                         updatedContact.devices = data.devices;
                     }
-                    if (data.connectionType !== undefined) {
+                    if (data.connectionType !== null) {
                         updatedContact.connectionType = data.connectionType;
                     }
 
                     if (data.median !== undefined && data.devices && data.devices.length > 0) {
+                        const primaryDevice = selectPrimaryTrackerDevice(data.devices)!;
                         const newDataPoint: TrackerData = {
-                            rtt: data.devices[0].rtt,
-                            avg: data.devices[0].avg,
+                            rtt: primaryDevice.rtt,
+                            avg: primaryDevice.avg,
                             median: data.median,
                             threshold: data.threshold,
-                            state: data.devices.find((d: DeviceInfo) => d.state.includes('Online'))?.state || data.devices[0].state,
+                            state: primaryDevice.state,
                             timestamp: Date.now(),
                         };
                         updatedContact.data = [...updatedContact.data, newDataPoint];
@@ -248,7 +307,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
                 const next = new Map(prev);
                 trackedJids.forEach((id) => {
                     if (!next.has(id)) {
-                        const displayNumber = id.split('@')[0];
+                        const displayNumber = id.split('@')[0] ?? id;
                         next.set(id, {
                             jid: id,
                             displayNumber,
@@ -271,15 +330,15 @@ export function Dashboard({ connectionState }: DashboardProps) {
             trackedJids.forEach((id) => {
                 authFetch(`${API_URL}/api/history/${encodeURIComponent(id)}?limit=200`)
                     .then(r => r.json())
-                    .then((history: any[]) => {
+                    .then((history: HistoricalTrackerMeasurement[]) => {
                         if (history.length === 0) return;
-                        const historicalData: TrackerData[] = history.map((m: any) => ({
-                            rtt: m.rtt ?? 0,
-                            avg: m.avg ?? 0,
-                            median: m.median ?? 0,
-                            threshold: m.threshold ?? 0,
-                            state: m.state ?? 'Unknown',
-                            timestamp: new Date(m.timestamp).getTime(),
+                        const historicalData: TrackerData[] = history.map((measurement) => ({
+                            rtt: measurement.rtt ?? 0,
+                            avg: measurement.avg ?? 0,
+                            median: measurement.median ?? 0,
+                            threshold: measurement.threshold ?? 0,
+                            state: measurement.state ?? 'Unknown',
+                            timestamp: new Date(measurement.timestamp).getTime(),
                         }));
                         setContacts(prev => {
                             const next = new Map(prev);
@@ -447,21 +506,38 @@ export function Dashboard({ connectionState }: DashboardProps) {
     };
 
     const handleRemove = (jid: string) => {
-        socket.emit('remove-contact', jid);
+        if (!window.confirm('¿Deseas finalizar el seguimiento de este contacto? Los registros existentes se conservarán.')) return;
+        socket.emit('remove-contact', { jid, stopReason: 'Stopped from dashboard' });
     };
 
     const handleReactivate = (jid: string) => {
-        socket.emit('reactivate-contact', jid);
+        if (!caseId.trim() || !operatorName.trim() || !authorizationNote.trim()) {
+            setError('Case ID, operador y autorizacion son requeridos para reactivar');
+            setTimeout(() => setError(null), 3000);
+            return;
+        }
+        socket.emit('reactivate-contact', {
+            jid,
+            caseId: caseId.trim(),
+            operatorName: operatorName.trim(),
+            authorizationNote: authorizationNote.trim(),
+        });
     };
 
     const handleProbeMethodChange = (method: ProbeMethod) => {
         socket.emit('set-probe-method', method);
     };
 
-    // Load history when panel is opened
-    useEffect(() => {
-        if (showHistory) fetchHistory();
-    }, [showHistory, fetchHistory]);
+    const refreshHistory = () => {
+        setHistoryLoading(true);
+        fetchHistory();
+    };
+
+    const toggleHistory = () => {
+        const nextVisible = !showHistory;
+        setShowHistory(nextVisible);
+        if (nextVisible) refreshHistory();
+    };
 
     return (
         <div className="space-y-6">
@@ -469,7 +545,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
             <div className="card p-5">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                     <div className="flex items-center gap-3">
-                        <h2 className="text-lg font-semibold text-txt-primary">Track Contacts</h2>
+                        <h2 className="text-lg font-semibold text-txt-primary">Seguimiento de contactos</h2>
                         <button
                             onClick={() => setShowConnections(!showConnections)}
                             className={`btn-ghost flex items-center gap-1.5 !py-1.5 !px-3 !text-xs ${
@@ -477,24 +553,36 @@ export function Dashboard({ connectionState }: DashboardProps) {
                             }`}
                         >
                             <Settings size={13} />
-                            {showConnections ? 'Hide' : 'Connections'}
+                            {showConnections ? 'Ocultar conexión' : 'Conexión'}
                         </button>
                         <button
-                            onClick={() => setShowHistory(!showHistory)}
+                            onClick={toggleHistory}
                             className={`btn-ghost flex items-center gap-1.5 !py-1.5 !px-3 !text-xs ${
                                 showHistory ? '!bg-accent/15 !text-accent !border-accent/25' : ''
                             }`}
                         >
                             <History size={13} />
-                            {showHistory ? 'Hide' : 'History'}
+                            {showHistory ? 'Ocultar historial' : 'Historial'}
                         </button>
                     </div>
 
                     <div className="flex items-center gap-3">
-                        {/* Probe Method */}
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-txt-muted">Probe:</span>
-                            <div className="flex rounded-xl overflow-hidden border border-surface-border">
+                        <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/10 px-3 py-1.5 text-xs text-success">
+                            <ShieldCheck size={14} /> Seguimiento pasivo
+                        </div>
+
+                        {experimentalProbesEnabled && (
+                        <details className="relative">
+                            <summary className="cursor-pointer list-none rounded-xl border border-warning/30 bg-warning/10 px-3 py-1.5 text-xs text-warning">
+                                Opciones experimentales
+                            </summary>
+                            <div className="absolute right-0 top-10 z-20 flex rounded-xl overflow-hidden border border-surface-border bg-surface-overlay shadow-xl">
+                                <button
+                                    onClick={() => handleProbeMethodChange('passive')}
+                                    className={`px-3 py-1.5 text-xs font-medium ${probeMethod === 'passive' ? 'bg-success/15 text-success' : 'text-txt-muted'}`}
+                                >
+                                    Pasivo
+                                </button>
                                 <button
                                     onClick={() => handleProbeMethodChange('delete')}
                                     className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
@@ -503,7 +591,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
                                             : 'bg-surface-overlay text-txt-muted hover:text-txt-primary'
                                     }`}
                                 >
-                                    <Trash2 size={12} /> Delete
+                                    <Trash2 size={12} /> Eliminación
                                 </button>
                                 <button
                                     onClick={() => handleProbeMethodChange('reaction')}
@@ -513,10 +601,11 @@ export function Dashboard({ connectionState }: DashboardProps) {
                                             : 'bg-surface-overlay text-txt-muted hover:text-txt-primary'
                                     }`}
                                 >
-                                    <Zap size={12} /> Reaction
+                                    <Zap size={12} /> Reacción
                                 </button>
                             </div>
-                        </div>
+                        </details>
+                        )}
 
                         {/* Privacy Toggle */}
                         <button
@@ -528,58 +617,69 @@ export function Dashboard({ connectionState }: DashboardProps) {
                             }`}
                         >
                             {privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
-                            Privacy {privacyMode ? 'ON' : 'OFF'}
+                            {privacyMode ? 'Datos protegidos' : 'Datos visibles'}
                         </button>
                     </div>
                 </div>
 
                 {/* Input row */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                    <input
-                        type="text"
-                        placeholder="Case ID"
-                        className="input-field"
+                    <select
+                        aria-label="Caso activo"
+                        className="select-field"
                         value={caseId}
-                        onChange={(e) => setCaseId(e.target.value)}
-                    />
+                        onChange={(e) => selectCase(cases.find(item => item.caseId === e.target.value))}
+                        disabled={casesLoading || cases.length === 0}
+                    >
+                        <option value="">
+                            {casesLoading ? 'Cargando casos...' : 'No hay casos disponibles'}
+                        </option>
+                        {cases.map(item => (
+                            <option key={item.caseId} value={item.caseId}>
+                                {item.caseId}{item.title && item.title !== item.caseId ? ` - ${item.title}` : ''} ({item.status})
+                            </option>
+                        ))}
+                    </select>
                     <input
                         type="text"
+                        aria-label="Operador del caso"
                         placeholder="Operador"
                         className="input-field"
                         value={operatorName}
-                        onChange={(e) => setOperatorName(e.target.value)}
+                        readOnly
                     />
                     <input
                         type="text"
+                        aria-label="Autorización del caso"
                         placeholder="Autorizacion / motivo"
                         className="input-field"
                         value={authorizationNote}
-                        onChange={(e) => setAuthorizationNote(e.target.value)}
+                        readOnly
                     />
                 </div>
                 <div className="flex gap-3">
                     <input
                         type="text"
-                        placeholder="Phone number with country code"
+                        placeholder="Número con código de país"
                         className="input-field flex-1"
                         value={inputNumber}
                         onChange={(e) => setInputNumber(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                     />
                     <input
                         type="text"
-                        placeholder="Alias (optional)"
+                        placeholder="Alias (opcional)"
                         className="input-field w-44"
                         value={inputAlias}
                         onChange={(e) => setInputAlias(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                     />
                     <button
                         onClick={handleAdd}
                         disabled={!inputNumber.trim() || !caseId.trim() || !operatorName.trim() || !authorizationNote.trim()}
                         className="btn-primary flex items-center gap-2 disabled:opacity-40"
                     >
-                        <Plus size={18} /> Add
+                        <Plus size={18} /> Agregar
                     </button>
                 </div>
 
@@ -602,21 +702,21 @@ export function Dashboard({ connectionState }: DashboardProps) {
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-sm font-semibold text-txt-primary flex items-center gap-2">
                             <History size={16} className="text-accent" />
-                            Contact History
+                            Historial de contactos
                             <span className="badge-neutral !text-[10px]">{savedContacts.length}</span>
                         </h3>
-                        <button onClick={fetchHistory} className="btn-ghost !text-xs !py-1 !px-2.5 flex items-center gap-1">
-                            <RotateCcw size={12} /> Refresh
+                        <button onClick={refreshHistory} className="btn-ghost !text-xs !py-1 !px-2.5 flex items-center gap-1">
+                            <RotateCcw size={12} /> Actualizar
                         </button>
                     </div>
 
                     {historyLoading ? (
                         <div className="text-center py-4">
                             <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                            <p className="text-xs text-txt-muted">Loading history...</p>
+                            <p className="text-xs text-txt-muted">Cargando historial...</p>
                         </div>
                     ) : savedContacts.length === 0 ? (
-                        <p className="text-xs text-txt-dim text-center py-4">No contacts in history</p>
+                        <p className="text-xs text-txt-dim text-center py-4">No hay contactos en el historial</p>
                     ) : (
                         <div className="space-y-2 max-h-[300px] overflow-y-auto">
                             {savedContacts.map(sc => {
@@ -625,10 +725,10 @@ export function Dashboard({ connectionState }: DashboardProps) {
                                     if (!sc.lastSeen) return '';
                                     const diff = Date.now() - new Date(sc.lastSeen).getTime();
                                     const mins = Math.floor(diff / 60000);
-                                    if (mins < 60) return `${mins}m ago`;
+                                    if (mins < 60) return `hace ${mins}m`;
                                     const hrs = Math.floor(mins / 60);
-                                    if (hrs < 24) return `${hrs}h ago`;
-                                    return `${Math.floor(hrs / 24)}d ago`;
+                                    if (hrs < 24) return `hace ${hrs}h`;
+                                    return `hace ${Math.floor(hrs / 24)}d`;
                                 })();
                                 const profilePicSrc = sc.profilePic
                                     ? `${API_URL}/api/contact/${encodeURIComponent(sc.jid)}/profile-picture?cache=${encodeURIComponent(sc.profilePic)}`
@@ -657,24 +757,24 @@ export function Dashboard({ connectionState }: DashboardProps) {
                                                 <p className="text-xs font-medium text-txt-primary">
                                                     {sc.customName || sc.pushName || sc.contactName || sc.number}
                                                     {sc.isBusinessAccount && (
-                                                        <span className="ml-1.5 text-[9px] text-accent">● Business</span>
+                                                        <span className="ml-1.5 text-[9px] text-accent">● Empresa</span>
                                                     )}
                                                 </p>
                                                 <p className="text-[10px] text-txt-dim">
-                                                    +{sc.number} · Last seen {timeAgo}
+                                                    +{sc.number} · Última actividad {timeAgo}
                                                 </p>
                                             </div>
                                         </div>
 
                                         <div className="flex items-center gap-2">
                                             {isCurrentlyTracked ? (
-                                                <span className="badge-success !text-[10px]">Active</span>
+                                                <span className="badge-success !text-[10px]">Activo</span>
                                             ) : (
                                                 <button
                                                     onClick={() => handleReactivate(sc.jid)}
                                                     className="btn-primary !text-[10px] !py-1 !px-2.5 flex items-center gap-1"
                                                 >
-                                                    <RotateCcw size={10} /> Track
+                                                    <RotateCcw size={10} /> Reactivar
                                                 </button>
                                             )}
                                         </div>
@@ -692,8 +792,8 @@ export function Dashboard({ connectionState }: DashboardProps) {
                     <div className="w-14 h-14 rounded-2xl bg-surface-overlay flex items-center justify-center mx-auto mb-4">
                         <Plus size={28} className="text-txt-dim" />
                     </div>
-                    <p className="text-txt-secondary text-lg font-medium">No contacts being tracked</p>
-                    <p className="text-txt-dim text-sm mt-2">Add a contact above to start tracking</p>
+                    <p className="text-txt-secondary text-lg font-medium">No hay contactos en seguimiento</p>
+                    <p className="text-txt-dim text-sm mt-2">Selecciona un caso y agrega un contacto para comenzar</p>
                 </div>
             ) : (
                 <div className="space-y-6">

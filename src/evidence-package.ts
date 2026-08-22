@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
-import { getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getStateDistribution } from './db.js';
-
-const SOFTWARE_VERSION = process.env.npm_package_version || '2.9.1';
+import { countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
+import { buildPageMetadata } from './page-metadata.js';
+import { SOFTWARE_VERSION } from './version.js';
 
 export function hashJson(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(value, null, 2)).digest('hex');
@@ -62,12 +62,24 @@ export async function buildEvidencePackage(caseId: string) {
         .filter(link => link.type === 'call_analysis')
         .map(link => link.refId);
     const callIds = Array.from(new Set([...extractCallIdsFromAudit(auditEvents), ...directCallIds]));
-    const callAnalyses = await getCallAnalysesByCallIds(callIds);
+    const callAnalyses = await getCallAnalysesByCallIds(callIds, caseId);
     const targetJids = extractTargetJids(auditEvents, evidenceLinks);
     const activityStats = await Promise.all(targetJids.map(async targetJid => ({
         targetJid,
-        stats: await getStateDistribution(targetJid),
+        stats: await getStateDistribution(targetJid, caseId),
     })));
+    const observedActivity = await Promise.all(targetJids.map(async targetJid => {
+        const limit = 5000;
+        const [events, total] = await Promise.all([
+            getObservedActivityEventsForCase(targetJid, caseId, limit),
+            countObservedActivityEvents(targetJid, caseId),
+        ]);
+        return {
+            targetJid,
+            events,
+            page: buildPageMetadata(events.length, total, limit),
+        };
+    }));
     const networkSummary = buildNetworkSummary(auditEvents);
     const generatedAt = new Date().toISOString();
 
@@ -77,6 +89,7 @@ export async function buildEvidencePackage(caseId: string) {
         evidenceLinks,
         callAnalysis: callAnalyses,
         activityStats,
+        observedActivity,
         networkSummary,
     };
 
@@ -86,12 +99,13 @@ export async function buildEvidencePackage(caseId: string) {
         evidenceLinks: hashJson(sections.evidenceLinks),
         callAnalysis: hashJson(sections.callAnalysis),
         activityStats: hashJson(sections.activityStats),
+        observedActivity: hashJson(sections.observedActivity),
         networkSummary: hashJson(sections.networkSummary),
     };
 
     const manifest = {
         packageType: 'evidence-package',
-        version: '1.0',
+        version: '1.1',
         software: {
             name: 'WP MONITOR',
             version: SOFTWARE_VERSION,
@@ -105,6 +119,14 @@ export async function buildEvidencePackage(caseId: string) {
             { name: 'evidenceLinks', format: 'json', sha256: sectionHashes.evidenceLinks, count: evidenceLinks.length },
             { name: 'callAnalysis', format: 'json', sha256: sectionHashes.callAnalysis, count: callAnalyses.length },
             { name: 'activityStats', format: 'json', sha256: sectionHashes.activityStats, count: activityStats.length },
+            {
+                name: 'observedActivity',
+                format: 'json',
+                sha256: sectionHashes.observedActivity,
+                count: observedActivity.reduce((sum, item) => sum + item.events.length, 0),
+                totalAvailable: observedActivity.reduce((sum, item) => sum + item.page.total, 0),
+                truncated: observedActivity.some(item => item.page.truncated),
+            },
             { name: 'networkSummary', format: 'json', sha256: sectionHashes.networkSummary },
         ],
         limitations: [
@@ -193,13 +215,24 @@ function summarizeActivityStats(activityStats: any[]) {
         const last7d = getPeriodMetric(stats, 'last7d');
         const last30d = getPeriodMetric(stats, 'last30d');
         const coverage = stats.insights?.dailyCoverage || [];
-        const activeDays = coverage.filter((day: any) => day.totalMeasurements > 0).length;
+        const activeDays = coverage.filter((day: any) => (
+            (day.conclusiveMeasurements ?? day.totalMeasurements ?? 0) > 0
+        )).length;
+        const noAckPct = stats.noAck ?? stats.offline ?? 0;
+        const observed = stats.observedActivity || {};
         return {
             targetJid: entry.targetJid,
             totalMeasurements: stats.totalMeasurements || 0,
+            conclusiveMeasurements: stats.conclusiveMeasurements || 0,
+            inconclusiveMeasurements: stats.inconclusiveMeasurements || 0,
+            acknowledgedRttMeasurements: stats.acknowledgedRttMeasurements || 0,
             onlinePct: stats.online || 0,
             standbyPct: stats.standby || 0,
-            offlinePct: stats.offline || 0,
+            calibratingPct: stats.calibrating || 0,
+            noAckPct,
+            unknownPct: stats.unknown || 0,
+            // Compatibility alias for previously generated JSON consumers.
+            offlinePct: noAckPct,
             avgRtt: stats.avgRtt || 0,
             firstSeen: stats.firstSeen || null,
             lastSeen: stats.lastSeen || null,
@@ -209,6 +242,11 @@ function summarizeActivityStats(activityStats: any[]) {
             last24h,
             last7d,
             last30d,
+            observedEventCount: observed.totalEvents || 0,
+            observedActiveDays: observed.activeDays || 0,
+            observedBySource: observed.bySource || {},
+            observedConfidence: observed.confidence || {},
+            lastObservedEvent: observed.lastEvent || null,
         };
     });
 }
@@ -220,6 +258,21 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
     const evidenceLinks = evidencePackage.sections.evidenceLinks || [];
     const callAnalysis = evidencePackage.sections.callAnalysis || [];
     const activityStats = summarizeActivityStats(evidencePackage.sections.activityStats || []);
+    const observedSignals = (evidencePackage.sections.observedActivity || [])
+        .flatMap((entry: any) => (entry.events || []).map((event: any) => ({
+            targetJid: entry.targetJid,
+            source: event.source,
+            type: event.type,
+            label: event.label,
+            confidence: event.confidence,
+            timestamp: event.timestamp,
+            timestampUtc: event.timestampUtc,
+        })))
+        .sort((a: any, b: any) => new Date(a.timestampUtc).getTime() - new Date(b.timestampUtc).getTime());
+    const observedActivityTotalAvailable = (evidencePackage.sections.observedActivity || [])
+        .reduce((sum: number, entry: any) => sum + (entry.page?.total ?? entry.events?.length ?? 0), 0);
+    const observedActivityTruncated = (evidencePackage.sections.observedActivity || [])
+        .some((entry: any) => entry.page?.truncated === true);
 
     const operators = Array.from(new Set(auditEvents.map(event => event.operatorName).filter(Boolean)));
     const targets = Array.from(new Set([
@@ -257,6 +310,9 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         evidenceLinkCount: evidenceLinks.length,
         callAnalysisCount: callAnalysis.length,
         activityStatsCount: activityStats.length,
+        observedActivityEventCount: observedSignals.length,
+        observedActivityTotalAvailable,
+        observedActivityTruncated,
         networkCaptureCount: evidencePackage.sections.networkSummary?.captureStopCount || 0,
         candidateIpCount: candidateIps.length,
         nonConclusiveIpObservationCount: nonConclusiveIpObservations.length,
@@ -271,6 +327,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         },
         network: evidencePackage.sections.networkSummary,
         activityStats,
+        observedSignals,
         candidateIps,
         nonConclusiveIpObservations,
         limitations: evidencePackage.manifest.limitations,
@@ -278,7 +335,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
 
     const reportWithoutIntegrity = {
         reportType: 'final-case-report',
-        version: '1.0',
+        version: '1.1',
         software: evidencePackage.manifest.software,
         summary,
         authorization: {
@@ -349,16 +406,30 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         ? report.findings.activityStats.map((item: any) => `
             <tr>
                 <td><code>${escapeHtml(item.targetJid)}</code></td>
-                <td>${escapeHtml(item.totalMeasurements)}</td>
-                <td>${escapeHtml(item.onlinePct)}%</td>
-                <td>${escapeHtml(item.last24h?.onlinePct ?? '-')}% <span class="muted">(${escapeHtml(formatStatsChange(item.last24h?.changeOnlinePct))})</span></td>
-                <td>${escapeHtml(item.last7d?.onlinePct ?? '-')}% <span class="muted">(${escapeHtml(formatStatsChange(item.last7d?.changeOnlinePct))})</span></td>
-                <td>${escapeHtml(item.last30d?.onlinePct ?? '-')}%</td>
+                <td>${escapeHtml(item.observedEventCount)}<br><span class="muted">${escapeHtml(item.observedActiveDays)} día(s)</span></td>
+                <td>${escapeHtml(item.observedBySource?.message || 0)} / ${escapeHtml(item.observedBySource?.receipt || 0)} / ${escapeHtml(item.observedBySource?.presence || 0)} / ${escapeHtml(item.observedBySource?.call || 0)}</td>
+                <td>${escapeHtml(item.conclusiveMeasurements)} / ${escapeHtml(item.totalMeasurements)}</td>
+                <td>${item.conclusiveMeasurements > 0 ? `${escapeHtml(item.onlinePct)}%` : '—'}</td>
+                <td>${(item.last24h?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last24h.onlinePct)}% <span class="muted">(${escapeHtml(formatStatsChange(item.last24h.changeOnlinePct))})</span>` : '—'}</td>
+                <td>${(item.last7d?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last7d.onlinePct)}% <span class="muted">(${escapeHtml(formatStatsChange(item.last7d.changeOnlinePct))})</span>` : '—'}</td>
+                <td>${(item.last30d?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last30d.onlinePct)}%` : '—'}</td>
                 <td>${escapeHtml(item.coverageActiveDays14)}/14</td>
                 <td><span class="score ${item.reliability?.label === 'strong' ? 'strong' : item.reliability?.label === 'usable' ? 'medium' : 'low'}">${escapeHtml(item.reliability?.score ?? 0)}/100</span><br><span class="muted">${escapeHtml(item.reliability?.label || 'initial')}</span></td>
             </tr>
         `).join('')
-        : '<tr><td colspan="8" class="muted">No se registraron estadisticas de actividad para contactos vinculados.</td></tr>';
+        : '<tr><td colspan="10" class="muted">No se registraron estadisticas de actividad para contactos vinculados.</td></tr>';
+
+    const observedSignalRows = report.findings.observedSignals.length
+        ? report.findings.observedSignals.slice(-200).reverse().map((item: any) => `
+            <tr>
+                <td>${escapeHtml(formatReportDate(item.timestampUtc))}</td>
+                <td><code>${escapeHtml(item.targetJid)}</code></td>
+                <td>${escapeHtml(item.source)}</td>
+                <td>${escapeHtml(item.label)}</td>
+                <td>${escapeHtml(item.confidence)}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="5" class="muted">No se registraron señales observables atribuibles al caso.</td></tr>';
 
     const timelineHtml = timelineRows.length
         ? timelineRows.map(item => `
@@ -448,7 +519,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
       text-transform: uppercase;
       letter-spacing: .08em;
     }
-    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 26px; }
+    .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin: 0 0 26px; }
     .metric {
       border: 1px solid var(--line);
       background: linear-gradient(180deg, #fff, var(--soft));
@@ -560,6 +631,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     <div class="metric"><strong>${escapeHtml(report.summary.evidenceLinkCount)}</strong><span>Evidencias vinculadas</span></div>
     <div class="metric"><strong>${escapeHtml(report.summary.callAnalysisCount)}</strong><span>Analisis de llamada</span></div>
     <div class="metric"><strong><span class="score ${scoreTone}">${escapeHtml(report.summary.highestCandidateScore)}/100</span></strong><span>Mayor score candidato</span></div>
+    <div class="metric"><strong>${escapeHtml(report.summary.observedActivityEventCount)}</strong><span>Señales observadas</span></div>
   </div>
 
   <section class="panel">
@@ -575,13 +647,27 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
   </section>
 
   <section>
-    <h2>Estadisticas de Actividad Observada</h2>
+    <h2>Señales de Actividad Observada</h2>
     <div class="notice">
-      Estas metricas resumen presencia observada, cobertura y confiabilidad de muestra. No deben interpretarse como contenido de mensajes ni como ubicacion.
+      Eventos pasivos atribuibles al caso. Se documenta tipo, fuente y confianza, sin incluir contenido de mensajes.
+      ${report.summary.observedActivityTruncated ? `El anexo incluye ${escapeHtml(report.summary.observedActivityEventCount)} de ${escapeHtml(report.summary.observedActivityTotalAvailable)} señales disponibles; revise los limites declarados en el JSON.` : ''}
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Target</th><th>Mediciones</th><th>Online total</th><th>24h</th><th>7d</th><th>30d</th><th>Cobertura</th><th>Confiabilidad</th></tr></thead>
+        <thead><tr><th>UTC</th><th>Target</th><th>Fuente</th><th>Evento</th><th>Confianza</th></tr></thead>
+        <tbody>${observedSignalRows}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Actividad y Medición Técnica</h2>
+    <div class="notice">
+      Las señales pasivas y la medición RTT se presentan por separado. Una sesión puede tener actividad real aun cuando no exista latencia confirmada.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Target</th><th>Señales 30d / días</th><th>M / C / P / L (30d)</th><th>RTT concl. / intentos</th><th>Online RTT</th><th>Online / concl. 24h</th><th>Online / concl. 7d</th><th>Online / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
         <tbody>${activityRows}</tbody>
       </table>
     </div>
@@ -829,34 +915,56 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     pdf.paragraph(report.authorization.authorizationNote);
     if (report.authorization.description) pdf.paragraph(report.authorization.description, 92, 8, '64748B');
 
-    pdf.heading('Estadisticas de actividad observada');
-    pdf.paragraph('Estas metricas resumen presencia observada, cobertura y confiabilidad de muestra. No representan contenido de mensajes ni ubicacion.', 92, 8, '9A3412');
+    pdf.heading('Senales de actividad observada');
+    pdf.paragraph('Eventos pasivos atribuibles al caso. Se documenta tipo, fuente y confianza, sin incluir contenido de mensajes.', 92, 8, '9A3412');
+    if (report.summary.observedActivityTruncated) {
+        pdf.paragraph(`El anexo incluye ${report.summary.observedActivityEventCount} de ${report.summary.observedActivityTotalAvailable} senales disponibles; revise los limites declarados en el JSON.`, 92, 8, '9A3412');
+    }
+    const observedSignals = report.findings.observedSignals.slice(-30).reverse();
+    if (observedSignals.length === 0) {
+        pdf.paragraph('No se registraron senales observables atribuibles al caso.');
+    } else {
+        for (const item of observedSignals) {
+            pdf.ensure(20);
+            pdf.text(pdf.margin, pdf.y, formatReportDate(item.timestampUtc), 7, 'F3', '64748B');
+            pdf.text(pdf.margin + 150, pdf.y, item.targetJid, 7, 'F3', '334155');
+            pdf.text(pdf.margin + 315, pdf.y, item.source, 7, 'F1', '334155');
+            pdf.text(pdf.margin + 370, pdf.y, item.label, 7, 'F1', '172033');
+            pdf.text(pdf.margin + 500, pdf.y, item.confidence, 7, 'F2', item.confidence === 'high' ? '166534' : '92400E');
+            pdf.y -= 14;
+        }
+    }
+
+    pdf.heading('Actividad y medicion tecnica');
+    pdf.paragraph('Las senales pasivas y la medicion RTT se presentan por separado. Una sesion puede tener actividad real aun cuando no exista latencia confirmada.', 92, 8, '9A3412');
     const activityStats = report.findings.activityStats.slice(0, 12);
     if (activityStats.length === 0) {
         pdf.paragraph('No se registraron estadisticas de actividad para contactos vinculados.');
     } else {
         pdf.ensure(28);
         pdf.text(pdf.margin, pdf.y, 'Target', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 150, pdf.y, 'Total', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 205, pdf.y, 'Online', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 260, pdf.y, '24h', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 315, pdf.y, '7d', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 370, pdf.y, '30d', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 425, pdf.y, 'Cobertura', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 485, pdf.y, 'Conf.', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 145, pdf.y, 'Senales', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 195, pdf.y, 'Concl./int.', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 255, pdf.y, 'Online RTT', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 315, pdf.y, '24h', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 360, pdf.y, '7d', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 405, pdf.y, '30d', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 450, pdf.y, 'Cobertura', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 510, pdf.y, 'Conf.', 8, 'F2', '64748B');
         pdf.y -= 10;
         pdf.line(pdf.margin, pdf.y, pdf.width - pdf.margin, pdf.y, 'CBD5E1');
         pdf.y -= 14;
         for (const item of activityStats) {
             pdf.ensure(22);
             pdf.text(pdf.margin, pdf.y, item.targetJid, 7, 'F3', '334155');
-            pdf.text(pdf.margin + 150, pdf.y, String(item.totalMeasurements), 7, 'F1', '334155');
-            pdf.text(pdf.margin + 205, pdf.y, `${item.onlinePct}%`, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 260, pdf.y, `${item.last24h?.onlinePct ?? '-'}%`, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 315, pdf.y, `${item.last7d?.onlinePct ?? '-'}%`, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 370, pdf.y, `${item.last30d?.onlinePct ?? '-'}%`, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 425, pdf.y, `${item.coverageActiveDays14}/14`, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 485, pdf.y, `${item.reliability?.score ?? 0}/100`, 7, 'F2', item.reliability?.label === 'strong' ? '166534' : item.reliability?.label === 'usable' ? '92400E' : '475569');
+            pdf.text(pdf.margin + 145, pdf.y, String(item.observedEventCount), 7, 'F2', item.observedEventCount > 0 ? '166534' : '475569');
+            pdf.text(pdf.margin + 195, pdf.y, `${item.conclusiveMeasurements}/${item.totalMeasurements}`, 7, 'F1', '334155');
+            pdf.text(pdf.margin + 255, pdf.y, item.conclusiveMeasurements > 0 ? `${item.onlinePct}%` : '-', 7, 'F1', '334155');
+            pdf.text(pdf.margin + 315, pdf.y, (item.last24h?.conclusiveMeasurements ?? 0) > 0 ? `${item.last24h.onlinePct}%` : '-', 7, 'F1', '334155');
+            pdf.text(pdf.margin + 360, pdf.y, (item.last7d?.conclusiveMeasurements ?? 0) > 0 ? `${item.last7d.onlinePct}%` : '-', 7, 'F1', '334155');
+            pdf.text(pdf.margin + 405, pdf.y, (item.last30d?.conclusiveMeasurements ?? 0) > 0 ? `${item.last30d.onlinePct}%` : '-', 7, 'F1', '334155');
+            pdf.text(pdf.margin + 450, pdf.y, `${item.coverageActiveDays14}/14`, 7, 'F1', '334155');
+            pdf.text(pdf.margin + 510, pdf.y, `${item.reliability?.score ?? 0}/100`, 7, 'F2', item.reliability?.label === 'strong' ? '166534' : item.reliability?.label === 'usable' ? '92400E' : '475569');
             pdf.y -= 16;
         }
     }
@@ -982,7 +1090,7 @@ const CRC32_TABLE = (() => {
 function crc32(buffer: Buffer): number {
     let crc = 0xffffffff;
     for (const byte of buffer) {
-        crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+        crc = (CRC32_TABLE[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
     }
     return (crc ^ 0xffffffff) >>> 0;
 }
@@ -1196,10 +1304,16 @@ function buildCsvAnnexes(
 
     const activityRows = finalReport.findings.activityStats.map((item: any) => [
         item.targetJid,
+        item.observedEventCount,
+        item.observedActiveDays,
+        item.observedBySource?.message || 0,
+        item.observedBySource?.receipt || 0,
+        item.observedBySource?.presence || 0,
+        item.observedBySource?.call || 0,
         item.totalMeasurements,
         item.onlinePct,
         item.standbyPct,
-        item.offlinePct,
+        item.noAckPct,
         item.avgRtt,
         item.firstSeen || '',
         item.lastSeen || '',
@@ -1213,6 +1327,20 @@ function buildCsvAnnexes(
         item.reliability?.score ?? '',
         item.reliability?.label ?? '',
         item.reliability?.reasonCodes?.join('|') || '',
+        item.calibratingPct,
+        item.unknownPct,
+        item.conclusiveMeasurements,
+        item.inconclusiveMeasurements,
+        item.acknowledgedRttMeasurements,
+    ]);
+
+    const observedActivityRows = finalReport.findings.observedSignals.map((item: any) => [
+        item.timestampUtc,
+        item.targetJid,
+        item.source,
+        item.type,
+        item.label,
+        item.confidence,
     ]);
 
     const annexes = [
@@ -1261,8 +1389,15 @@ function buildCsvAnnexes(
         {
             name: 'annexes/activity-stats.csv',
             data: toCsv(
-                ['targetJid', 'totalMeasurements', 'onlinePct', 'standbyPct', 'offlinePct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes'],
+                ['targetJid', 'observedEventCount', 'observedActiveDays', 'observedMessages', 'observedReceipts', 'observedPresence', 'observedCalls', 'totalMeasurements', 'onlinePct', 'standbyPct', 'noAckPct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes', 'calibratingPct', 'unknownPct', 'conclusiveMeasurements', 'inconclusiveMeasurements', 'acknowledgedRttMeasurements'],
                 activityRows
+            ),
+        },
+        {
+            name: 'annexes/observed-activity.csv',
+            data: toCsv(
+                ['timestampUtc', 'targetJid', 'source', 'type', 'label', 'confidence'],
+                observedActivityRows,
             ),
         },
     ];
@@ -1299,6 +1434,7 @@ export function buildEvidenceZip(evidencePackage: NonNullable<Awaited<ReturnType
         { name: 'evidence-links.json', data: json(evidencePackage.sections.evidenceLinks) },
         { name: 'call-analysis.json', data: json(evidencePackage.sections.callAnalysis) },
         { name: 'activity-stats.json', data: json(evidencePackage.sections.activityStats || []) },
+        { name: 'observed-activity.json', data: json(evidencePackage.sections.observedActivity || []) },
         { name: 'network-summary.json', data: json(evidencePackage.sections.networkSummary) },
         { name: 'final-report.json', data: json(finalReport) },
         { name: 'final-report.html', data: renderFinalCaseReportHtml(finalReport) },

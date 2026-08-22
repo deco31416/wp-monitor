@@ -2,12 +2,12 @@
 
 ## Stack real
 
-- Backend: TypeScript, Node.js 20+, Express 5, Socket.IO, MongoDB y Baileys.
-- Frontend: React 19, Create React App, TailwindCSS, Lucide y Recharts.
+- Backend: TypeScript, Node.js 24.19.x, Express 5, Socket.IO, MongoDB, Redis y Baileys.
+- Frontend: React 19, Vite/Vitest, TailwindCSS, Lucide y Recharts.
 - Captura: modulo nativo `cap` sobre Npcap/libpcap.
 - Gestor: pnpm workspace.
 - Pruebas backend: `node:test` mediante `tsx`.
-- Pruebas frontend: Jest/Testing Library mediante react-scripts.
+- Pruebas frontend: Vitest y Testing Library.
 
 No es un proyecto NestJS, Next.js ni una arquitectura de microservicios en el estado actual.
 
@@ -75,4 +75,5 @@ Incluye objetivo, archivos, riesgo, pruebas, capturas anonimizadas si cambia UI,
 
 - [API y eventos](api-reference.md)
 - [Calidad y pruebas](quality-testing.md)
+- [Especificacion de actividad pasiva e informes](passive-activity-report-spec.md)
 - [Proceso de release](release-process.md)

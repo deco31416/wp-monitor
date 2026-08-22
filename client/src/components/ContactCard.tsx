@@ -2,9 +2,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { Square, Activity, Wifi, Smartphone, Monitor, Clock, Database, BarChart3, History, TrendingUp, User, Briefcase, Globe, FileDown, Pencil, Check, X, Brain, Phone } from 'lucide-react';
 import clsx from 'clsx';
-import { socket } from '../App';
+import { socket } from '../socket';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
-import { CallAnalysisResult, CallCaptureStarted, CallEvent } from '../types';
+import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type ObservedActivityEvent, type ObservedActivityResponse, type TrackerDeviceInfo } from '../types';
 import { ActivityJournalPanel } from './ActivityJournalPanel';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
@@ -20,17 +20,10 @@ interface TrackerData {
     state: string;
     timestamp: number;
 }
-interface DeviceInfo {
-    jid: string;
-    state: string;
-    rtt: number;
-    avg: number;
-}
-
 interface LiveState {
     state: string;
     label: string;
-    source: 'presence' | 'call' | 'message' | 'rtt_probe' | 'system';
+    source: 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
     confidence: 'none' | 'low' | 'medium' | 'high';
     lastSignalAt: string | null;
     explanation?: string;
@@ -40,6 +33,32 @@ interface ActivityEntry {
     state: string;
     timestamp: string;
     rtt: number;
+}
+
+function isNoAckState(value: string): boolean {
+    return value === 'NO_ACK' || value === 'OFFLINE' || value === 'Sin ACK';
+}
+
+function formatProbeState(value: string): string {
+    if (isNoAckState(value)) return 'No concluyente';
+    if (value === 'Unknown') return 'Sin clasificar';
+    return value;
+}
+
+function formatSignalSource(source: LiveState['source']): string {
+    if (source === 'presence') return 'presencia';
+    if (source === 'call') return 'llamada';
+    if (source === 'message') return 'mensaje';
+    if (source === 'receipt') return 'confirmación';
+    if (source === 'rtt_probe') return 'medición técnica';
+    return 'sistema';
+}
+
+function formatConfidence(confidence: LiveState['confidence']): string {
+    if (confidence === 'high') return 'alta';
+    if (confidence === 'medium') return 'media';
+    if (confidence === 'low') return 'baja';
+    return 'no disponible';
 }
 
 interface ProfileData {
@@ -154,6 +173,15 @@ interface IntelData {
     sessionStats: IntelSession;
     heatmap: IntelHeatmap;
     habits: IntelHabits;
+    coverage: {
+        available: boolean;
+        conclusiveMeasurements: number;
+        totalAttempts: number;
+        activeDays: number;
+        minimumConclusiveMeasurements: number;
+        minimumActiveDays: number;
+        reason: 'sufficient' | 'insufficient_conclusive_measurements' | 'insufficient_active_days';
+    };
 }
 
 interface ContactCardProps {
@@ -162,14 +190,14 @@ interface ContactCardProps {
     customName: string | null;
     pushName: string | null;
     data: TrackerData[];
-    devices: DeviceInfo[];
+    devices: TrackerDeviceInfo[];
     deviceCount: number;
     presence: string | null;
     profilePic: string | null;
-    connectionType?: 'wifi' | 'cellular' | 'unknown';
-    typingState?: 'composing' | 'recording' | null;
-    liveState?: LiveState | null;
-    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[];
+    connectionType?: 'wifi' | 'cellular' | 'unknown' | undefined;
+    typingState?: 'composing' | 'recording' | null | undefined;
+    liveState?: LiveState | null | undefined;
+    deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[] | undefined;
     onRemove: () => void;
     privacyMode?: boolean;
 }
@@ -193,9 +221,13 @@ export function ContactCard({
 }: ContactCardProps) {
     const [stats, setStats] = useState<StatsData | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
+    const [observedActivity, setObservedActivity] = useState<ObservedActivityEvent[]>([]);
+    const [observedActivityPage, setObservedActivityPage] = useState({ returned: 0, total: 0, truncated: false, limit: 200 });
+    const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(null);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [patterns, setPatterns] = useState<PatternsData | null>(null);
-    const [activePanel, setActivePanel] = useState<'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call'>('chart');
+    type DetailPanel = 'chart' | 'stats' | 'activity' | 'profile' | 'intel' | 'call';
+    const [activePanel, setActivePanel] = useState<DetailPanel>('chart');
     const [profileLoading, setProfileLoading] = useState(false);
 
     // Privacy score
@@ -237,15 +269,15 @@ export function ContactCard({
     useEffect(() => {
         fetch(`${API_URL}/api/runtime-capabilities`)
             .then(r => r.json())
-            .then(data => setCallTrafficAvailable(data.callTrafficAnalysis !== false))
-            .catch(() => setCallTrafficAvailable(true));
+            .then((data: { callTrafficAnalysis?: boolean }) => {
+                const available = data.callTrafficAnalysis !== false;
+                setCallTrafficAvailable(available);
+                if (!available) {
+                    setActivePanel(current => current === 'call' ? 'chart' : current);
+                }
+            })
+            .catch(() => setCallTrafficAvailable(false));
     }, []);
-
-    useEffect(() => {
-        if (!callTrafficAvailable && activePanel === 'call') {
-            setActivePanel('chart');
-        }
-    }, [callTrafficAvailable, activePanel]);
 
     // ── Call traffic analysis state ──
     const [callAnalysis, setCallAnalysis] = useState<CallAnalysisResult | null>(null);
@@ -400,7 +432,8 @@ export function ContactCard({
     const resolvedPushName = profile?.pushName || initialPushName || null;
     const resolvedName = customName || resolvedPushName || displayNumber;
 
-    const lastData = data[data.length - 1];
+    const acknowledgedRttData = data.filter(entry => !isNoAckState(entry.state) && entry.avg > 0);
+    const lastData = acknowledgedRttData[acknowledgedRttData.length - 1];
     const presenceStatus = typingState === 'composing' || presence === 'composing'
         ? 'Escribiendo'
         : typingState === 'recording' || presence === 'recording'
@@ -411,24 +444,18 @@ export function ContactCard({
     const liveStatus = liveState && liveState.state !== 'unknown' && liveState.confidence !== 'none'
         ? liveState.label
         : null;
-    const deviceStatus = devices.length > 0
-        ? (devices.find(d => d.state.includes('Online'))?.state ||
-            devices.find(d => d.state === 'Standby')?.state ||
-            devices.find(d => d.state !== 'OFFLINE')?.state ||
-            devices.find(d => d.state === 'OFFLINE')?.state ||
-            devices[0].state)
-        : 'Unknown';
+    const rawDeviceStatus = selectPrimaryTrackerDevice(devices)?.state || 'Unknown';
+    const deviceStatus = formatProbeState(rawDeviceStatus);
     const currentStatus = liveStatus || presenceStatus || deviceStatus;
 
     const blurredNumber = privacyMode ? displayNumber.replace(/\d/g, '•') : displayNumber;
 
-    const statusColor = currentStatus === 'OFFLINE' ? 'danger'
-        : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'call' ? 'success'
+    const statusColor = isNoAckState(currentStatus) ? 'warning'
+        : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'receipt' || liveState?.source === 'call' ? 'success'
         : currentStatus === 'Standby' ? 'warning' : 'neutral';
 
     const statusConfig = {
         success: { badge: 'badge-success', dot: 'bg-success', glow: 'glow-success' },
-        danger: { badge: 'badge-danger', dot: 'bg-danger', glow: 'glow-danger' },
         warning: { badge: 'badge-warning', dot: 'bg-warning', glow: '' },
         neutral: { badge: 'badge-neutral', dot: 'bg-txt-dim', glow: '' },
     }[statusColor];
@@ -451,23 +478,36 @@ export function ContactCard({
             .catch(console.error);
     }, [jid]);
 
+    const fetchObservedActivity = useCallback(() => {
+        authFetch(`${API_URL}/api/contact/${encodeURIComponent(jid)}/activity?limit=200`)
+            .then(r => r.json())
+            .then((response: ObservedActivityResponse) => {
+                setObservedActivity(Array.isArray(response.events) ? response.events : []);
+                setObservedActivityPage(response.page || {
+                    returned: Array.isArray(response.events) ? response.events.length : 0,
+                    total: Array.isArray(response.events) ? response.events.length : 0,
+                    truncated: false,
+                    limit: 200,
+                });
+                setTrackingStartedAt(response.trackingStartedAt || null);
+            })
+            .catch(console.error);
+    }, [jid]);
+
     const fetchProfile = useCallback(() => {
-        setProfileLoading(true);
         authFetch(`${API_URL}/api/profile/${encodeURIComponent(jid)}`)
             .then(r => r.json())
             .then((data) => {
                 setProfile(data);
                 // Sync custom name from DB if we don't have one yet
-                if (data.customName && !customName) {
-                    setCustomName(data.customName);
-                }
+                setCustomName(current => data.customName && !current ? data.customName : current);
                 setProfileLoading(false);
             })
             .catch((err) => {
                 console.error(err);
                 setProfileLoading(false);
             });
-    }, [jid, customName]);
+    }, [jid]);
 
     const fetchPatterns = useCallback(() => {
         authFetch(`${API_URL}/api/patterns/${encodeURIComponent(jid)}`)
@@ -480,15 +520,21 @@ export function ContactCard({
     useEffect(() => {
         fetchStats();
         fetchActivity();
+        fetchObservedActivity();
         const interval = setInterval(() => {
             fetchStats();
             fetchActivity();
+            fetchObservedActivity();
         }, 10000);
         return () => clearInterval(interval);
-    }, [fetchStats, fetchActivity]);
+    }, [fetchStats, fetchActivity, fetchObservedActivity]);
+
+    useEffect(() => {
+        if (!liveState?.lastSignalAt || liveState.source === 'rtt_probe' || liveState.source === 'system') return;
+        void fetchObservedActivity();
+    }, [fetchObservedActivity, liveState?.lastSignalAt, liveState?.source]);
 
     const fetchIntel = useCallback(() => {
-        setIntelLoading(true);
         authFetch(`${API_URL}/api/intel/${encodeURIComponent(jid)}?days=14`)
             .then(r => r.json())
             .then((data) => { setIntel(data); setIntelLoading(false); })
@@ -528,6 +574,20 @@ export function ContactCard({
         }
     }, [activePanel, fetchProfile, fetchPatterns, fetchIntel, fetchPrivacyScore, fetchAnomalies, fetchCallHistory]);
 
+    const selectPanel = (panel: DetailPanel) => {
+        if (panel === activePanel) return;
+        if (panel === 'profile') setProfileLoading(true);
+        if (panel === 'intel') setIntelLoading(true);
+        setActivePanel(panel);
+    };
+
+    const [currentTime, setCurrentTime] = useState(Date.now);
+
+    useEffect(() => {
+        const interval = window.setInterval(() => setCurrentTime(Date.now()), 60_000);
+        return () => window.clearInterval(interval);
+    }, []);
+
     const formatTime = (ts: string | null) => {
         if (!ts) return '—';
         return new Date(ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -544,19 +604,19 @@ export function ContactCard({
             case 'available':
                 return 'Online';
             case 'unavailable':
-                return 'Desconectado';
+                return 'No disponible';
             case 'composing':
                 return 'Escribiendo';
             case 'recording':
                 return 'Grabando audio';
             default:
-                return value || 'Sin presencia';
+                return value || 'Presencia no disponible';
         }
     };
 
     const timeAgo = (ts: string | null) => {
         if (!ts) return '—';
-        const diff = Date.now() - new Date(ts).getTime();
+        const diff = currentTime - new Date(ts).getTime();
         const mins = Math.floor(diff / 60000);
         if (mins < 1) return 'Justo ahora';
         if (mins < 60) return `hace ${mins}m`;
@@ -628,7 +688,7 @@ export function ContactCard({
                             )}
                             {profile?.isBusinessAccount && (
                                 <span className="badge-neutral !text-[9px] !py-0 !px-1.5 flex items-center gap-0.5">
-                                    <Briefcase size={9} /> Business
+                                    <Briefcase size={9} /> Empresa
                                 </span>
                             )}
                         </div>
@@ -661,7 +721,7 @@ export function ContactCard({
                             </span>
                             {liveState && liveState.source !== 'system' && (
                                 <span className="text-[10px] text-txt-dim">
-                                    via {liveState.source} · {liveState.confidence}
+                                    vía {formatSignalSource(liveState.source)} · confianza {formatConfidence(liveState.confidence)}
                                 </span>
                             )}
                             {profile?.about && !privacyMode && (
@@ -688,12 +748,12 @@ export function ContactCard({
                         type="button"
                         onClick={downloadFullReport}
                         className="btn-ghost flex items-center gap-1.5 !text-xs !py-1.5 !px-3"
-                        title="Download full report"
+                        title="Descargar informe completo"
                     >
-                        <FileDown size={12} /> Report
+                        <FileDown size={12} /> Informe
                     </button>
                     <button onClick={onRemove} className="btn-danger flex items-center gap-1.5 !text-xs !py-1.5 !px-3">
-                        <Square size={12} /> Stop
+                        <Square size={12} /> Finalizar
                     </button>
                 </div>
             </div>
@@ -709,7 +769,6 @@ export function ContactCard({
                                 <div className={clsx(
                                     "w-24 h-24 rounded-2xl overflow-hidden bg-surface-hover border-2",
                                     statusColor === 'success' ? 'border-success/30' :
-                                    statusColor === 'danger' ? 'border-danger/30' :
                                     statusColor === 'warning' ? 'border-warning/30' : 'border-surface-border'
                                 )}>
                                     {profilePicSrc ? (
@@ -760,7 +819,7 @@ export function ContactCard({
                                     </div>
                                 )}
                                 <div className="flex justify-between items-center text-txt-secondary">
-                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Status</span>
+                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Presencia</span>
                                     <span className="font-medium text-txt-primary">{formatPresence(presence)}</span>
                                 </div>
                                 {/* Connection type */}
@@ -776,19 +835,19 @@ export function ContactCard({
                                     </div>
                                 )}
                                 <div className="flex justify-between items-center text-txt-secondary">
-                                    <span className="flex items-center gap-1.5"><Smartphone size={14} className="text-txt-dim" /> Devices</span>
+                                    <span className="flex items-center gap-1.5"><Smartphone size={14} className="text-txt-dim" /> Destinos técnicos</span>
                                     <span className="font-medium text-txt-primary">{deviceCount || 0}</span>
                                 </div>
                                 {/* Device alerts */}
                                 {deviceAlerts && deviceAlerts.length > 0 && (
                                     <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-1.5 text-xs text-amber-400">
-                                        <span className="font-bold">⚠️ Nuevo dispositivo detectado</span>
-                                        <span className="text-txt-dim ml-1">({deviceCount || 1} observable)</span>
+                                        <span className="font-bold">⚠️ Nuevo destino técnico observado</span>
+                                        <span className="text-txt-dim ml-1">({deviceCount || 1} en esta sesión)</span>
                                     </div>
                                 )}
                                 {stats?.lastOnline && (
                                     <div className="flex justify-between items-center text-txt-secondary">
-                                        <span className="flex items-center gap-1.5"><Clock size={14} className="text-success" /> Last Online</span>
+                                        <span className="flex items-center gap-1.5"><Clock size={14} className="text-success" /> Última conexión</span>
                                         <span className="font-medium text-success">{formatTime(stats.lastOnline)}</span>
                                     </div>
                                 )}
@@ -800,14 +859,14 @@ export function ContactCard({
                                 )}
                                 {stats?.firstSeen && (
                                     <div className="flex justify-between items-center text-txt-secondary">
-                                        <span className="flex items-center gap-1.5"><History size={14} className="text-txt-dim" /> Tracking</span>
+                                        <span className="flex items-center gap-1.5"><History size={14} className="text-txt-dim" /> Inicio de seguimiento</span>
                                         <span className="font-medium text-txt-primary text-[11px]">{formatDateTime(stats.firstSeen)}</span>
                                     </div>
                                 )}
                                 {profile?.isBusinessAccount && (
                                     <div className="flex justify-between items-center text-txt-secondary">
                                         <span className="flex items-center gap-1.5"><Briefcase size={14} className="text-accent" /> Tipo</span>
-                                        <span className="font-medium text-accent text-[11px]">Business</span>
+                                        <span className="font-medium text-accent text-[11px]">Empresa</span>
                                     </div>
                                 )}
                             </div>
@@ -825,12 +884,18 @@ export function ContactCard({
                                     {stats.standby > 0 && (
                                         <div className="bg-warning h-full transition-all" style={{ width: `${stats.standby}%` }} />
                                     )}
-                                    {stats.offline > 0 && (
-                                        <div className="bg-danger h-full transition-all" style={{ width: `${stats.offline}%` }} />
+                                    {(stats.calibrating ?? 0) > 0 && (
+                                        <div className="bg-accent h-full transition-all" style={{ width: `${stats.calibrating ?? 0}%` }} />
+                                    )}
+                                    {(stats.noAck ?? stats.offline) > 0 && (
+                                        <div className="bg-orange-500 h-full transition-all" style={{ width: `${stats.noAck ?? stats.offline}%` }} />
+                                    )}
+                                    {(stats.unknown ?? 0) > 0 && (
+                                        <div className="bg-txt-dim h-full transition-all" style={{ width: `${stats.unknown ?? 0}%` }} />
                                     )}
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-1 text-center text-[10px]">
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 text-center text-[10px]">
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-success mx-auto mb-1" />
                                         <span className="text-success font-bold">{stats.online}%</span>
@@ -839,12 +904,22 @@ export function ContactCard({
                                     <div>
                                         <div className="w-2 h-2 rounded-full bg-warning mx-auto mb-1" />
                                         <span className="text-warning font-bold">{stats.standby}%</span>
-                                        <p className="text-txt-dim">Standby</p>
+                                        <p className="text-txt-dim">En espera</p>
                                     </div>
                                     <div>
-                                        <div className="w-2 h-2 rounded-full bg-danger mx-auto mb-1" />
-                                        <span className="text-danger font-bold">{stats.offline}%</span>
-                                        <p className="text-txt-dim">Offline</p>
+                                        <div className="w-2 h-2 rounded-full bg-accent mx-auto mb-1" />
+                                        <span className="text-accent font-bold">{stats.calibrating ?? 0}%</span>
+                                        <p className="text-txt-dim">Calibrando</p>
+                                    </div>
+                                    <div>
+                                        <div className="w-2 h-2 rounded-full bg-orange-500 mx-auto mb-1" />
+                                        <span className="text-orange-400 font-bold">{stats.noAck ?? stats.offline}%</span>
+                                        <p className="text-txt-dim">No concluyente</p>
+                                    </div>
+                                    <div>
+                                        <div className="w-2 h-2 rounded-full bg-txt-dim mx-auto mb-1" />
+                                        <span className="text-txt-dim font-bold">{stats.unknown ?? 0}%</span>
+                                        <p className="text-txt-dim">Sin clasificar</p>
                                     </div>
                                 </div>
 
@@ -860,20 +935,20 @@ export function ContactCard({
                         {/* Device list */}
                         {devices.length > 0 && (
                             <div className="bg-surface-overlay rounded-xl border border-surface-border p-4">
-                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3">Devices</h5>
+                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3">Destinos técnicos observados</h5>
                                 <div className="space-y-1.5">
                                     {devices.map((device, idx) => {
-                                        const dColor = device.state === 'OFFLINE' ? 'danger'
+                                        const dColor = isNoAckState(device.state) ? 'warning'
                                             : device.state.includes('Online') ? 'success'
                                             : device.state === 'Standby' ? 'warning' : 'neutral';
                                         return (
                                             <div key={device.jid} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-surface-hover transition-colors">
                                                 <div className="flex items-center gap-2">
                                                     <Monitor size={13} className="text-txt-dim" />
-                                                    <span className="text-xs text-txt-secondary">Device {idx + 1}</span>
+                                                    <span className="text-xs text-txt-secondary">Destino {idx + 1}</span>
                                                 </div>
                                                 <span className={`badge-${dColor} !text-[10px] !py-0.5 !px-2`}>
-                                                    {device.state}
+                                                    {formatProbeState(device.state)}
                                                 </span>
                                             </div>
                                         );
@@ -888,23 +963,23 @@ export function ContactCard({
                         {/* Metric cards */}
                         <div className="grid grid-cols-3 gap-3">
                             <MetricCard
-                                label="Current Avg RTT"
+                                label="Latencia actual"
                                 value={lastData?.avg.toFixed(0) || '—'}
-                                unit="ms"
+                                unit={lastData ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="accent"
                             />
                             <MetricCard
-                                label="Median (50)"
-                                value={lastData?.median.toFixed(0) || '—'}
-                                unit="ms"
+                                label="Mediana (50)"
+                                value={lastData && lastData.median > 0 ? lastData.median.toFixed(0) : '—'}
+                                unit={lastData && lastData.median > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="success"
                             />
                             <MetricCard
-                                label="Threshold"
-                                value={lastData?.threshold.toFixed(0) || '—'}
-                                unit="ms"
+                                label="Umbral"
+                                value={lastData && lastData.threshold > 0 ? lastData.threshold.toFixed(0) : '—'}
+                                unit={lastData && lastData.threshold > 0 ? 'ms' : ''}
                                 icon={<Activity size={16} />}
                                 color="warning"
                             />
@@ -913,16 +988,16 @@ export function ContactCard({
                         {/* Panel tabs */}
                         <div className="flex gap-1 bg-surface-overlay rounded-lg p-1 border border-surface-border">
                             {([
-                                { key: 'chart', label: 'RTT Chart', icon: <BarChart3 size={13} /> },
-                                { key: 'activity', label: 'Activity', icon: <History size={13} /> },
-                                { key: 'stats', label: 'Stats', icon: <Database size={13} /> },
-                                { key: 'intel', label: 'Intel', icon: <Brain size={13} /> },
-                                { key: 'profile', label: 'Profile', icon: <User size={13} /> },
+                                { key: 'chart', label: 'Medición', icon: <BarChart3 size={13} /> },
+                                { key: 'activity', label: 'Actividad', icon: <History size={13} /> },
+                                { key: 'stats', label: 'Resumen', icon: <Database size={13} /> },
+                                { key: 'intel', label: 'Patrones', icon: <Brain size={13} /> },
+                                { key: 'profile', label: 'Perfil', icon: <User size={13} /> },
                                 ...(callTrafficAvailable ? [{ key: 'call' as const, label: 'Llamada', icon: <Phone size={13} /> }] : []),
                             ] as const).map(tab => (
                                 <button
                                     key={tab.key}
-                                    onClick={() => setActivePanel(tab.key)}
+                                    onClick={() => selectPanel(tab.key)}
                                     className={clsx(
                                         "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5",
                                         activePanel === tab.key
@@ -939,9 +1014,10 @@ export function ContactCard({
                         {activePanel === 'chart' && (
                             <>
                             <div className="bg-surface-overlay rounded-xl border border-surface-border p-5 h-[300px]">
-                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">RTT History & Threshold</h5>
+                                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-4">Historial de latencia confirmada</h5>
+                                {acknowledgedRttData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height={220}>
-                                    <AreaChart data={data}>
+                                    <AreaChart data={acknowledgedRttData}>
                                         <defs>
                                             <linearGradient id={`grad-${jid}`} x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor="#25d366" stopOpacity={0.3} />
@@ -989,10 +1065,22 @@ export function ContactCard({
                                         />
                                     </AreaChart>
                                 </ResponsiveContainer>
+                                ) : (
+                                    <div className="h-[220px] flex flex-col items-center justify-center text-center px-6">
+                                        <Activity size={30} className="text-warning mb-3" />
+                                        <p className="text-sm font-medium text-txt-secondary">Medición de latencia no disponible</p>
+                                        <p className="text-xs text-txt-dim mt-1 max-w-md">
+                                            Esta sesión no dispone de confirmaciones compatibles para calcular una latencia confiable. La actividad observada continúa registrándose normalmente.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             <ActivityJournalPanel
                                 activity={activity}
+                                observedEvents={observedActivity}
+                                observedEventTotal={observedActivityPage.total}
+                                observedEventsTruncated={observedActivityPage.truncated}
                                 jid={jid}
                                 displayNumber={displayNumber}
                                 privacyMode={privacyMode}
@@ -1002,7 +1090,11 @@ export function ContactCard({
                         )}
 
                         {activePanel === 'activity' && (
-                            <ActivityLogPanel activity={activity} formatDateTime={formatDateTime} />
+                            <ActivityLogPanel
+                                events={observedActivity}
+                                page={observedActivityPage}
+                                formatDateTime={formatDateTime}
+                            />
                         )}
 
                         {activePanel === 'stats' && (
@@ -1026,6 +1118,7 @@ export function ContactCard({
                                 profile={profile}
                                 profileLoading={profileLoading}
                                 patterns={patterns}
+                                trackingStartedAt={trackingStartedAt}
                                 privacyScore={privacyScore}
                                 privacyMode={privacyMode}
                                 blurredNumber={blurredNumber}

@@ -1,8 +1,13 @@
 # Security Policy
 
-## Supported version
+## Supported versions
 
-Security fixes are maintained for the latest version published on the default branch.
+| Version | Supported |
+| --- | --- |
+| `3.0.x` | Yes |
+| `2.x` and earlier | No |
+
+Security fixes are maintained for the latest `3.0.x` version published on the default branch. Operators upgrading from `2.x` should follow the [3.0 migration guide](docs/operations/migration-3.0.md).
 
 ## Reporting a vulnerability
 

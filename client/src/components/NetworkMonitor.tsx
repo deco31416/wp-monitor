@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { socket } from '../App';
+import { socket } from '../socket';
 import {
     Activity, Play, Square, Download, Filter, Globe, AlertTriangle,
     Shield, Info, Wifi, BarChart3, MapPin, CheckCircle2, Clock, Database, BellRing,
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, Legend
+    PieChart, Pie, Cell, Legend, type PieLabelRenderProps
 } from 'recharts';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
 import { CaseRecord } from '../types';
@@ -113,7 +113,8 @@ export function NetworkMonitor() {
             .then(r => r.json())
             .then((data: NetworkInterface[]) => {
                 setInterfaces(data);
-                if (data.length > 0) setSelectedInterface(data[0].address);
+                const [firstInterface] = data;
+                if (firstInterface) setSelectedInterface(firstInterface.address);
             })
             .catch(console.error);
 
@@ -124,9 +125,8 @@ export function NetworkMonitor() {
                     ? data.filter(item => item.status !== 'closed' && item.status !== 'archived')
                     : [];
                 setCases(activeCases);
-                if (activeCases.length > 0) {
-                    selectCase(activeCases[0]);
-                }
+                const [firstCase] = activeCases;
+                if (firstCase) selectCase(firstCase);
             })
             .catch(console.error);
 
@@ -182,9 +182,9 @@ export function NetworkMonitor() {
         if (!selectedInterface) return;
         if (!caseId.trim() || !operatorName.trim() || !authorizationNote.trim()) return;
         const captureFilter: CaptureFilter = {
-            protocol: filterProtocol !== 'all' ? filterProtocol : undefined,
-            port: filterPort ? parseInt(filterPort) : undefined,
-            ip: filterIp || undefined,
+            ...(filterProtocol !== 'all' ? { protocol: filterProtocol } : {}),
+            ...(filterPort ? { port: parseInt(filterPort) } : {}),
+            ...(filterIp ? { ip: filterIp } : {}),
         };
         packetsRef.current = [];
         setPackets([]);
@@ -219,7 +219,7 @@ export function NetworkMonitor() {
     const protocolData = stats ? Object.entries(stats.protocols).map(([name, value]) => ({
         name,
         value,
-        fill: PROTOCOL_COLORS[name] || PROTOCOL_COLORS.OTHER,
+        fill: PROTOCOL_COLORS[name] || PROTOCOL_COLORS.OTHER || '#64748b',
     })) : [];
     const investigativePackets = packets.filter(packet => {
         if (udpOnlyView && packet.protocol !== 'UDP') return false;
@@ -235,7 +235,7 @@ export function NetworkMonitor() {
     };
 
     const formatTime = (ts: string) => {
-        return new Date(ts).toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as any);
+        return new Date(ts).toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
     };
 
     const captureReady = Boolean(selectedInterface && caseId.trim() && operatorName.trim() && authorizationNote.trim());
@@ -648,21 +648,32 @@ function isKnownInfrastructureIp(ip: string): boolean {
         || isCloudHostingIp(ip);
 }
 
-function isLocalOrPrivateIp(ip: string): boolean {
+type IPv4Parts = [number, number, number, number];
+
+function parseIPv4Parts(ip: string): IPv4Parts | null {
     const parts = ip.split('.').map(Number);
-    if (parts.length !== 4 || parts.some(part => Number.isNaN(part) || part < 0 || part > 255)) return true;
-    const isPrivate172 = parts.length === 4 && parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31;
-    const isCarrierNat = parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
-    const isBenchmark = parts[0] === 198 && (parts[1] === 18 || parts[1] === 19);
+    if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+        return null;
+    }
+    return [parts[0]!, parts[1]!, parts[2]!, parts[3]!];
+}
+
+function isLocalOrPrivateIp(ip: string): boolean {
+    const parts = parseIPv4Parts(ip);
+    if (!parts) return true;
+    const [a, b, c] = parts;
+    const isPrivate172 = a === 172 && b >= 16 && b <= 31;
+    const isCarrierNat = a === 100 && b >= 64 && b <= 127;
+    const isBenchmark = a === 198 && (b === 18 || b === 19);
     const isDocumentation =
-        (parts[0] === 192 && parts[1] === 0 && parts[2] === 2)
-        || (parts[0] === 198 && parts[1] === 51 && parts[2] === 100)
-        || (parts[0] === 203 && parts[1] === 0 && parts[2] === 113);
+        (a === 192 && b === 0 && c === 2)
+        || (a === 198 && b === 51 && c === 100)
+        || (a === 203 && b === 0 && c === 113);
     return ip.startsWith('10.')
         || ip.startsWith('127.')
         || ip.startsWith('192.168.')
         || ip.startsWith('169.254.')
-        || parts[0] >= 224
+        || a >= 224
         || isCarrierNat
         || isBenchmark
         || isDocumentation
@@ -692,10 +703,11 @@ function isGoogleIp(ip: string): boolean {
 }
 
 function isCloudflareIp(ip: string): boolean {
-    const parts = ip.split('.').map(Number);
-    if (parts.length !== 4) return false;
-    return (parts[0] === 104 && parts[1] >= 16 && parts[1] <= 31)
-        || (parts[0] === 172 && parts[1] >= 64 && parts[1] <= 71)
+    const parts = parseIPv4Parts(ip);
+    if (!parts) return false;
+    const [a, b] = parts;
+    return (a === 104 && b >= 16 && b <= 31)
+        || (a === 172 && b >= 64 && b <= 71)
         || ip.startsWith('162.159.')
         || ip.startsWith('188.114.');
 }
@@ -786,13 +798,8 @@ function PacketTable({
 }) {
     const totalPages = Math.max(1, Math.ceil(packets.length / PAGE_SIZE));
     const [page, setPage] = React.useState(0);
-
-    // Auto-advance to last page when capturing
-    React.useEffect(() => {
-        if (autoScroll) setPage(totalPages - 1);
-    }, [autoScroll, totalPages]);
-
-    const start = page * PAGE_SIZE;
+    const visiblePage = autoScroll ? totalPages - 1 : Math.min(page, totalPages - 1);
+    const start = visiblePage * PAGE_SIZE;
     const visiblePackets = packets.slice(start, start + PAGE_SIZE);
     const from = packets.length === 0 ? 0 : start + 1;
     const to = Math.min(start + PAGE_SIZE, packets.length);
@@ -807,23 +814,23 @@ function PacketTable({
                 <div className="flex items-center gap-1.5">
                     <button
                         onClick={() => setPage(0)}
-                        disabled={page === 0}
+                        disabled={visiblePage === 0}
                         className="btn-ghost !px-2 !py-1 !text-[10px] disabled:opacity-30"
                     >«</button>
                     <button
-                        onClick={() => setPage(p => Math.max(0, p - 1))}
-                        disabled={page === 0}
+                        onClick={() => setPage(Math.max(0, visiblePage - 1))}
+                        disabled={visiblePage === 0}
                         className="btn-ghost !px-2 !py-1 !text-[10px] disabled:opacity-30"
                     >‹</button>
-                    <span className="text-xs text-txt-muted px-1">{page + 1} / {totalPages}</span>
+                    <span className="text-xs text-txt-muted px-1">{visiblePage + 1} / {totalPages}</span>
                     <button
-                        onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                        disabled={page >= totalPages - 1}
+                        onClick={() => setPage(Math.min(totalPages - 1, visiblePage + 1))}
+                        disabled={visiblePage >= totalPages - 1}
                         className="btn-ghost !px-2 !py-1 !text-[10px] disabled:opacity-30"
                     >›</button>
                     <button
                         onClick={() => setPage(totalPages - 1)}
-                        disabled={page >= totalPages - 1}
+                        disabled={visiblePage >= totalPages - 1}
                         className="btn-ghost !px-2 !py-1 !text-[10px] disabled:opacity-30"
                     >»</button>
                 </div>
@@ -912,7 +919,7 @@ function StatsPanel({
                                 cx="50%"
                                 cy="50%"
                                 outerRadius={80}
-                                label={(props: any) => `${props.name} ${((props.percent ?? 0) * 100).toFixed(0)}%`}
+                                label={(props: PieLabelRenderProps) => `${String(props.name ?? '')} ${((props.percent ?? 0) * 100).toFixed(0)}%`}
                             >
                                 {protocolData.map((entry, i) => (
                                     <Cell key={i} fill={entry.fill} />
@@ -1265,11 +1272,12 @@ function isGithubIp(ip: string): boolean {
 }
 
 function isAkamaiIp(ip: string): boolean {
-    const parts = ip.split('.').map(Number);
-    if (parts.length !== 4 || parts.some(part => Number.isNaN(part))) return false;
-    return (parts[0] === 2 && parts[1] >= 16 && parts[1] <= 23)
-        || (parts[0] === 23 && parts[1] >= 0 && parts[1] <= 15)
-        || (parts[0] === 23 && parts[1] >= 32 && parts[1] <= 67)
+    const parts = parseIPv4Parts(ip);
+    if (!parts) return false;
+    const [a, b] = parts;
+    return (a === 2 && b >= 16 && b <= 23)
+        || (a === 23 && b >= 0 && b <= 15)
+        || (a === 23 && b >= 32 && b <= 67)
         || ip.startsWith('23.32.')
         || ip.startsWith('23.33.')
         || ip.startsWith('23.64.')

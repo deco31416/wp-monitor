@@ -9,10 +9,12 @@ flowchart TB
     subgraph Workstation[Estacion local autorizada]
       LocalUI[React :4001]
       LocalAPI[Backend :4000]
+      LocalRedis[(Redis)]
       Driver[Npcap o libpcap]
       NIC[Wi-Fi o Ethernet]
       Desktop[WhatsApp Web o Desktop]
       LocalUI <--> LocalAPI
+      LocalAPI <--> LocalRedis
       LocalAPI --> Driver --> NIC
       Desktop --> NIC
     end
@@ -22,9 +24,11 @@ flowchart TB
       CloudAPI[Backend dashboard]
       AuthVolume[(Volumen sesion)]
       UploadVolume[(Volumen uploads)]
+      CloudRedis[(Redis administrado)]
       CloudUI <--> CloudAPI
       CloudAPI <--> AuthVolume
       CloudAPI <--> UploadVolume
+      CloudAPI <--> CloudRedis
     end
 
     Mongo[(MongoDB)]
@@ -41,9 +45,9 @@ flowchart TB
 
 | Topologia | Captura | URL publica | Persistencia |
 | --- | --- | --- | --- |
-| Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas y disco local |
-| Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker |
-| Railway | Deshabilitada | HTTPS | MongoDB + dos volumenes |
+| Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas, Redis y disco local |
+| Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker + Mongo externo |
+| Railway | Deshabilitada | HTTPS | MongoDB + Redis + dos volumenes |
 
 ## Decision
 

@@ -9,6 +9,7 @@ sequenceDiagram
     actor Operator as Operador
     participant Script as start-local.ps1
     participant API as Backend
+    participant Redis as Redis
     participant DB as MongoDB
     participant UI as Frontend
     participant Health as /api/health
@@ -17,7 +18,9 @@ sequenceDiagram
     Script->>Script: comprobar PID, cooldown y puertos
     Script->>API: abrir terminal :4000
     API->>API: validar entorno y seguridad
+    API->>Redis: conectar sesiones/rate limits
     API->>DB: conectar e inicializar indices
+    API->>DB: cargar/crear operador unico
     Script->>UI: abrir terminal :4001
     UI->>API: REST y Socket.IO
     Operator->>Health: consultar estado
@@ -28,8 +31,8 @@ sequenceDiagram
 
 1. El script no inicia nada sin orden explicita.
 2. No duplica ventanas si detecta procesos/puertos.
-3. Produccion falla si el token es ausente o corto.
-4. MongoDB desconectado y WhatsApp no vinculado aparecen como razones degradadas.
+3. Produccion falla sin MongoDB, Redis, origenes HTTPS o `AUTH_IDENTITY_SECRET` fuerte.
+4. Redis o MongoDB desconectados bloquean el arranque; WhatsApp no vinculado aparece como razon degradada despues de escuchar.
 5. El frontend debe consumir `4000`; un build que apunta a `3001` esta obsoleto.
 
 ## Resultado esperado

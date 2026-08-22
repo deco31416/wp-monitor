@@ -28,7 +28,7 @@ Esta vista traduce ISO/IEC 25010 a escenarios verificables del producto. No afir
 
 **Escenario:** submit publico repetido.
 
-**Respuesta:** rate limit y validacion; riesgo multi-replica documentado.
+**Respuesta:** rate limit atomico compartido en Redis, validacion y fallo cerrado cuando el store no esta disponible.
 
 ## Usabilidad
 
@@ -84,7 +84,7 @@ Baileys y WhatsApp son el principal riesgo externo. Cada actualizacion debe prob
 ## Deuda prioritaria
 
 - dividir composicion de `server.ts`;
-- rate limit compartido para multiples replicas;
+- extender Redis a locks/colas solo cuando exista un caso de coordinacion probado;
 - autenticacion multiusuario/roles si el producto sale de un solo operador;
 - pruebas E2E REST/Socket y navegadores;
 - SLO, metricas y trazas estructuradas;

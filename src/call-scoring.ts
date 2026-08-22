@@ -8,7 +8,7 @@ export interface NetworkIntelligence {
     asn: number | null;
     org: string;
     category: NetworkIntelligenceCategory;
-    source: 'local_rules';
+    source: 'local_rules' | 'enrichment';
     isDatacenterLikely: boolean;
     caution: string;
 }
@@ -454,11 +454,13 @@ function normalizeCountryCode(value?: string | null): string | null {
 function ipToInt(ip: string): number {
     const parts = ip.split('.').map(Number);
     if (parts.length !== 4 || parts.some(part => Number.isNaN(part) || part < 0 || part > 255)) return 0;
-    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    const [a = 0, b = 0, c = 0, d = 0] = parts;
+    return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
 }
 
 function matchesCidr(ip: string, cidr: string): boolean {
     const [base, prefixStr] = cidr.split('/');
+    if (!base || !prefixStr) return false;
     const prefix = parseInt(prefixStr, 10);
     if (!Number.isFinite(prefix) || prefix < 0 || prefix > 32) return false;
     const mask = prefix === 0 ? 0 : ((0xFFFFFFFF << (32 - prefix)) >>> 0);

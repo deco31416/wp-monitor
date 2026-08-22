@@ -8,6 +8,7 @@ Representar degradacion y accion operativa sin convertir cada warning en un rein
 flowchart TD
     Health[Consultar health/capabilities]
     Mongo{Mongo conectado?}
+    Redis{Redis conectado?}
     WA{WhatsApp conectado?}
     Capture{Captura disponible?}
     Operational[Operational]
@@ -15,7 +16,9 @@ flowchart TD
 
     Health --> Mongo
     Mongo -->|No| MongoRunbook[Revisar URI, red y credencial]
-    Mongo -->|Si| WA
+    Mongo -->|Si| Redis
+    Redis -->|No| RedisRunbook[Revisar URL, red, persistencia y credencial]
+    Redis -->|Si| WA
     WA -->|No recuperable| Reconnect[Esperar reconexion]
     WA -->|401 loggedOut| Relink[Respaldar y vincular QR]
     WA -->|Si| Capture
@@ -23,6 +26,7 @@ flowchart TD
     Capture -->|No por driver| Driver[Revisar Npcap/libpcap y privilegios]
     Capture -->|Si| Operational
     MongoRunbook --> Degraded
+    RedisRunbook --> Degraded
     Reconnect --> Degraded
     Relink --> Health
     DashboardMode --> Operational
@@ -31,7 +35,7 @@ flowchart TD
 
 ## Principio
 
-Recuperar significa identificar la capa, aplicar el runbook y verificar estado durable. Borrar sesion, reinstalar dependencias o matar procesos sin diagnostico puede ampliar el incidente.
+Recuperar significa identificar la capa, aplicar el runbook y verificar estado durable. Redis es obligatorio para sesiones y limites compartidos: si no conecta durante el arranque, el backend no debe escuchar. Borrar sesion, reinstalar dependencias o matar procesos sin diagnostico puede ampliar el incidente.
 
 ## Evidencia del incidente
 

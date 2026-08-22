@@ -36,3 +36,11 @@ test('detects private IPv4 ranges without overmatching 172.0.0.0/8', () => {
     assert.equal(isPrivateIP('172.15.0.1'), false);
     assert.equal(isPrivateIP('172.32.0.1'), false);
 });
+
+test('rejects malformed IPv4 input without matching infrastructure ranges', () => {
+    for (const value of ['', 'not-an-ip', '104.16.1', '104.16.1.999', '104.16.-1.1']) {
+        assert.equal(classifyIP(value), 'unknown');
+        assert.equal(isKnownRelayIP(value), false);
+        assert.equal(isPrivateIP(value), true);
+    }
+});

@@ -1,6 +1,6 @@
 # Documentacion de WP MONITOR
 
-Este portal documenta la version `2.9.4` de WP MONITOR. Su objetivo es permitir que una persona nueva comprenda, instale, opere, audite y contribuya al proyecto sin depender de conocimiento informal del autor.
+Este portal documenta la version `3.0.0` de WP MONITOR. Su objetivo es permitir que una persona nueva comprenda, instale, opere, audite y contribuya al proyecto sin depender de conocimiento informal del autor.
 
 La documentacion toma como referencia ISO/IEC/IEEE 42010 para describir arquitectura, ISO/IEC 25010 para calidad, ISO/IEC 27001 para gestion de riesgos e ISO/IEC 27037 para tratamiento de evidencia digital potencial. Esta referencia no implica certificacion ni conformidad formal.
 
@@ -13,6 +13,7 @@ La documentacion toma como referencia ISO/IEC/IEEE 42010 para describir arquitec
 | Ver todos los diagramas Mermaid | [Biblioteca de diagramas](diagrams/README.md) |
 | Aprender cada pantalla del producto | [Guia de usuario](user-guide/README.md) |
 | Ejecutar localmente, desplegar o recuperar | [Operacion](operations/README.md) |
+| Actualizar desde una version `2.x` | [Migracion a 3.0.0](operations/migration-3.0.md) |
 | Revisar seguridad, privacidad y evidencia | [Seguridad y evidencia](security/README.md) |
 | Modificar codigo o ejecutar QA | [Desarrollo y calidad](development/README.md) |
 | Trabajar con agentes de ingenieria | [Protocolo de ingenieria](AI_ENGINEERING_PROTOCOL.md) |

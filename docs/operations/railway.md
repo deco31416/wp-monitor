@@ -14,9 +14,12 @@ Railway must run with packet capture disabled.
 
 - [ ] Repo pushed to GitHub.
 - [ ] MongoDB URI ready.
-- [ ] Long random `DASHBOARD_TOKEN` generated with 32+ characters.
+- [ ] Non-default bootstrap username and unique 15+ character password stored as secrets.
+- [ ] Random `AUTH_IDENTITY_SECRET` generated with 32+ characters.
+- [ ] Managed Redis service/URL ready on a private path or TLS endpoint.
 - [ ] Backend public Railway domain chosen.
 - [ ] Frontend public Railway domain chosen.
+- [ ] Frontend/backend use the same HTTPS site (or a same-origin reverse proxy) so `SameSite=Strict` cookies are sent.
 - [ ] Decision made for WhatsApp auth persistence volume.
 - [ ] Decision made for public uploads persistence volume.
 
@@ -34,7 +37,14 @@ LOCAL_CAPTURE_ENABLED=false
 ENABLE_SWAGGER=false
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB=activity-tracker
-DASHBOARD_TOKEN=change-this-long-random-token-with-32-plus-chars
+REDIS_URL=rediss://USERNAME:PASSWORD@REDIS_HOST:PORT
+REDIS_REQUIRED=true
+REDIS_KEY_PREFIX=wp-monitor-production
+INITIAL_ADMIN_USERNAME=choose-a-non-default-username
+INITIAL_ADMIN_PASSWORD=store-a-unique-15-plus-character-password
+AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
+AUTH_SESSION_TTL_SECONDS=28800
+AUTH_PASSWORD_VERIFY_CONCURRENCY=1
 TRUST_PROXY=1
 ALLOWED_ORIGINS=https://your-client.up.railway.app
 PUBLIC_BASE_URL=https://your-backend.up.railway.app
@@ -43,7 +53,7 @@ CHECKIN_SUBMIT_RATE_MAX_PER_IP=60
 CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP=8
 ```
 
-Production startup is blocked if `DASHBOARD_TOKEN` is missing or shorter than 32 characters. `TRUST_PROXY=1` is recommended on Railway so client IP detection trusts only the Railway proxy hop instead of arbitrary direct spoofing.
+Production startup is blocked without MongoDB, Redis, a 32+ character `AUTH_IDENTITY_SECRET`, or exact HTTPS `ALLOWED_ORIGINS`. A fresh database also needs valid bootstrap credentials. `TRUST_PROXY=1` is recommended on Railway so client IP detection trusts only the Railway proxy hop instead of arbitrary direct spoofing.
 
 Volumes:
 
@@ -90,7 +100,7 @@ Create the Railway client service from the repository root and select `client/Do
 Build argument or environment for build:
 
 ```env
-REACT_APP_API_URL=https://your-backend.up.railway.app
+VITE_API_URL=https://your-backend.up.railway.app
 ```
 
 Runtime variable:
@@ -99,7 +109,7 @@ Runtime variable:
 PORT=4001
 ```
 
-Important: `REACT_APP_API_URL` is baked into the React build. If the backend domain changes, rebuild/redeploy the frontend.
+Important: `VITE_API_URL` is baked into the Vite build. If the backend domain changes, rebuild/redeploy the frontend.
 
 Networking:
 
@@ -110,12 +120,14 @@ Networking:
 ## Security Smoke Check
 
 - [ ] Open frontend domain.
-- [ ] Confirm dashboard token screen appears.
-- [ ] Enter `DASHBOARD_TOKEN`.
+- [ ] Confirm the username/password login screen appears.
+- [ ] Sign in with the bootstrap operator and rotate credentials from **Account**.
 - [ ] Confirm app connects.
-- [ ] Confirm direct request to protected endpoint without token returns `401`.
-- [ ] Confirm direct request to `/api/runtime-capabilities` works without token.
-- [ ] Confirm `Audit Trail` cannot load data without token.
+- [ ] Confirm direct request to protected endpoint without a session cookie returns `401`.
+- [ ] Confirm an untrusted `Origin` receives `403` on login/mutations and Socket.IO.
+- [ ] Confirm the session cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/` and uses the `__Host-` prefix.
+- [ ] Confirm direct request to `/api/runtime-capabilities` works without a session.
+- [ ] Confirm `Audit Trail` cannot load data without a session.
 - [ ] Confirm `/docs` is not available in production.
 
 Protected endpoint example:
@@ -133,7 +145,7 @@ Expected without token:
 ## WhatsApp Session Check
 
 - [ ] Open frontend.
-- [ ] Enter dashboard token.
+- [ ] Sign in with the current operator account.
 - [ ] Scan WhatsApp QR.
 - [ ] Confirm `WhatsApp Active`.
 - [ ] Redeploy backend.
@@ -146,17 +158,17 @@ If QR is required after redeploy, verify the volume path is `/app/auth_info_bail
 - [ ] Sidebar does not show `Network Monitor`.
 - [ ] Header shows `Dashboard Mode`.
 - [ ] Contact statistics load.
-- [ ] Reports download with token.
+- [ ] Reports download with the authenticated session.
 - [ ] Audit Trail search works.
 - [ ] Audit export downloads JSON with SHA-256 integrity block.
 
 ## Rollback
 
 - [ ] Keep previous successful Railway deploy available.
-- [ ] If frontend cannot connect, check `REACT_APP_API_URL` and redeploy frontend.
+- [ ] If frontend cannot connect, check `VITE_API_URL` and redeploy frontend.
 - [ ] If backend rejects frontend, check `ALLOWED_ORIGINS` and redeploy backend.
 - [ ] If WhatsApp session resets, check volume mount path.
-- [ ] If protected endpoints return `401`, confirm the exact `DASHBOARD_TOKEN` in frontend login.
+- [ ] If protected endpoints return `401`, confirm Redis/MongoDB, cookie scope/HTTPS and the current operator credentials.
 
 ## Do Not Expect On Railway
 

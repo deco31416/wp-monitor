@@ -23,7 +23,7 @@
     {
       "label": "WP MONITOR: Frontend 4001",
       "type": "shell",
-      "command": "$env:PORT='4001'; $env:CLIENT_PORT='4001'; $env:BROWSER='none'; $env:REACT_APP_API_URL='http://127.0.0.1:4000'; Write-Host '[WP MONITOR Frontend] http://127.0.0.1:4001' -ForegroundColor Green; pnpm --dir client start",
+      "command": "$env:PORT='4001'; $env:CLIENT_PORT='4001'; $env:VITE_API_URL='http://127.0.0.1:4000'; Write-Host '[WP MONITOR Frontend] http://127.0.0.1:4001' -ForegroundColor Green; pnpm --dir client start",
       "options": {
         "cwd": "${workspaceFolder}"
       },

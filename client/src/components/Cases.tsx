@@ -13,7 +13,7 @@ const STATUS_STYLES: Record<CaseStatus, string> = {
 
 export function Cases() {
     const [cases, setCases] = useState<CaseRecord[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [caseId, setCaseId] = useState('');
     const [title, setTitle] = useState('');
@@ -23,8 +23,6 @@ export function Cases() {
     const [statusFilter, setStatusFilter] = useState<CaseStatus | 'all'>('all');
 
     const fetchCases = useCallback(async () => {
-        setLoading(true);
-        setError(null);
         try {
             const query = statusFilter === 'all' ? '?limit=100' : `?limit=100&status=${statusFilter}`;
             const res = await authFetch(`${API_URL}/api/cases${query}`);
@@ -39,8 +37,20 @@ export function Cases() {
     }, [statusFilter]);
 
     useEffect(() => {
-        fetchCases();
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) void fetchCases();
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [fetchCases]);
+
+    const updateStatusFilter = (value: CaseStatus | 'all') => {
+        setLoading(true);
+        setError(null);
+        setStatusFilter(value);
+    };
 
     const createNewCase = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -182,7 +192,7 @@ export function Cases() {
                     <Search size={16} className="text-txt-dim" />
                     <span>{loading ? 'Cargando casos...' : `${cases.length} casos visibles`}</span>
                 </div>
-                <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as CaseStatus | 'all')} className="select-field max-w-[220px]">
+                <select value={statusFilter} onChange={event => updateStatusFilter(event.target.value as CaseStatus | 'all')} className="select-field max-w-[220px]">
                     <option value="all">Todos los estados</option>
                     <option value="draft">Draft</option>
                     <option value="authorized">Authorized</option>
