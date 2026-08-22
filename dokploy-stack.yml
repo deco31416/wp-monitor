@@ -44,9 +44,11 @@ services:
       - baileys_auth:/app/auth_info_baileys
       - checkin_uploads:/app/public/uploads
     networks:
-      - app
-      - data
-      - dokploy
+      app:
+      data:
+      dokploy:
+        aliases:
+          - wp-monitor-develop-backend
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -64,8 +66,10 @@ services:
     depends_on:
       - backend
     networks:
-      - app
-      - dokploy
+      app:
+      dokploy:
+        aliases:
+          - wp-monitor-develop-client
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
