@@ -49,6 +49,7 @@ Comprueba:
 5. creacion de caso sintetico;
 6. preview upload;
 7. persistencia tras `docker compose restart`.
+8. `docker compose exec backend id` informa `uid=1000(node)` y el backend no puede modificar `/app/dist/server.js`.
 
 ## Persistencia
 
@@ -66,6 +67,8 @@ flowchart LR
 ```
 
 No montes un volumen sobre `/app` completo: ocultaria el codigo de la imagen. Los volumenes deben apuntar exactamente a `/app/auth_info_baileys` y `/app/public/uploads`.
+
+El proceso backend se ejecuta como el usuario no privilegiado `node` (`UID/GID 1000`). La imagen conserva el codigo y las dependencias sin permiso de escritura para ese usuario, y solo concede escritura a `/app/auth_info_baileys` y `/app/public/uploads`. Los volumenes nombrados del Compose incluido se inicializan con esos permisos. Si reemplazas esos volumenes por bind mounts del host, prepara ambos directorios para que `1000:1000` pueda escribir sin ejecutar el servicio como `root`.
 
 ## Actualizacion
 

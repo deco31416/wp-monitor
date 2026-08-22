@@ -782,6 +782,7 @@ docker-compose.local.yml
 docker-compose.local.yaml
 compose.local.yml
 compose.local.yaml
+docker-compose.dokploy.yml
 
 docker-volumes/
 container-data/

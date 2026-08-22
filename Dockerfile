@@ -41,6 +41,9 @@ ARG PORT=4000
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
-RUN mkdir -p /app/auth_info_baileys /app/public/uploads
+RUN mkdir -p /app/auth_info_baileys /app/public/uploads \
+    && chown -R node:node /app/auth_info_baileys /app/public/uploads
+
+USER node
 
 CMD ["node", "dist/server.js"]

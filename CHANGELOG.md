@@ -94,6 +94,7 @@ No unreleased changes yet.
 ### Security and Compliance
 
 - Hardened Git and Docker exclusions for environment files, Baileys/WhatsApp sessions and backups, browser profiles/cookies, local data stores, uploads, packet captures, reports, evidence archives, logs and private tooling state.
+- Hardened the backend runtime image to execute as the non-root `node` user while limiting writable paths to Baileys session state and authorized uploads.
 - Verified that neither `main`, `develop` nor repository history tracks a real `.env` or Baileys session; only the safe `.env.example` template is versioned.
 
 ### Documentation
@@ -119,7 +120,7 @@ No unreleased changes yet.
 - Runtime authentication checks covered trusted/untrusted origins, login, session lookup, protected HTTP, logout/revocation, Socket.IO authentication/disconnection, cookie flags, MongoDB hash/index state, and Redis session cleanup.
 - Synthetic report fixture generation validated JSON, HTML, PDF, evidence ZIP annexes, passive-activity JSON/CSV, and per-artifact SHA-256 metadata.
 - Native PDF inspection with `pdfinfo`/`pdftoppm` confirmed a valid two-page A4 document with readable passive-signal, technical-measurement, candidate-IP, audit, integrity, and limitation sections without visible clipping.
-- Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set.
+- Docker Compose configuration validated and both backend/client images built successfully from the tracked workspace and patch set; the backend image was also verified to run as UID/GID 1000 with writable runtime-data directories and read-only compiled code.
 - Documentation relative-link validation passed across 62 Markdown files.
 - Static Mermaid validation passed for 21 blocks across the 14 diagram documents and canonical architecture view.
 

@@ -106,6 +106,10 @@ browser-data
 browser-profile
 browser-profiles
 playwright-data
+docker-compose*.yml
+docker-compose*.yaml
+compose*.yml
+compose*.yaml
 .agents
 .codex
 .claude/settings.local.json
