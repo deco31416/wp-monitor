@@ -29,7 +29,6 @@ import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
 import { initAnalytics, getFullIntelligence, getDailyRoutine, getAvailabilityProfile, getSessionStats, getWeeklyHeatmap, getHabitProfile, getCorrelation } from './analytics.js';
-import { startCallCapture, stopCallCapture, getCallCaptureStatus, autoDetectInterface } from './call-analyzer.js';
 import { enrichCallAnalysis, lookupIpEnrichment } from './ip-enrichment.js';
 import { buildCheckInConsistency, buildCheckInHash, buildConsentText, createCheckInToken, hasValidCheckInLocation, normalizeCheckInSubmission, renderCheckInPage } from './check-in.js';
 import { registerAuditRoutes } from './routes/audit.js';
@@ -39,6 +38,7 @@ import { registerRuntimeRoutes, sendCaptureUnavailableIfNeeded } from './routes/
 import {
     buildCapturePrivilegeUnavailablePayload,
     buildRuntimeConfig,
+    isPublicRuntimeApiPath,
     resolveTrustProxy,
     validateProductionSecurity,
 } from './runtime.js';
@@ -52,6 +52,8 @@ import { OperatorAuthService } from './operator-auth.js';
 import { createApiOriginGuard, createApiSessionGuard, registerAuthRoutes } from './routes/auth.js';
 import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
+import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
+import { CallCaptureService } from './call-capture-service.js';
 
 const originalConsoleLog = console.log.bind(console);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -123,6 +125,7 @@ const PORT = parsePositiveInteger(process.env.PORT || process.env.BACKEND_PORT, 
 const RUNTIME_CONFIG = buildRuntimeConfig(process.env);
 const DEPLOYMENT_MODE = RUNTIME_CONFIG.deploymentMode;
 const LOCAL_CAPTURE_ENABLED = RUNTIME_CONFIG.localCaptureEnabled;
+const CALL_CAPTURE_MODE = RUNTIME_CONFIG.callCaptureMode;
 const EXPERIMENTAL_PROBES_ENABLED = RUNTIME_CONFIG.experimentalProbesEnabled;
 const PROBE_INTERVAL_MS = parsePositiveInteger(process.env.PROBE_INTERVAL_MS, 30_000, 10_000);
 const PROBE_TIMEOUT_MS = parsePositiveInteger(process.env.PROBE_TIMEOUT_MS, 10_000, 3_000);
@@ -230,6 +233,13 @@ function logStartupConfiguration() {
                 ? 'Packet capture privileges: available'
                 : 'Packet capture privileges: missing CAP_NET_RAW');
     }
+    bootLog('info', `Call capture mode: ${CALL_CAPTURE_MODE}`);
+    if (CALL_CAPTURE_MODE !== 'disabled') {
+        bootLog(callCaptureService.isAvailable() ? 'ok' : 'warn',
+            callCaptureService.isAvailable()
+                ? 'Call capture service: available'
+                : 'Call capture service: unavailable');
+    }
 }
 
 async function initializeRedis(): Promise<boolean> {
@@ -251,6 +261,27 @@ if (startupSecurityErrors.length > 0) {
     }
     bootLog('error', 'Backend startup blocked by production security validation');
     process.exit(1);
+}
+
+const captureAgentClient = CALL_CAPTURE_MODE === 'agent'
+    ? new CaptureAgentClient({
+        baseUrl: process.env.CAPTURE_AGENT_URL!,
+        sharedSecret: process.env.CAPTURE_AGENT_SHARED_SECRET!,
+        timeoutMs: parsePositiveInteger(process.env.CAPTURE_AGENT_TIMEOUT_MS, 5_000, 500),
+    })
+    : undefined;
+const callCaptureService = new CallCaptureService({
+    mode: CALL_CAPTURE_MODE,
+    ...(captureAgentClient ? { agent: captureAgentClient } : {}),
+});
+let callCaptureAvailabilityTimer: NodeJS.Timeout | null = null;
+
+function startCallCaptureAvailabilityMonitor(): void {
+    if (CALL_CAPTURE_MODE !== 'agent' || callCaptureAvailabilityTimer) return;
+    callCaptureAvailabilityTimer = setInterval(() => {
+        void callCaptureService.refreshAvailability();
+    }, 30_000);
+    callCaptureAvailabilityTimer.unref();
 }
 
 async function tryRecordStartupAudit() {
@@ -418,6 +449,14 @@ function buildOpenApiDocument() {
                     summary: 'Get operational health without secrets',
                     security: [],
                     responses: { '200': { description: 'Service operational' }, '503': { description: 'Service degraded' } },
+                },
+            },
+            '/api/health/live': {
+                get: {
+                    tags: ['Runtime'],
+                    summary: 'Get process liveness without checking external dependencies',
+                    security: [],
+                    responses: { '200': { description: 'Process is alive' } },
                 },
             },
             '/api/cases': {
@@ -729,7 +768,7 @@ registerAuthRoutes(app, authRouteOptions);
 
 const apiSessionGuard = createApiSessionGuard(authRouteOptions);
 app.use('/api', (req, res, next) => {
-    if (req.path === '/runtime-capabilities' || req.path === '/health') {
+    if (isPublicRuntimeApiPath(req.path)) {
         next();
         return;
     }
@@ -857,6 +896,34 @@ function rejectCaptureUnavailable(res: express.Response): boolean {
     return sendCaptureUnavailableIfNeeded(RUNTIME_CONFIG, res, hasPacketCapturePrivileges());
 }
 
+async function rejectCallCaptureUnavailable(res: express.Response): Promise<boolean> {
+    if (!callCaptureService.isEnabled()) {
+        res.status(403).json({
+            error: 'Call traffic analysis is disabled in this deployment',
+            mode: CALL_CAPTURE_MODE,
+        });
+        return true;
+    }
+    if (!await callCaptureService.refreshAvailability()) {
+        res.status(503).json({
+            error: 'Call capture service is unavailable',
+            code: CALL_CAPTURE_MODE === 'agent' ? 'capture_agent_unavailable' : 'capture_privileges_missing',
+            mode: CALL_CAPTURE_MODE,
+        });
+        return true;
+    }
+    return false;
+}
+
+function respondCallCaptureError(res: express.Response, error: unknown): void {
+    if (error instanceof CaptureAgentClientError) {
+        res.status(error.status).json({ error: error.message, code: error.code, mode: CALL_CAPTURE_MODE });
+        return;
+    }
+    console.error('[CALL] Capture service operation failed');
+    res.status(500).json({ error: 'Call capture operation failed', code: 'call_capture_failed' });
+}
+
 function emitCapturePrivilegeUnavailable(socket: { emit: (event: string, payload: unknown) => unknown }): void {
     const payload = buildCapturePrivilegeUnavailablePayload();
     socket.emit('error', {
@@ -865,6 +932,29 @@ function emitCapturePrivilegeUnavailable(socket: { emit: (event: string, payload
         code: payload.code,
         hint: payload.hint,
     });
+}
+
+async function emitCallCaptureUnavailableIfNeeded(
+    socket: { emit: (event: string, payload: unknown) => unknown },
+): Promise<boolean> {
+    if (!callCaptureService.isEnabled()) {
+        socket.emit('error', {
+            status: 403,
+            message: 'Call traffic analysis is disabled in this deployment',
+            mode: CALL_CAPTURE_MODE,
+        });
+        return true;
+    }
+    if (!await callCaptureService.refreshAvailability()) {
+        socket.emit('error', {
+            status: 503,
+            message: 'Call capture service is unavailable',
+            code: CALL_CAPTURE_MODE === 'agent' ? 'capture_agent_unavailable' : 'capture_privileges_missing',
+            mode: CALL_CAPTURE_MODE,
+        });
+        return true;
+    }
+    return false;
 }
 
 function parseCaptureAuditContext(data: any): CaptureAuditContext | null {
@@ -2114,7 +2204,7 @@ async function connectToWhatsApp() {
             publishCallLiveState(call, 'baileys');
 
             // Auto-start only when a default case context is configured.
-            if (LOCAL_CAPTURE_ENABLED && (call.status === 'offer' || call.status === 'accept')) {
+            if (callCaptureService.isEnabled() && (call.status === 'offer' || call.status === 'accept')) {
                 const defaultContext = getDefaultCaptureAuditContext();
                 if (!defaultContext) {
                     console.log('[CALL] Auto-capture skipped: DEFAULT_CASE_ID, DEFAULT_OPERATOR_NAME, and DEFAULT_AUTHORIZATION_NOTE are required');
@@ -2125,41 +2215,56 @@ async function connectToWhatsApp() {
                     console.log('[CALL] Auto-capture skipped: configured case is not available for capture');
                     continue;
                 }
-                const iface = autoDetectInterface();
-                if (iface) {
-                    const started = startCallCapture(
-                        iface,
-                        call.from,
-                        call.id,
-                        call.isVideo || false,
-                        (packet) => {
-                            io.emit('call-packet', packet);
-                        }
-                    );
-                    if (started) {
-                        activeCallAuditContext = { ...defaultContext, targetJid: call.from, callId: call.id };
-                        await auditEvent(defaultContext, 'call_capture_start', 'call', {
-                            callId: call.id,
-                            interfaceAddr: iface,
-                            isVideo: call.isVideo || false,
-                            trigger: 'auto',
-                        }, call.from);
-                        console.log('[CALL] Auto-capture started');
-                        io.emit('call-capture-started', { callId: call.id, targetJid: call.from });
+                try {
+                    if (!await callCaptureService.refreshAvailability()) {
+                        console.warn('[CALL] Auto-capture skipped: capture service unavailable');
+                        continue;
                     }
-                } else {
-                    console.warn('[CALL] No network interface found for auto-capture');
+                    const iface = await callCaptureService.autoDetectInterface();
+                    if (iface) {
+                        const started = await callCaptureService.start(
+                            iface,
+                            call.from,
+                            call.id,
+                            call.isVideo || false,
+                            (packet) => {
+                                io.emit('call-packet', packet);
+                            },
+                        );
+                        if (started) {
+                            activeCallAuditContext = { ...defaultContext, targetJid: call.from, callId: call.id };
+                            await auditEvent(defaultContext, 'call_capture_start', 'call', {
+                                callId: call.id,
+                                interfaceAddr: iface,
+                                isVideo: call.isVideo || false,
+                                trigger: 'auto',
+                                captureMode: CALL_CAPTURE_MODE,
+                            }, call.from);
+                            console.log('[CALL] Auto-capture started');
+                            io.emit('call-capture-started', { callId: call.id, targetJid: call.from });
+                        }
+                    } else {
+                        console.warn('[CALL] No network interface found for auto-capture');
+                    }
+                } catch {
+                    console.warn('[CALL] Auto-capture skipped: capture service request failed');
                 }
             }
 
             // Auto-stop capture when call terminates
-            if (LOCAL_CAPTURE_ENABLED && (call.status === 'terminate' || call.status === 'reject' || call.status === 'timeout')) {
+            if (callCaptureService.isEnabled() && (call.status === 'terminate' || call.status === 'reject' || call.status === 'timeout')) {
                 if (!activeCallAuditContext || activeCallAuditContext.callId !== call.id) {
                     continue;
                 }
                 const stoppedCallAuditContext = activeCallAuditContext;
+                let rawResult: Awaited<ReturnType<typeof callCaptureService.stop>>;
+                try {
+                    rawResult = await callCaptureService.stop();
+                } catch {
+                    console.warn('[CALL] Auto-stop failed: capture service unavailable');
+                    continue;
+                }
                 activeCallAuditContext = null;
-                const rawResult = stopCallCapture();
                 const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
                 if (result) {
                     console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(c => c.isP2P).length} direct-path candidates`);
@@ -2191,6 +2296,11 @@ async function initializeApplication(): Promise<void> {
 
     dbAvailableForStartupAudit = await connectDB();
     if (!dbAvailableForStartupAudit) throw new Error('MongoDB authentication dependency is unavailable');
+
+    if (callCaptureService.isEnabled()) {
+        await callCaptureService.refreshAvailability();
+        startCallCaptureAvailabilityMonitor();
+    }
 
     const bootstrap = await operatorAuthService.ensureBootstrap(
         INITIAL_ADMIN_USERNAME,
@@ -3039,6 +3149,7 @@ registerRuntimeRoutes(app, RUNTIME_CONFIG, {
     redisConnected: () => redisService.getHealth().connected,
     whatsappConnected: () => isWhatsAppConnected,
     localCaptureAvailable: () => hasPacketCapturePrivileges(),
+    callCaptureAvailable: () => callCaptureService.isAvailable(),
 });
 
 registerCaseRoutes(app);
@@ -3120,13 +3231,17 @@ registerReportRoutes(app, {
     auditEvent,
 });
 
-app.get('/api/call-capture/status', (_req, res) => {
-    if (rejectCaptureUnavailable(res)) return;
-    res.json(getCallCaptureStatus());
+app.get('/api/call-capture/status', async (_req, res) => {
+    if (await rejectCallCaptureUnavailable(res)) return;
+    try {
+        res.json(await callCaptureService.getStatus());
+    } catch (error) {
+        respondCallCaptureError(res, error);
+    }
 });
 
 app.post('/api/call-capture/start', async (req, res) => {
-    if (rejectCaptureUnavailable(res)) return;
+    if (await rejectCallCaptureUnavailable(res)) return;
     const auditContext = parseCaptureAuditContext(req.body);
     if (!auditContext) {
         res.status(400).json({ error: 'caseId, operatorName, and authorizationNote are required' });
@@ -3139,22 +3254,35 @@ app.post('/api/call-capture/start', async (req, res) => {
         validationError(res, targetResult.errors || []);
         return;
     }
-    const iface = cleanText(interfaceAddr, 200) || autoDetectInterface();
+    let iface: string | null;
+    try {
+        iface = cleanText(interfaceAddr, 200) || await callCaptureService.autoDetectInterface();
+    } catch (error) {
+        respondCallCaptureError(res, error);
+        return;
+    }
     if (!iface) {
         res.status(400).json({ error: 'No network interface available' });
         return;
     }
     const cid = cleanText(callId, 120) || `manual-${Date.now()}`;
     const target = targetResult.value!;
-    const ok = startCallCapture(iface, target, cid, isVideo || false, (packet) => {
-        io.emit('call-packet', packet);
-    });
+    let ok = false;
+    try {
+        ok = await callCaptureService.start(iface, target, cid, isVideo || false, (packet) => {
+            io.emit('call-packet', packet);
+        });
+    } catch (error) {
+        respondCallCaptureError(res, error);
+        return;
+    }
     if (ok) {
         activeCallAuditContext = { ...auditContext, targetJid: target, callId: cid };
         await linkEvidenceToCase(auditContext, 'call_analysis', cid, `Call capture ${cid}`, {
             interfaceAddr: iface,
             isVideo: isVideo || false,
             trigger: 'manual_rest',
+            captureMode: CALL_CAPTURE_MODE,
             status: 'started',
         }, target);
         await auditEvent(auditContext, 'call_capture_start', 'call', {
@@ -3162,6 +3290,7 @@ app.post('/api/call-capture/start', async (req, res) => {
             interfaceAddr: iface,
             isVideo: isVideo || false,
             trigger: 'manual_rest',
+            captureMode: CALL_CAPTURE_MODE,
         }, target);
         io.emit('call-capture-started', { callId: cid, targetJid: target });
         res.json({ ok: true, callId: cid });
@@ -3171,10 +3300,16 @@ app.post('/api/call-capture/start', async (req, res) => {
 });
 
 app.post('/api/call-capture/stop', async (_req, res) => {
-    if (rejectCaptureUnavailable(res)) return;
+    if (await rejectCallCaptureUnavailable(res)) return;
     const stoppedCallAuditContext = activeCallAuditContext;
+    let rawResult;
+    try {
+        rawResult = await callCaptureService.stop();
+    } catch (error) {
+        respondCallCaptureError(res, error);
+        return;
+    }
     activeCallAuditContext = null;
-    const rawResult = stopCallCapture();
     const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
     if (result) {
         io.emit('call-analysis', result);
@@ -3644,14 +3779,7 @@ io.on('connection', (socket) => {
     // ── Call IP Analyzer Socket events ──────────────────────────
 
     socket.on('start-call-capture', async (data: { interfaceAddr?: string; targetJid?: string; callId?: string; isVideo?: boolean; caseId?: string; operatorName?: string; authorizationNote?: string }) => {
-        if (!LOCAL_CAPTURE_ENABLED) {
-            socket.emit('error', { message: 'Local call traffic analysis is disabled in this deployment', mode: DEPLOYMENT_MODE });
-            return;
-        }
-        if (!hasPacketCapturePrivileges()) {
-            emitCapturePrivilegeUnavailable(socket);
-            return;
-        }
+        if (await emitCallCaptureUnavailableIfNeeded(socket)) return;
         const auditContext = parseCaptureAuditContext(data);
         if (!auditContext) {
             socketValidationError(socket, ['caseId, operatorName, and authorizationNote are required before call capture']);
@@ -3667,22 +3795,36 @@ io.on('connection', (socket) => {
             socketValidationError(socket, targetResult.errors || []);
             return;
         }
-        const iface = cleanText(data.interfaceAddr, 200) || autoDetectInterface();
+        let iface: string | null;
+        try {
+            iface = cleanText(data.interfaceAddr, 200) || await callCaptureService.autoDetectInterface();
+        } catch {
+            socket.emit('error', { message: 'Capture service is unavailable', code: 'capture_agent_unavailable' });
+            return;
+        }
         if (!iface) {
             socket.emit('error', { message: 'No network interface available for capture' });
             return;
         }
         const cid = cleanText(data.callId, 120) || `manual-${Date.now()}`;
         const jid = targetResult.value!;
-        const ok = startCallCapture(iface, jid, cid, data.isVideo || false, (packet) => {
-            io.emit('call-packet', packet);
-        });
+        let ok = false;
+        try {
+            ok = await callCaptureService.start(iface, jid, cid, data.isVideo || false, (packet) => {
+                io.emit('call-packet', packet);
+            });
+        } catch (error) {
+            const code = error instanceof CaptureAgentClientError ? error.code : 'call_capture_failed';
+            socket.emit('error', { message: 'Failed to start call capture', code });
+            return;
+        }
         if (ok) {
             activeCallAuditContext = { ...auditContext, targetJid: jid, callId: cid };
             await linkEvidenceToCase(auditContext, 'call_analysis', cid, `Call capture ${cid}`, {
                 interfaceAddr: iface,
                 isVideo: data.isVideo || false,
                 trigger: 'socket',
+                captureMode: CALL_CAPTURE_MODE,
                 status: 'started',
             }, jid);
             await auditEvent(auditContext, 'call_capture_start', 'call', {
@@ -3690,6 +3832,7 @@ io.on('connection', (socket) => {
                 interfaceAddr: iface,
                 isVideo: data.isVideo || false,
                 trigger: 'socket',
+                captureMode: CALL_CAPTURE_MODE,
             }, jid);
             io.emit('call-capture-started', { callId: cid, targetJid: jid });
             console.log('[CALL] Manual capture started');
@@ -3699,13 +3842,17 @@ io.on('connection', (socket) => {
     });
 
     socket.on('stop-call-capture', async () => {
-        if (!LOCAL_CAPTURE_ENABLED) {
-            socket.emit('error', { message: 'No local call capture is running in this deployment' });
+        if (await emitCallCaptureUnavailableIfNeeded(socket)) return;
+        const stoppedCallAuditContext = activeCallAuditContext;
+        let rawResult;
+        try {
+            rawResult = await callCaptureService.stop();
+        } catch (error) {
+            const code = error instanceof CaptureAgentClientError ? error.code : 'call_capture_failed';
+            socket.emit('error', { message: 'Failed to stop call capture', code });
             return;
         }
-        const stoppedCallAuditContext = activeCallAuditContext;
         activeCallAuditContext = null;
-        const rawResult = stopCallCapture();
         const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
         if (result) {
             io.emit('call-analysis', result);
@@ -3736,8 +3883,10 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('get-call-capture-status', () => {
-        if (!LOCAL_CAPTURE_ENABLED) {
+    socket.on('get-call-capture-status', async () => {
+        try {
+            socket.emit('call-capture-status', await callCaptureService.getStatus());
+        } catch {
             socket.emit('call-capture-status', {
                 isCapturing: false,
                 targetJid: null,
@@ -3746,9 +3895,7 @@ io.on('connection', (socket) => {
                 packetsCollected: 0,
                 elapsed: 0,
             });
-            return;
         }
-        socket.emit('call-capture-status', getCallCaptureStatus());
     });
 });
 
@@ -3783,7 +3930,15 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM') {
     }
     trackers.clear();
     stopCapture();
-    stopCallCapture();
+    if (callCaptureAvailabilityTimer) {
+        clearInterval(callCaptureAvailabilityTimer);
+        callCaptureAvailabilityTimer = null;
+    }
+    try {
+        await callCaptureService.stop();
+    } catch {
+        console.warn('[CALL] Capture service did not acknowledge shutdown');
+    }
     httpServer.close();
     await redisService.disconnect();
     await disconnectDB();

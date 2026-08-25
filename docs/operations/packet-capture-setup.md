@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Preparar el sistema operativo para que el modulo Node.js `cap` pueda enumerar interfaces y observar metadata de paquetes. Esta instalacion habilita **Network Monitor** y **Analisis de Llamadas**; no obtiene automaticamente la IP de un numero ni concede autorizacion para capturar trafico.
+Preparar un runtime nativo para que el modulo Node.js `cap` pueda enumerar interfaces y observar metadata de paquetes. Esta instalacion habilita **Network Monitor** y el proveedor local de **Analisis de Llamadas**; no obtiene automaticamente la IP de un numero ni concede autorizacion para capturar trafico.
 
 La captura debe ejecutarse en la misma computadora donde corre WhatsApp Web/Desktop y solamente sobre una interfaz autorizada.
 
@@ -118,6 +118,19 @@ pnpm rebuild cap
 
 La forma simple en un laboratorio aislado es iniciar el proceso de captura con privilegios suficientes. No ejecutes instalaciones pnpm como root. Asignar capacidades directamente al binario global de Node afecta todas las aplicaciones que lo usan y debe evaluarse por seguridad; para produccion se recomienda aislar la captura en un ejecutable/servicio dedicado con minimo privilegio.
 
+### Docker/VPS recomendado
+
+No instales Chromium/libpcap directamente en el host ni otorgues capabilities al backend. Usa `Dockerfile.browser`, `Dockerfile.capture-agent` y `docker-compose.yml`:
+
+- `wa-browser` crea display/audio virtual y perfil persistente;
+- `capture-agent` comparte su namespace de red;
+- el entrypoint baja a UID/GID 1000 y conserva solo `NET_RAW/NET_ADMIN`;
+- backend controla start/status/stop mediante HMAC privado;
+- `LOCAL_CAPTURE_ENABLED=false` mantiene deshabilitada la captura general del host;
+- `CALL_CAPTURE_MODE=agent` habilita solo la ventana del navegador.
+
+Consulta [Docker](docker.md) y [Ubuntu VPS](ubuntu-vps.md). La prueba real debe leer UID/capabilities de `/proc/1/status`, no inferirlas desde `docker exec id`.
+
 ## Configuracion WP MONITOR
 
 Despues de instalar el driver:
@@ -125,6 +138,7 @@ Despues de instalar el driver:
 ```env
 DEPLOYMENT_MODE=local-full
 LOCAL_CAPTURE_ENABLED=true
+CALL_CAPTURE_MODE=local
 BACKEND_PORT=4000
 CLIENT_PORT=4001
 ```
@@ -186,6 +200,7 @@ No uses una llamada hasta superar esta prueba. Si la captura general no ve paque
 | Access denied | Restriccion admin/capability | Elevar solo proceso autorizado |
 | Captura funciona, llamada no | WhatsApp corre en otro equipo/interfaz | Ejecutar llamada en la misma maquina |
 | Railway muestra bloqueo | Comportamiento esperado | Captura solo en `local-full` |
+| Agente VPS no disponible | Health/HMAC/capabilities/namespace | Revisar `wa-browser`, `capture-agent` y modo `agent` |
 
 ## Seguridad y licencia
 

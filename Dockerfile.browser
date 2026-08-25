@@ -1,0 +1,54 @@
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:99
+ENV PULSE_SERVER=unix:/tmp/pulse/native
+ENV PULSE_RUNTIME_PATH=/tmp/pulse
+ENV XDG_RUNTIME_DIR=/tmp/runtime-browser
+ENV XDG_CONFIG_HOME=/tmp/browser-config
+ENV XDG_CACHE_HOME=/tmp/browser-cache
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        chromium \
+        dbus-x11 \
+        fluxbox \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        novnc \
+        pulseaudio \
+        pulseaudio-utils \
+        websockify \
+        x11-utils \
+        x11vnc \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin browser \
+    && install -d -o browser -g browser \
+        /home/browser/profile \
+        /tmp/runtime-browser \
+        /tmp/browser-config \
+        /tmp/browser-cache \
+        /tmp/pulse \
+        /tmp/.X11-unix \
+        /tmp/fluxbox
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium-sandbox \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV HOME=/tmp/browser-home
+
+COPY --chmod=755 scripts/browser/entrypoint.sh /usr/local/bin/wp-browser-entrypoint
+
+USER browser
+WORKDIR /home/browser
+
+EXPOSE 7900
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7900"]
+
+ENTRYPOINT ["/usr/local/bin/wp-browser-entrypoint"]

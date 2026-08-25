@@ -5,12 +5,22 @@ import {
     buildCaptureUnavailablePayload,
     buildRuntimeCapabilities,
     buildRuntimeConfig,
+    isPublicRuntimeApiPath,
     resolveTrustProxy,
     resolveDeploymentMode,
+    resolveCallCaptureMode,
     resolveLocalCaptureEnabled,
     validateProductionSecurity,
 } from '../src/runtime.js';
 import { SOFTWARE_VERSION } from '../src/version.js';
+
+test('keeps only exact runtime capability and health paths public', () => {
+    assert.equal(isPublicRuntimeApiPath('/runtime-capabilities'), true);
+    assert.equal(isPublicRuntimeApiPath('/health'), true);
+    assert.equal(isPublicRuntimeApiPath('/health/live'), true);
+    assert.equal(isPublicRuntimeApiPath('/health/live/extra'), false);
+    assert.equal(isPublicRuntimeApiPath('/health/ready'), false);
+});
 
 test('resolves Railway mode from Railway environment name and disables local capture by default', () => {
     const env = { RAILWAY_ENVIRONMENT_NAME: 'production' };
@@ -28,6 +38,7 @@ test('resolves Railway mode from Railway environment name and disables local cap
         reports: true,
         networkMonitor: false,
         callTrafficAnalysis: false,
+        callCaptureMode: 'disabled',
         passiveMessageReceipts: true,
         experimentalProbes: false,
         authRequired: true,
@@ -60,6 +71,38 @@ test('keeps local capture configured but marks capture features unavailable with
 test('explicit LOCAL_CAPTURE_ENABLED overrides deployment default', () => {
     assert.equal(resolveLocalCaptureEnabled({ DEPLOYMENT_MODE: 'local-full', LOCAL_CAPTURE_ENABLED: 'false' }), false);
     assert.equal(resolveLocalCaptureEnabled({ DEPLOYMENT_MODE: 'railway-dashboard', LOCAL_CAPTURE_ENABLED: 'true' }), true);
+});
+
+test('configures an isolated call capture agent without enabling local network capture', () => {
+    const env = {
+        DEPLOYMENT_MODE: 'server-full',
+        LOCAL_CAPTURE_ENABLED: 'false',
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://capture-agent:4100',
+        CAPTURE_AGENT_SHARED_SECRET: '12345678901234567890123456789012',
+        REDIS_URL: 'redis://redis:6379',
+    };
+    const config = buildRuntimeConfig(env);
+    const capabilities = buildRuntimeCapabilities(config, false, true);
+
+    assert.equal(resolveCallCaptureMode(env), 'agent');
+    assert.equal(config.localCaptureEnabled, false);
+    assert.equal(capabilities.networkMonitor, false);
+    assert.equal(capabilities.callCaptureMode, 'agent');
+    assert.equal(capabilities.callTrafficAnalysis, true);
+    assert.deepEqual(validateProductionSecurity(env), []);
+});
+
+test('rejects incomplete or unsafe capture agent configuration', () => {
+    assert.deepEqual(validateProductionSecurity({
+        REDIS_URL: 'redis://redis:6379',
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://user:password@capture-agent:4100/path',
+        CAPTURE_AGENT_SHARED_SECRET: 'short',
+    }), [
+        'CAPTURE_AGENT_URL must be an HTTP(S) origin without credentials, path, query, or fragment',
+        'CAPTURE_AGENT_SHARED_SECRET must contain at least 32 bytes when CALL_CAPTURE_MODE=agent',
+    ]);
 });
 
 test('keeps active probes disabled unless explicitly enabled', () => {

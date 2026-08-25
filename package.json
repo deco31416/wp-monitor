@@ -1,6 +1,6 @@
 {
   "name": "@deco31416/wp-monitor",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=24.19.0 <25"
@@ -47,6 +47,7 @@
     "qa": "pnpm run typecheck && pnpm run typecheck:test && pnpm run lint && pnpm run test && pnpm run build:all",
     "qa:report-fixture": "tsx scripts/generate-report-fixture.ts",
     "start": "node dist/server.js",
+    "start:capture-agent": "node dist/capture-agent.js",
     "start:server": "pnpm exec tsx src/server.ts",
     "start:client": "pnpm --dir client start",
     "dev": "pnpm exec tsx src/server.ts",

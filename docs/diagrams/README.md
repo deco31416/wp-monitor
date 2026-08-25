@@ -1,6 +1,6 @@
 # Biblioteca de Diagramas Mermaid
 
-Esta carpeta contiene vistas independientes y renderizables de WP MONITOR `3.0.0`. Cada archivo explica proposito, alcance, lectura y decisiones. Los documentos funcionales enlazan estas vistas en lugar de copiar diagramas divergentes.
+Esta carpeta contiene vistas independientes y renderizables de WP MONITOR `3.1.0` candidato. Cada archivo explica proposito, alcance, lectura y decisiones. Los documentos funcionales enlazan estas vistas en lugar de copiar diagramas divergentes.
 
 ## Arquitectura
 

@@ -20,7 +20,7 @@ Relacionar carpetas y archivos con responsabilidades, entradas, salidas, estado 
 
 ### `src/runtime.ts` y `src/routes/runtime.ts`
 
-Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `TRUST_PROXY`, requisitos de produccion, capacidades y health. Son el contrato que permite al frontend ocultar funciones imposibles en cloud.
+Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `CALL_CAPTURE_MODE`, `TRUST_PROXY`, requisitos de produccion, capacidades y health. Son el contrato que permite al frontend distinguir Network Monitor local, captura de llamada por agente y funciones imposibles en cloud.
 
 Invariantes:
 
@@ -28,6 +28,18 @@ Invariantes:
 - captura por defecto solo en `local-full`;
 - Railway detectado usa dashboard si no se define modo;
 - health distingue configurado de conectado.
+
+### `src/call-capture-service.ts`
+
+Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Mantiene disponibilidad observable sin conceder capabilities al backend.
+
+### `src/capture-agent-auth.ts`, `src/capture-agent-client.ts` y `src/capture-agent-app.ts`
+
+Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. El cliente aplica timeout, bloquea redirects y valida el resultado antes de entregarlo al backend.
+
+### `src/capture-agent.ts`
+
+Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
 
 ### `src/redis.ts` y `src/rate-limit.ts`
 
@@ -62,6 +74,14 @@ Adapta el modulo nativo `cap`: enumera interfaces, inicia/detiene, normaliza met
 ### `src/call-analyzer.ts`
 
 Administra una ventana de llamada, agrupa paquetes y produce ruta observada, infraestructura, candidatos y resumen. No controla la llamada de WhatsApp.
+
+### `Dockerfile.browser` y `scripts/browser/entrypoint.sh`
+
+Ejecutan Chromium persistente como UID 10001 con Xvfb, Fluxbox, PulseAudio virtual y noVNC. El entrypoint supervisa procesos, mantiene un lock exclusivo del perfil y recupera marcadores Chromium obsoletos tras un stop no limpio.
+
+### `Dockerfile.capture-agent` y `scripts/capture-agent/entrypoint.sh`
+
+Compilan `cap`/libpcap y arrancan Node como UID/GID 1000. El entrypoint conserva solo `NET_RAW/NET_ADMIN` y activa `no-new-privileges`; el agente comparte `network_mode` con `wa-browser` y no publica puerto.
 
 ### `src/call-scoring.ts`
 
@@ -139,6 +159,8 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | MongoDB | Persistencia | Health degradado y perdida de funciones durables |
 | Redis | Sesiones, rate limits y contadores compartidos | El backend no inicia; login/submit fallan cerrados |
 | Npcap/libpcap | Captura local | Network/Call no disponibles |
+| Chromium/noVNC/Xvfb/PulseAudio | Sesion WhatsApp Web en VPS | Llamada desde navegador no disponible; backend/Baileys continúan |
+| Capture agent | Captura del namespace Chromium | Call analysis degradado; backend sin privilegios permanece operativo |
 | DB-IP/ip-api | Enriquecimiento | Resultado sin metadata ampliada |
 | Navegador | GPS y metadata Check-In | Permiso denegado o campos no disponibles |
 

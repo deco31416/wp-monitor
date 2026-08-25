@@ -1,4 +1,4 @@
-# Casos y WhatsApp Tracker
+# Casos y Actividad WhatsApp
 
 ## Crear un caso
 
@@ -36,7 +36,7 @@ Cerrar genera auditoria. No cierres un caso antes de terminar exportaciones y re
 
 El pais del numero se deriva de su plan de numeracion. No demuestra pais actual, residencia ni red utilizada.
 
-## Fuentes del Tracker
+## Fuentes de Actividad WhatsApp
 
 ### Observacion pasiva (predeterminada)
 

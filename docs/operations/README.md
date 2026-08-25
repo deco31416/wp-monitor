@@ -9,6 +9,7 @@ Runbooks para administrar WP MONITOR en desarrollo, laboratorio autorizado y das
 | Ejecutar en Windows/Linux con captura local | [Runbook local](local-runbook.md) |
 | Preparar un Ubuntu 26.04 VPS publico | [Ubuntu VPS](ubuntu-vps.md) |
 | Actualizar una instalacion `2.x` a `3.0.0` | [Migracion 3.0](migration-3.0.md) |
+| Actualizar `3.0.0` a `3.1.0` | [Migracion 3.1](migration-3.1.md) |
 | Instalar Npcap/libpcap y validar `cap` | [Motor de captura](packet-capture-setup.md) |
 | Construir y validar contenedores | [Docker](docker.md) |
 | Operar Redis en Docker o Ubuntu/VPS | [Redis](redis.md) |
@@ -20,16 +21,16 @@ Runbooks para administrar WP MONITOR en desarrollo, laboratorio autorizado y das
 
 ## Matriz de capacidades
 
-| Capacidad | local-full | railway-dashboard |
-| --- | --- | --- |
-| Dashboard y API | Si | Si |
-| MongoDB y casos | Si | Si |
-| Redis compartido | Requerido | Requerido |
-| WhatsApp Tracker | Si | Si |
-| Check-In e informes | Si | Si |
-| Captura de interfaz local | Si, con driver/permisos | No |
-| Analisis local de llamada | Si | No |
-| URL publica HTTPS | Opcional | Recomendado/obligatorio para flujo externo |
+| Capacidad | Native local | Docker/VPS sidecar | railway-dashboard |
+| --- | --- | --- | --- |
+| Dashboard y API | Si | Si | Si |
+| MongoDB y casos | Si | Si | Si |
+| Redis compartido | Requerido | Requerido | Requerido |
+| Actividad WhatsApp/Baileys | Si | Si | Si |
+| Chromium WhatsApp Web | Externo al proceso | Persistente aislado | No |
+| Captura de interfaz general | Si, con driver/permisos | No por defecto | No |
+| Analisis de llamada | Proveedor `local` | Proveedor `agent` | No |
+| URL publica HTTPS | Opcional | Obligatoria | Obligatoria |
 
 ## Operacion diaria minima
 

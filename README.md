@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/version-3.0.0-2563EB?style=flat-square" alt="Version 3.0.0" />
+    <img src="https://img.shields.io/badge/version-3.1.0--candidate-F59E0B?style=flat-square" alt="Version 3.1.0 candidate" />
   </a>
   <img src="https://img.shields.io/badge/Node.js-24.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24.19" />
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.7+" />
@@ -37,7 +37,7 @@
 
 WP MONITOR is an open-source research platform that combines WhatsApp activity analysis, behavioral analytics, local network metadata capture, consent-based check-ins, case management, audit logging, and evidence-oriented reporting.
 
-The project was originally forked from [gommzystudio/device-activity-tracker](https://github.com/gommzystudio/device-activity-tracker) and extensively redesigned by [deco31416](https://www.deco31416.com). Version 3.0 establishes a Node.js 24/pnpm workspace, durable case-scoped sessions, passive-by-default observation, single-operator cookie authentication, Redis-backed sessions/rate limits, evidence-oriented reporting, and explicit local/cloud capability boundaries.
+The project was originally forked from [gommzystudio/device-activity-tracker](https://github.com/gommzystudio/device-activity-tracker) and extensively redesigned by [deco31416](https://www.deco31416.com). Version 3.1 builds on the Node.js 24/pnpm, durable case-scoped session and Redis-backed security baseline with a persistent WhatsApp Web browser, isolated least-privilege capture agent, container health/resource controls and encrypted recovery tooling.
 
 The RTT research foundation follows the paper **“Careless Whisper: Exploiting Silent Delivery Receipts to Monitor Users on Mobile Instant Messengers”** by Gabriel K. Gegenhuber et al. from the University of Vienna and SBA Research.
 
@@ -59,11 +59,11 @@ The RTT research foundation follows the paper **“Careless Whisper: Exploiting 
 | Presence and device signals | Observes supported presence states, recording/typing indicators and technical destinations without claiming unavailable presence |
 | Privacy and anomaly assessment | Produces an explainable OPSEC exposure score and flags deviations from historical activity baselines |
 | Network Monitor | Captures packet metadata through Npcap/libpcap, applies protocol filters, classifies IP observations, and exports CSV or JSON |
-| Call traffic analysis | Opens an authorized local capture window around an externally initiated WhatsApp Web/Desktop call or interaction |
+| Call traffic analysis | Opens an authorized capture window around an externally initiated WhatsApp Web/Desktop call; Docker/VPS uses a dedicated sidecar in the browser network namespace |
 | Authorized Check-In | Creates consent-based links that record server-observed network metadata, browser/device context, optional GPS, and a SHA-256 evidence hash |
 | Case and audit management | Associates operations with a `caseId`, operator, authorization note, event timeline, and case status |
 | Reporting and evidence | Generates contact reports, final case reports, audit exports, CSV annexes, and JSON/ZIP evidence packages with integrity hashes |
-| Runtime separation | Supports `local-full` for local capture and `railway-dashboard` for remote dashboard, API, statistics, and reporting |
+| Runtime separation | Supports native `local` capture, isolated `agent` capture for Docker/VPS, and `disabled` call capture for dashboard-only platforms |
 | Operational controls | Exposes health/capability endpoints, single-operator cookie authentication, Redis-backed rate limits, production CORS controls and safe feature gating |
 
 ---
@@ -88,9 +88,11 @@ flowchart LR
         Reports[Reporting and Evidence Services]
     end
 
-    subgraph LocalServices[Local Capture Services]
+    subgraph CaptureServices[Capture Services]
         Network[Network Monitor]
         Calls[Call Traffic Analyzer]
+        Browser[Persistent WhatsApp Web Browser]
+        Agent[Isolated Capture Agent]
         IPIntel[IP Classification and Enrichment]
     end
 
@@ -117,6 +119,9 @@ flowchart LR
     Realtime --> Redis
 
     Network --> IPIntel
+    Browser --> Agent
+    API -->|HMAC control| Agent
+    Agent --> Calls
     Calls --> IPIntel
     Network --> Cases
     Calls --> Cases
@@ -129,17 +134,23 @@ flowchart LR
 flowchart TB
     Operator[Authorized Operator]
 
-    subgraph LocalFull[local-full]
-        LocalUI[Local Dashboard]
+    subgraph DockerVPS[Docker / Ubuntu VPS]
+        LocalUI[Server Dashboard]
         LocalAPI[Backend API and Socket.IO]
-        Adapter[Authorized Local Network Adapter]
-        Capture[Packet Metadata Capture]
+        Browser[Chromium WhatsApp Web]
+        Capture[Capture agent in browser network namespace]
         Analysis[Network and Call Analysis]
 
         LocalUI --> LocalAPI
-        LocalAPI --> Adapter
-        Adapter --> Capture
+        LocalAPI -->|signed HMAC commands| Capture
+        Browser --> Capture
         Capture --> Analysis
+    end
+
+    subgraph NativeLocal[Native local-full]
+        NativeAPI[Backend]
+        Adapter[Authorized local adapter]
+        NativeAPI --> Adapter
     end
 
     subgraph RailwayMode[railway-dashboard]
@@ -159,10 +170,10 @@ flowchart TB
     Analysis --> Mongo
     RemoteAPI --> Mongo
 
-    RemoteAPI -. Local packet capture disabled .-> Adapter
+    RemoteAPI -. Call capture disabled .-> Capture
 ```
 
-`railway-dashboard` cannot inspect the operator’s local network adapter. Packet capture and call-window analysis must run in `local-full` on the authorized machine, VM, VPS, or laboratory host where the relevant traffic is visible.
+`railway-dashboard` cannot inspect the operator’s local network adapter. Native workstation capture uses `local-full` with `CALL_CAPTURE_MODE=local`; Docker/VPS uses `server-full` with `CALL_CAPTURE_MODE=agent` and places the least-privilege agent in the persistent browser's network namespace. The backend remains unprivileged in both models.
 
 ### Authorized operational workflow
 
@@ -172,7 +183,8 @@ sequenceDiagram
     participant Dashboard
     participant API as Backend API
     participant WhatsApp as WhatsApp / Baileys
-    participant Capture as Local Capture Service
+    participant Browser as WhatsApp Web Browser
+    participant Capture as Isolated Capture Agent
     participant MongoDB
     participant Reports as Report Engine
 
@@ -182,6 +194,8 @@ sequenceDiagram
 
     Operator->>Dashboard: Start an authorized operation
     Dashboard->>API: Tracking or capture request
+    Operator->>Browser: Start authorized call
+    API->>Capture: Signed start/stop command
 
     alt Passive observation (default)
         WhatsApp-->>API: Real message or supported receipt
@@ -420,7 +434,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The containerized defaults expose the frontend on `4001`, the backend on `4000`, and persist WhatsApp authentication at `/app/auth_info_baileys`.
+Before the first Compose start, set a unique `CAPTURE_AGENT_SHARED_SECRET` (32+ random bytes) and a 15+ character `BROWSER_VNC_PASSWORD` in the ignored `.env`. Traditional VNC only considers the first eight significant characters, so loopback plus SSH remains the real access boundary. Provide a private MongoDB URI reachable from the backend container; use `host.docker.internal` instead of `127.0.0.1` when MongoDB runs on the Linux host. Compose forces general local capture off and delegates call capture to the isolated agent. The stack exposes the frontend on `4001`, backend on `4000`, and noVNC only on `127.0.0.1:7900`; it persists Baileys authentication, uploads, Redis AOF and the Chromium profile in named volumes. MongoDB remains an independently managed private service.
+
+The audited Dokploy VPS already owns private MongoDB/Redis services. Deploy it with `docker-compose.yml` plus `deploy/docker-compose.dokploy.yml`; the override selects `server-full`, reuses `wp-monitor-data`, suppresses the bundled Redis container and removes backend/client host publications. Preserve Dokploy's existing Compose project name so authenticated volumes are not orphaned. See [Ubuntu VPS](docs/operations/ubuntu-vps.md) for the exact domain routes, preview gate and E4 checklist.
 
 ---
 
@@ -461,6 +477,16 @@ AUTH_PASSWORD_VERIFY_CONCURRENCY=1
 NODE_ENV=development
 DEPLOYMENT_MODE=local-full
 LOCAL_CAPTURE_ENABLED=true
+CALL_CAPTURE_MODE=local
+
+# Docker/VPS isolated browser capture instead uses:
+# DEPLOYMENT_MODE=server-full
+# CALL_CAPTURE_MODE=agent
+# CAPTURE_AGENT_URL=http://wa-browser:4100
+# CAPTURE_AGENT_SHARED_SECRET=generate-a-different-64-character-secret
+# CAPTURE_AGENT_TIMEOUT_MS=5000
+# BROWSER_UI_PORT=7900
+# BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 
 # Client IP handling
 # Local default: false
@@ -492,14 +518,14 @@ DEFAULT_AUTHORIZATION_NOTE=Authorization reference
 
 ### Runtime modes
 
-| Variable | Local full mode | Railway dashboard mode |
-|---|---|---|
-| `DEPLOYMENT_MODE` | `local-full` | `railway-dashboard` |
-| `LOCAL_CAPTURE_ENABLED` | `true` | `false` |
-| Local adapter access | Available with OS privileges | Not available |
-| Network Monitor | Enabled | Disabled |
-| Call traffic analysis | Enabled | Disabled |
-| Dashboard, API, reports, audit | Enabled | Enabled |
+| Capability | Native workstation | Docker/VPS browser sidecar | Railway dashboard |
+|---|---|---|---|
+| `DEPLOYMENT_MODE` | `local-full` | `server-full` | `railway-dashboard` |
+| `LOCAL_CAPTURE_ENABLED` | `true` | `false` | `false` |
+| `CALL_CAPTURE_MODE` | `local` | `agent` | `disabled` |
+| General Network Monitor | Backend adapter | Disabled by default | Disabled |
+| Call traffic analysis | Backend libpcap | Isolated capture agent | Disabled |
+| Dashboard, API, reports, audit | Enabled | Enabled | Enabled |
 
 ### Swagger / OpenAPI
 
@@ -904,6 +930,8 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 | Network Monitor is hidden | Confirm `DEPLOYMENT_MODE=local-full` and `LOCAL_CAPTURE_ENABLED=true` |
 | API returns `401 Unauthorized` | Sign in again; verify the operator account, Redis connectivity, cookie scope and HTTPS/origin configuration |
 | Call analysis contains no useful packets | Confirm the WhatsApp Web/Desktop interaction runs on the same host and selected interface |
+| Browser restarts with a profile-lock error | Use the supplied entrypoint; it holds an exclusive volume lock before removing only stale Chromium `Singleton*` markers |
+| Capture agent is unavailable | Check both container healthchecks, HMAC secret equality, `CALL_CAPTURE_MODE=agent`, private URL and the agent's effective `NET_RAW/NET_ADMIN` capabilities |
 | Railway captures no local traffic | Expected behavior; Railway mode has no access to the operator’s local adapter |
 | Dependency installation is inconsistent | Use Node.js 24.19.x and pnpm 11.22.0, then run `pnpm install --frozen-lockfile` from the repository root |
 | MongoDB connection fails | Validate `MONGODB_URI`, credentials, network access, and Atlas allow-list settings |
@@ -912,6 +940,14 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 ---
 
 ## Release Highlights
+
+### v3.1.0 candidate
+
+- Adds a persistent containerized WhatsApp Web browser with virtual display/audio and loopback-only noVNC access
+- Isolates privileged packet observation in an HMAC-authenticated sidecar sharing the browser network namespace
+- Adds container healthchecks, non-root execution, capability/resource limits and safe Chromium profile restart recovery
+- Adds encrypted backups, verification, staging restore tooling and regression coverage for incomplete/tampered archives
+- Remains a candidate until the Ubuntu VPS E4 smoke and `main` promotion are complete
 
 ### v3.0.0
 

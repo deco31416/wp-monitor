@@ -43,3 +43,7 @@ sequenceDiagram
 ## Salida
 
 Metadata temporal, protocolo, IP origen/destino, tamano, TTL, contadores, clasificacion y exportaciones. El flujo normal no necesita contenido de mensajes ni payload de aplicacion.
+
+## Frontera con captura de llamada
+
+Este diagrama describe Network Monitor general y permanece nativo en el backend `local-full`. En Docker/VPS, la captura de llamada usa otro contrato: `capture-agent` comparte exclusivamente el namespace de `wa-browser`; `LOCAL_CAPTURE_ENABLED=false` evita otorgar acceso general al backend.

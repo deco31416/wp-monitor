@@ -1,6 +1,6 @@
 # Documentacion de WP MONITOR
 
-Este portal documenta la version `3.0.0` de WP MONITOR. Su objetivo es permitir que una persona nueva comprenda, instale, opere, audite y contribuya al proyecto sin depender de conocimiento informal del autor.
+Este portal documenta `3.1.0` candidato de WP MONITOR. El comportamiento local tiene evidencia E2/E3; la promocion estable requiere el smoke E4 del Ubuntu VPS, merge revisado a `main` y publicacion.
 
 La documentacion toma como referencia ISO/IEC/IEEE 42010 para describir arquitectura, ISO/IEC 25010 para calidad, ISO/IEC 27001 para gestion de riesgos e ISO/IEC 27037 para tratamiento de evidencia digital potencial. Esta referencia no implica certificacion ni conformidad formal.
 
@@ -14,6 +14,7 @@ La documentacion toma como referencia ISO/IEC/IEEE 42010 para describir arquitec
 | Aprender cada pantalla del producto | [Guia de usuario](user-guide/README.md) |
 | Ejecutar localmente, desplegar o recuperar | [Operacion](operations/README.md) |
 | Actualizar desde una version `2.x` | [Migracion a 3.0.0](operations/migration-3.0.md) |
+| Actualizar desde `3.0.0` | [Migracion a 3.1.0](operations/migration-3.1.md) |
 | Revisar seguridad, privacidad y evidencia | [Seguridad y evidencia](security/README.md) |
 | Modificar codigo o ejecutar QA | [Desarrollo y calidad](development/README.md) |
 | Trabajar con agentes de ingenieria | [Protocolo de ingenieria](AI_ENGINEERING_PROTOCOL.md) |
@@ -38,8 +39,9 @@ docs/
 ## Principios del producto
 
 - Toda operacion sensible se relaciona con un `Case ID`, un operador y una base de autorizacion.
-- `local-full` habilita captura solamente en la maquina autorizada que posee la interfaz de red.
-- `railway-dashboard` ofrece dashboard, API, WhatsApp Tracker, Check-In, persistencia y reportes, pero no captura la red local del operador.
+- `local-full` nativo habilita captura solamente en la maquina autorizada que posee la interfaz de red.
+- Docker/VPS usa un navegador persistente y un agente minimo dentro del mismo namespace; el backend permanece sin privilegios.
+- `railway-dashboard` ofrece dashboard, API, Actividad WhatsApp, Verificacion, persistencia y reportes, pero no captura la red local del operador.
 - RTT, presencia, mensajes y llamadas son fuentes distintas; no deben presentarse como una unica certeza.
 - Una IP candidata es una observacion tecnica. No prueba identidad, domicilio, ubicacion exacta ni titularidad.
 - GeoIP describe de forma aproximada un bloque de red y puede diferir entre proveedores.

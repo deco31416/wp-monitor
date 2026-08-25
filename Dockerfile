@@ -41,6 +41,9 @@ ARG PORT=4000
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["node", "-e", "const port=process.env.PORT||'4000';fetch('http://127.0.0.1:'+port+'/api/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+
 RUN mkdir -p /app/auth_info_baileys /app/public/uploads \
     && chown -R node:node /app/auth_info_baileys /app/public/uploads
 

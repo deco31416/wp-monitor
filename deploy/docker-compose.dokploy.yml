@@ -1,0 +1,39 @@
+# Production override for the audited single-node Dokploy VPS.
+#
+# Apply after the base file:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml ...
+#
+# MongoDB and Redis are pre-existing private services on STATE_NETWORK_NAME.
+# This override deliberately disables the bundled Redis service, removes direct
+# backend/client host publications and requires the external connection URLs.
+services:
+  backend:
+    ports: !reset []
+    expose:
+      - "${BACKEND_PORT:-4000}"
+    environment:
+      - DEPLOYMENT_MODE=server-full
+      - MONGODB_URI=${MONGODB_URI:?Set MONGODB_URI to the private MongoDB service URL}
+      - REDIS_URL=${REDIS_URL:?Set REDIS_URL to the private Redis service URL}
+    depends_on: !override
+      capture-agent:
+        condition: service_healthy
+
+  client:
+    ports: !reset []
+    expose:
+      - "${CLIENT_PORT:-4001}"
+    build:
+      args:
+        - VITE_API_URL=${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public HTTPS origin}
+
+  # Keep the base service available for local Compose, but never start a second
+  # Redis in the audited VPS topology. Do not enable this profile in Dokploy.
+  redis:
+    profiles:
+      - bundled-state-do-not-enable-on-vps
+
+networks:
+  data-network: !override
+    name: ${STATE_NETWORK_NAME:-wp-monitor-data}
+    external: true

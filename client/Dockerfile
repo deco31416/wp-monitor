@@ -44,4 +44,14 @@ ARG PORT=4001
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
-CMD ["sh", "-c", "sed -i \"s/listen 80;/listen ${PORT};/g\" /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
+RUN sed -i "s/listen 80;/listen ${PORT};/g" /etc/nginx/conf.d/default.conf \
+    && sed -i '/^[[:space:]]*user /d' /etc/nginx/nginx.conf \
+    && sed -i 's!^[[:space:]]*pid .*;!pid /tmp/nginx.pid;!' /etc/nginx/nginx.conf \
+    && chown -R nginx:nginx /var/cache/nginx
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q --spider "http://127.0.0.1:${PORT}/healthz" || exit 1
+
+USER nginx
+
+CMD ["nginx", "-g", "daemon off;"]

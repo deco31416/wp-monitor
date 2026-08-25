@@ -28,6 +28,7 @@ Estos archivos son locales, rotables y no deben publicarse. Pueden contener iden
 - Redis configurado/requerido/conectado;
 - WhatsApp conectado;
 - captura habilitada;
+- proveedor/estado de captura de llamada (`disabled`, `local` o `agent`);
 - razones de degradacion.
 
 El endpoint devuelve `503` cuando existe una razon degradada. Un monitor debe leer el JSON y no tratar todos los 503 como el mismo incidente.
@@ -54,6 +55,7 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 | WhatsApp reconnect/401 | Estabilidad upstream |
 | Tracking contacts/probes | Carga funcional |
 | Packet rate/drop | Captura |
+| Browser/agent health y restarts | Disponibilidad de llamada VPS |
 | Check-In submit/reject/rate-limit | Abuso y conversion |
 | Export duration/size | Riesgo de memoria |
 
@@ -67,6 +69,7 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 - errores de exportacion consecutivos;
 - rate limit anormal;
 - reinicios frecuentes;
+- navegador/agente `unhealthy` o agente HMAC no disponible;
 - backup atrasado o restauracion fallida.
 
 ## Privacidad de logs

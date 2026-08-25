@@ -19,6 +19,17 @@ flowchart TB
       Desktop --> NIC
     end
 
+
+    subgraph VPS[Docker / Ubuntu VPS]
+      VpsUI[Frontend/API por proxy HTTPS]
+      Browser[Chromium WhatsApp Web]
+      Agent[Capture agent]
+      VpsRedis[(Redis privado)]
+      Browser --> Agent
+      VpsUI -->|HMAC privado| Agent
+      VpsUI <--> VpsRedis
+    end
+
     subgraph Cloud[Railway dashboard]
       CloudUI[Frontend nginx]
       CloudAPI[Backend dashboard]
@@ -38,6 +49,8 @@ flowchart TB
     CloudAPI <--> Mongo
     LocalAPI <--> WA
     CloudAPI <--> WA
+    VpsUI <--> Mongo
+    VpsUI <--> WA
     CloudAPI -. no accede .-> NIC
 ```
 
@@ -47,8 +60,9 @@ flowchart TB
 | --- | --- | --- | --- |
 | Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas, Redis y disco local |
 | Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker + Mongo externo |
+| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; noVNC solo por SSH/loopback | Mongo/Redis privados + Baileys/uploads/perfil |
 | Railway | Deshabilitada | HTTPS | MongoDB + Redis + dos volumenes |
 
 ## Decision
 
-`railway-dashboard` fuerza la frontera correcta: API, tracker, Check-In e informes funcionan, pero Network Monitor y analisis de trafico local quedan deshabilitados.
+`railway-dashboard` fuerza la frontera correcta: API, tracker, Check-In e informes funcionan, pero la captura queda deshabilitada. En Docker/VPS, el backend sigue sin privilegios y solo el sidecar observa el namespace de Chromium.

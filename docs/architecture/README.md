@@ -1,6 +1,6 @@
 # Arquitectura
 
-Documento canonico de arquitectura de WP MONITOR `3.0.0`, inspirado en los puntos de vista de ISO/IEC/IEEE 42010. Describe el sistema implementado; las ideas futuras permanecen en el roadmap interno.
+Documento canonico de arquitectura de WP MONITOR `3.1.0` candidato, inspirado en los puntos de vista de ISO/IEC/IEEE 42010. Describe el sistema implementado y probado localmente; la promocion estable exige el smoke E4 del VPS.
 
 ## Proposito y alcance
 
@@ -43,7 +43,8 @@ flowchart LR
     WA[WhatsApp mediante Baileys]
     DB[(MongoDB)]
     Redis[(Redis)]
-    Capture[Npcap o libpcap]
+    WebWA[Chromium WhatsApp Web opcional]
+    Capture[Npcap/libpcap o capture-agent]
     Geo[DB-IP e ip-api]
     Files[Sesion, uploads y reportes]
 
@@ -52,7 +53,8 @@ flowchart LR
     API <--> WA
     API <--> DB
     API <--> Redis
-    API <--> Capture
+    API -->|HMAC cuando usa agent| Capture
+    WebWA --> Capture
     API --> Geo
     API <--> Files
     Participant -->|Consentimiento y envio| API
@@ -75,10 +77,17 @@ flowchart TB
       Server[server.ts]
       Runtime[Runtime y health]
       Tracker[Tracker y analytics]
-      Call[Captura y analisis de llamada]
+      Call[Orquestacion y analisis de llamada]
       CheckIn[Check-In autorizado]
       Reports[Reportes y Evidence Package]
       Routes[Cases, Audit, Runtime, Reports]
+    end
+
+    subgraph BrowserCapture[Docker/VPS]
+      BrowserWA[Chromium + Xvfb + audio]
+      Agent[Capture agent /v1]
+      BrowserWA --> Agent
+      Server -->|HMAC| Agent
     end
 
     subgraph State[Estado]
@@ -104,6 +113,8 @@ flowchart TB
 | `src/analytics.ts` | Estadisticas, sesiones y patrones historicos |
 | `src/packet-capture.ts` | Interfaces, captura local, filtros y estadisticas |
 | `src/call-analyzer.ts` | Ventana de llamada y resultado tecnico |
+| `src/call-capture-service.ts` | Seleccion del proveedor `disabled/local/agent` |
+| `src/capture-agent-*` | Contrato HMAC, sidecar y validacion entre servicios |
 | `src/call-scoring.ts` | Clasificacion y score de IP candidata |
 | `src/ip-enrichment.ts` | DB-IP principal y complemento de metadata |
 | `src/check-in.ts` | Modelo, landing, consentimiento y recibo de Check-In |
@@ -127,6 +138,7 @@ flowchart TB
 - MongoDB es la fuente durable de casos y observaciones.
 - El estado efimero conserva conexiones, temporizadores, presencia actual y captura activa.
 - Baileys mantiene una sesion local y entrega eventos disponibles para la cuenta vinculada.
+- En Docker/VPS, Chromium mantiene una segunda sesion WhatsApp Web persistente; el capture-agent observa solo ese namespace y devuelve metadata validada al backend.
 
 ## Limites de confianza
 
@@ -140,13 +152,15 @@ flowchart LR
     Browser[Dashboard autenticado]
     Session[Sesion Baileys sensible]
     Mongo[(Datos persistidos)]
-    Capture[Interfaz local privilegiada]
+    BrowserWA[Chromium no-root]
+    Capture[Agente privilegiado minimo]
 
     Public --> Proxy --> API
     Browser -->|Cookie HttpOnly y origen confiable| API
     API --> Session
     API --> Mongo
-    API --> Capture
+    API -->|HMAC + anti-replay| Capture
+    BrowserWA --> Capture
 ```
 
 La cuenta unica vive en MongoDB y sus sesiones opacas con TTL viven en Redis. REST y Socket.IO exigen la cookie de sesion; las mutaciones y el socket tambien validan el origen. La landing publica de Check-In utiliza un token de solicitud distinto y controles de tasa compartidos en Redis. La sesion Baileys, MongoDB, Redis, credenciales y privilegios de captura son activos de mayor sensibilidad.
@@ -155,7 +169,8 @@ La cuenta unica vive en MongoDB y sus sesiones opacas con TTL viven en Redis. RE
 
 Consulta [Deployment modes](../operations/deployment-modes.md). La regla central es:
 
-- `local-full`: dashboard, tracker y captura en la maquina autorizada;
+- `local-full` nativo: dashboard, tracker y captura local en la maquina autorizada;
+- Docker/VPS: `LOCAL_CAPTURE_ENABLED=false` y `CALL_CAPTURE_MODE=agent`, con navegador/agente aislados;
 - `railway-dashboard`: dashboard, API y persistencia, sin captura de la interfaz del operador.
 
 ## Calidad arquitectonica y deuda conocida
@@ -163,8 +178,9 @@ Consulta [Deployment modes](../operations/deployment-modes.md). La regla central
 - `server.ts` conserva una responsabilidad de composicion amplia; los dominios nuevos deben preferir rutas y servicios separados.
 - Baileys es una integracion no oficial y puede cambiar por comportamiento upstream.
 - Redis comparte sesiones, limites de login y rate limit publico entre replicas; la coordinacion de trackers y capturas sigue siendo de instancia unica.
-- Una instancia controla como maximo una captura general y una captura de llamada activas.
+- Una instancia controla como maximo una captura general y una captura de llamada; el agente rechaza una segunda ventana concurrente.
 - La sesion y los uploads necesitan volumenes separados en infraestructura efimera.
+- Chromium requiere un perfil persistente exclusivo, loopback/SSH para noVNC y una excepcion seccomp acotada para su sandbox de namespaces.
 
 ## Lecturas relacionadas
 

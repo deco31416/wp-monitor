@@ -12,7 +12,7 @@ The changelog is organized in a format inspired by *Keep a Changelog*. Version n
 | Channel | Version | Date |
 |---|---:|---:|
 | Current stable release | `3.0.0` | `2026-08-21` |
-| Development branch | `Unreleased` | Not yet released |
+| Development candidate | `3.1.0` | Pending VPS E4 and promotion |
 
 <!--
 Maintainer guidance:
@@ -26,11 +26,52 @@ Maintainer guidance:
 
 ---
 
-## [Unreleased]
+## [Unreleased] — `3.1.0` candidate
 
-> Changes after `3.0.0` will be recorded here while development continues.
+> This candidate remains unreleased until the Ubuntu VPS smoke gate passes and
+> the reviewed `develop` state is promoted to `main`.
 
-No unreleased changes yet.
+### Added
+
+- Added a persistent Chromium/WhatsApp Web service with Xvfb, Fluxbox, virtual PulseAudio, loopback-only noVNC access and a named browser-profile volume.
+- Added a dedicated call-capture sidecar that shares only the browser network namespace, runs Node as UID/GID 1000 and retains only `CAP_NET_RAW` and `CAP_NET_ADMIN` after startup.
+- Added authenticated HMAC service-to-service capture contracts with bounded timestamps, nonce replay protection, strict request/response validation, response-size limits and controlled JSON failures.
+- Added call-capture provider modes (`disabled`, `local`, `agent`), runtime capability/health reporting and a periodic availability monitor.
+- Added encrypted Docker backup, checksum/authentication verification, staging-only MongoDB restoration, and hardened systemd service/timer templates.
+- Added a Dokploy production override that reuses the audited private MongoDB/Redis network, suppresses the bundled Redis service and removes direct backend/client host publications.
+- Added regression tests for backup atomicity/tampering and capture-agent authentication, validation, failure handling and client contracts.
+
+### Changed
+
+- Hardened backend, frontend, Redis, browser and capture-agent containers with healthchecks, non-root application processes, read-only filesystems where applicable, capability drops, PID/resource limits and graceful stop budgets.
+- Changed the commercial navigation copy from “Seguimiento WhatsApp” to “Actividad WhatsApp” and the contact workspace to “Actividad de contactos” / “Observacion pasiva”.
+- Runtime capture status now distinguishes local privileges, an operational/unavailable call sidecar and a deliberately disabled mode; the dashboard refreshes that state every 30 seconds without discarding the last known result on a transient failure.
+- Separated general host Network Monitor privileges from isolated browser call capture; the backend no longer needs packet-capture capabilities for the sidecar flow.
+- Backups now pause application writers, encrypt every data stream before writing its final filename, include the browser profile, and remove incomplete timestamp directories after producer/encryption failure.
+
+### Fixed
+
+- Recovered stale Chromium `Singleton*` markers only while holding an exclusive profile-volume lock, preventing restart loops without allowing concurrent profile use.
+- Prevented malformed, oversized or semantically invalid capture-agent responses from reaching persistence.
+- Reconstructed nested capture-agent candidate data from a bounded typed contract instead of propagating unchecked response fields into persistence and reports.
+- Prevented a failed backup producer from leaving a truncated encrypted file that looked complete.
+- Prevented the default Docker environment from inheriting native host-capture mode, and replaced the invalid `localhost` host-gateway alias with `host.docker.internal` for explicitly configured host MongoDB access.
+- Restored first-start Redis AOF volume ownership under `cap_drop: ALL` by granting only the bootstrap capabilities consumed and discarded by the official entrypoint before its non-root PID starts.
+- Exempted the exact `/api/health/live` path from operator-session middleware so container liveness can work without making adjacent API paths public.
+
+### Security
+
+- noVNC is published only on `127.0.0.1`; production access requires an SSH tunnel and the port must not be routed through the public application proxy.
+- The capture-agent control port is not published, and every non-health route requires an HMAC signature tied to method, path, timestamp, nonce and body hash.
+- Browser and capture-agent secrets, Chromium profiles, Baileys sessions, captures, reports, uploads and backups remain excluded from Git/Docker build context.
+
+### Verification
+
+- `pnpm run qa`: 158 backend tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
+- `pnpm audit --audit-level=low`: no known dependency vulnerabilities found on 2026-08-24.
+- Docker E3 smoke: Chromium, virtual audio, loopback noVNC and capture agent became healthy; PID 1 ran non-root with the intended capability set; a signed synthetic capture observed 10/10 UDP packets and produced a classified result.
+- Full-stack Docker E3 smoke: backend, client, Redis, MongoDB, Chromium and capture agent were healthy; public liveness/capabilities, login/session/logout, same-stack dependencies and loopback bindings passed without touching the native QA instance.
+- Dokploy-override E3 smoke: the four application services were healthy against temporary MongoDB/Redis services on an external network; runtime reported `server-full`, backend/client had no host publications, agent readiness passed, and secure-cookie login/session/logout/revocation returned `200/200/204/401`.
 
 ---
 

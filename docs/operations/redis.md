@@ -32,6 +32,19 @@ curl -fsS http://127.0.0.1:4000/api/health
 
 No uses `docker compose down -v` durante una actualizacion: elimina `redis_data` junto con los demas volumenes declarados.
 
+## Dokploy/VPS con Redis existente
+
+El VPS auditado ya tiene un Redis 8.2.8 saludable y privado sobre `wp-monitor-data`. Usa el override `deploy/docker-compose.dokploy.yml`; este exige `REDIS_URL`, conecta el backend a esa red y deja el servicio Redis incluido bajo un perfil inactivo para evitar una segunda instancia.
+
+```bash
+docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config --quiet
+docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config --services
+```
+
+La segunda orden debe listar `wa-browser`, `capture-agent`, `backend` y `client`, pero no `redis`. La URI usa el DNS interno/credencial que entrega Dokploy, nunca `127.0.0.1` desde el contenedor ni un puerto publico. No habilites el perfil `bundled-state-do-not-enable-on-vps`.
+
+Antes de reutilizar la instancia confirma que sea dedicada a WP MONITOR. El backup incluido pausa Redis para copiar un AOF consistente; pausar un Redis compartido con otras aplicaciones causaria impacto fuera del alcance y requiere otra estrategia de backup.
+
 ## Ubuntu 26.04 LTS nativo
 
 Redis 8.10 declara Ubuntu 26.04 entre sus plataformas probadas. Instala desde el repositorio oficial de Redis siguiendo su guia para APT, no desde scripts copiados de terceros:

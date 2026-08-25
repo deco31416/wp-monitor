@@ -545,7 +545,7 @@ export function Dashboard({ connectionState, experimentalProbesEnabled = false }
             <div className="card p-5">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                     <div className="flex items-center gap-3">
-                        <h2 className="text-lg font-semibold text-txt-primary">Seguimiento de contactos</h2>
+                        <h2 className="text-lg font-semibold text-txt-primary">Actividad de contactos</h2>
                         <button
                             onClick={() => setShowConnections(!showConnections)}
                             className={`btn-ghost flex items-center gap-1.5 !py-1.5 !px-3 !text-xs ${
@@ -568,7 +568,7 @@ export function Dashboard({ connectionState, experimentalProbesEnabled = false }
 
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/10 px-3 py-1.5 text-xs text-success">
-                            <ShieldCheck size={14} /> Seguimiento pasivo
+                            <ShieldCheck size={14} /> Observación pasiva
                         </div>
 
                         {experimentalProbesEnabled && (

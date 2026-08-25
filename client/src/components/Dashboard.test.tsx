@@ -23,11 +23,11 @@ vi.mock('../socket', () => ({
 
 const cases = [
     {
-        caseId: 'PRUEBA-LOCAL-001',
-        title: 'Ulises',
+        caseId: 'CASE-QA-001',
+        title: 'Caso sintetico',
         description: null,
         status: 'authorized',
-        primaryOperator: 'DECO',
+        primaryOperator: 'OPERADOR-QA',
         authorizationNote: 'Prueba funcional autorizada',
         tags: [],
         createdAt: '2026-08-21T17:14:00.000Z',
@@ -57,7 +57,7 @@ const cases = [
         title: 'Closed case',
         description: null,
         status: 'closed',
-        primaryOperator: 'DECO',
+        primaryOperator: 'OPERADOR-QA',
         authorizationNote: 'Closed',
         tags: [],
         createdAt: '2026-08-20T17:00:00.000Z',
@@ -82,12 +82,12 @@ test('loads selectable cases and derives the audit context from the selected cas
     render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
 
     const caseSelector = await screen.findByRole('combobox', { name: 'Caso activo' });
-    await waitFor(() => expect(caseSelector).toHaveValue('PRUEBA-LOCAL-001'));
+    await waitFor(() => expect(caseSelector).toHaveValue('CASE-QA-001'));
 
-    expect(screen.getByRole('option', { name: 'PRUEBA-LOCAL-001 - Ulises (authorized)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'CASE-QA-001 - Caso sintetico (authorized)' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /SYSTEM-AUTH/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /CLOSED-001/ })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Operador del caso')).toHaveValue('DECO');
+    expect(screen.getByLabelText('Operador del caso')).toHaveValue('OPERADOR-QA');
     expect(screen.getByLabelText('Autorización del caso')).toHaveValue('Prueba funcional autorizada');
     expect(screen.getByLabelText('Operador del caso')).toHaveAttribute('readonly');
     expect(screen.getByLabelText('Autorización del caso')).toHaveAttribute('readonly');
@@ -97,16 +97,16 @@ test('starts contact tracking with the context of the selected case', async () =
     const user = userEvent.setup();
     render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
 
-    await screen.findByRole('option', { name: 'PRUEBA-LOCAL-001 - Ulises (authorized)' });
-    await user.type(screen.getByPlaceholderText('Número con código de país'), '573001234567');
+    await screen.findByRole('option', { name: 'CASE-QA-001 - Caso sintetico (authorized)' });
+    await user.type(screen.getByPlaceholderText('Número con código de país'), '15555550123');
     await user.type(screen.getByPlaceholderText('Alias (opcional)'), 'Contacto autorizado');
     await user.click(screen.getByRole('button', { name: 'Agregar' }));
 
     expect(socketEmitMock).toHaveBeenCalledWith('add-contact', {
-        number: '573001234567',
+        number: '15555550123',
         customName: 'Contacto autorizado',
-        caseId: 'PRUEBA-LOCAL-001',
-        operatorName: 'DECO',
+        caseId: 'CASE-QA-001',
+        operatorName: 'OPERADOR-QA',
         authorizationNote: 'Prueba funcional autorizada',
     });
 });
@@ -114,7 +114,7 @@ test('starts contact tracking with the context of the selected case', async () =
 test('uses protected passive mode by default and hides experimental probes', async () => {
     render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
 
-    expect(await screen.findByText('Seguimiento pasivo')).toBeInTheDocument();
+    expect(await screen.findByText('Observación pasiva')).toBeInTheDocument();
     expect(screen.getByText('Datos protegidos')).toBeInTheDocument();
     expect(screen.queryByText('Opciones experimentales')).not.toBeInTheDocument();
 });

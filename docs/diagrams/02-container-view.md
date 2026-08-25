@@ -18,8 +18,16 @@ flowchart TB
       SocketServer[Socket.IO server]
       Baileys[Adaptador Baileys]
       Tracking[Tracking y analytics]
-      Capture[Captura y analisis]
+      CaptureService[Proveedor de captura y analisis]
       Reporting[Reportes y Evidence Package]
+    end
+
+    subgraph BrowserUnit[Unidad navegador/captura Docker]
+      Browser[Chromium + Xvfb + PulseAudio]
+      Agent[Capture agent HMAC]
+      Profile[(Perfil Chromium)]
+      Browser <--> Profile
+      Browser --> Agent
     end
 
     subgraph Persistence[Persistencia]
@@ -34,8 +42,9 @@ flowchart TB
     Screens <--> SocketClient <--> SocketServer
     Express --> Tracking
     SocketServer --> Tracking
-    Express --> Capture
-    SocketServer --> Capture
+    Express --> CaptureService
+    SocketServer --> CaptureService
+    CaptureService -->|HMAC /v1| Agent
     Baileys --> Tracking
     Tracking --> Mongo
     Express --> Redis
@@ -51,6 +60,8 @@ flowchart TB
 - Socket.IO reduce latencia de QR, presencia, llamadas, captura y Check-In.
 - MongoDB conserva entidades e identidad; Redis conserva sesiones y contadores; Socket.IO no reemplaza persistencia.
 - Sesion y uploads necesitan volumenes separados en filesystem efimero.
+- El agente comparte el namespace de red del navegador, no el del backend; el puerto de control no se publica.
+- El navegador es UID 10001 sin capabilities. El PID 1 del agente es UID 1000 y conserva solo `NET_RAW/NET_ADMIN`.
 
 ## Riesgo arquitectonico
 

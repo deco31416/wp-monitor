@@ -6,18 +6,18 @@ Esta guia describe el recorrido operativo de WP MONITOR. Antes de utilizar datos
 
 | Pantalla | Objetivo | Guia |
 | --- | --- | --- |
-| Cases | Abrir, seleccionar y cerrar el expediente | [Casos y Tracker](cases-and-tracker.md) |
-| WhatsApp Tracker | Contactos, RTT, presencia, perfiles, llamadas e informes | [Casos y Tracker](cases-and-tracker.md) |
-| Network Monitor | Captura local, filtros, estadisticas e IP Tracker | [Red y llamadas](network-and-calls.md) |
-| Check-In | Solicitud consentida de datos tecnicos y GPS opcional | [Check-In, auditoria e informes](checkins-audit-reports.md) |
-| Audit Trail | Linea de tiempo, filtros y paquete de evidencia | [Check-In, auditoria e informes](checkins-audit-reports.md) |
-| Account | Cambiar usuario y/o contrasena del operador unico | Esta guia |
+| Casos | Abrir, seleccionar y cerrar el expediente | [Casos y actividad](cases-and-tracker.md) |
+| Actividad WhatsApp | Contactos, actividad observada, perfiles, llamadas e informes | [Casos y actividad](cases-and-tracker.md) |
+| Monitor de red | Captura local, filtros, estadisticas e IP Tracker | [Red y llamadas](network-and-calls.md) |
+| Verificacion | Solicitud consentida de datos tecnicos y GPS opcional | [Check-In, auditoria e informes](checkins-audit-reports.md) |
+| Auditoria | Linea de tiempo, filtros y paquete de evidencia | [Check-In, auditoria e informes](checkins-audit-reports.md) |
+| Cuenta | Cambiar usuario y/o contrasena del operador unico | Esta guia |
 
 ## Acceso y cuenta
 
 La primera instalacion crea una sola cuenta desde los secretos de bootstrap. Inicia sesion con usuario y contrasena; el navegador no guarda la contrasena ni un token reutilizable en `localStorage`.
 
-En **Account** puedes cambiar usuario, contrasena o ambos. Debes confirmar la contrasena actual. Al guardar, todas las sesiones HTTP y Socket.IO anteriores quedan revocadas y la sesion actual recibe una cookie nueva. Los valores `INITIAL_ADMIN_*` no restablecen posteriormente la cuenta.
+En **Cuenta** puedes cambiar usuario, contrasena o ambos. Debes confirmar la contrasena actual. Al guardar, todas las sesiones HTTP y Socket.IO anteriores quedan revocadas y la sesion actual recibe una cookie nueva. Los valores `INITIAL_ADMIN_*` no restablecen posteriormente la cuenta.
 
 ## Secuencia operativa recomendada
 
@@ -49,10 +49,12 @@ flowchart LR
 
 | Indicador | Significado |
 | --- | --- |
-| Server Connected | Socket.IO y API responden |
-| WhatsApp Active | La sesion Baileys esta abierta |
-| Dashboard Mode | La captura local esta deshabilitada por despliegue |
-| Local capture enabled | El backend permite intentar captura; todavia requiere driver y privilegios |
+| Servidor conectado | Socket.IO y API responden |
+| WhatsApp conectado | La sesion Baileys esta abierta |
+| Captura local lista | El backend nativo tiene driver y privilegios para el Monitor de red |
+| Captura de llamada lista | El agente aislado del navegador VPS responde y puede abrir una ventana autorizada |
+| Agente de llamada no disponible | El modo agente esta configurado, pero su readiness no responde; la actividad pasiva sigue operando |
+| Captura tecnica desactivada | El despliegue no habilita captura local ni agente de llamadas |
 
 ## Antes de entregar un resultado
 

@@ -88,6 +88,19 @@ Baileys solo permite registrar lo que WhatsApp entrega a la sesion vinculada. Re
 - revisa firewall/antivirus;
 - ejecuta linea base y confirma primer paquete.
 
+En Docker/VPS distingue proveedor `agent`: confirma `wa-browser` y `capture-agent` healthy, mismo namespace, interfaz no-loopback y trafico originado dentro de Chromium. El agente no puede observar una llamada iniciada en la laptop o el telefono.
+
+## Chromium o capture-agent unhealthy
+
+- revisa el primer `browser startup error`, no solo el ultimo restart;
+- `profile is in use` debe recuperarse con el entrypoint suministrado; no borres el volumen;
+- confirma que existe un solo contenedor montando `whatsapp_browser_profile`;
+- valida Chromium UID 10001, sin capabilities y sin `--no-sandbox`;
+- valida agente PID 1 UID/GID 1000, `NoNewPrivs=1` y solo `NET_RAW/NET_ADMIN`;
+- confirma que backend/agente reciben el mismo secreto HMAC sin imprimirlo;
+- `7900` debe aparecer solo en `127.0.0.1` y `4100` no debe publicarse;
+- genera UDP publico sintetico: rangos privados/reservados pueden ser descartados correctamente por el clasificador.
+
 ## Todo el trafico esta filtrado
 
 La captura puede tener miles de paquetes, pero los filtros dejan cero visibles. Desactiva `solo UDP` y `ocultar infraestructura`. Los filtros no deben borrar datos capturados.

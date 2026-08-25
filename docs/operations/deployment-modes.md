@@ -1,6 +1,6 @@
 # Deployment Split
 
-This project has two intended runtime modes.
+This project has three intended runtime modes.
 
 ## Railway dashboard mode
 
@@ -18,6 +18,7 @@ Recommended backend variables:
 ```env
 DEPLOYMENT_MODE=railway-dashboard
 LOCAL_CAPTURE_ENABLED=false
+CALL_CAPTURE_MODE=disabled
 NODE_ENV=production
 ENABLE_SWAGGER=false
 PORT=4000
@@ -73,6 +74,7 @@ Recommended local variables:
 ```env
 DEPLOYMENT_MODE=local-full
 LOCAL_CAPTURE_ENABLED=true
+CALL_CAPTURE_MODE=local
 ENABLE_SWAGGER=true
 PORT=4000
 MONGODB_URI=mongodb+srv://...
@@ -86,13 +88,32 @@ AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
 # TRUST_PROXY=false
 ```
 
-When packet capture is needed, grant only `CAP_NET_RAW`/`CAP_NET_ADMIN` to the dedicated backend service/process. Do not run dependency installation or the entire application as root.
+When native packet capture is needed, grant only `CAP_NET_RAW`/`CAP_NET_ADMIN` to the dedicated local process. Do not run dependency installation or the entire application as root.
 
 The call traffic analyzer reports observed IPs, relays, providers, ports, packet counts, direction, and geolocation hints. Treat non-infrastructure IPs as candidates only; WhatsApp/WebRTC may use relays, and the analysis should not claim that an observed IP identifies a person.
 
 Use [local-runbook.md](local-runbook.md) for the local operating procedure, capture prerequisites, audit metadata, troubleshooting, and known limitations.
 
 Swagger/OpenAPI documentation is available at `/docs` only when `ENABLE_SWAGGER=true` and `NODE_ENV` is not `production`.
+
+## Docker / Ubuntu VPS browser-sidecar mode
+
+Use this topology when WhatsApp Web and the bounded call window must run on the VPS:
+
+```env
+DEPLOYMENT_MODE=server-full
+LOCAL_CAPTURE_ENABLED=false
+CALL_CAPTURE_MODE=agent
+CAPTURE_AGENT_URL=http://wa-browser:4100
+CAPTURE_AGENT_SHARED_SECRET=generate-a-unique-64-character-secret
+CAPTURE_AGENT_TIMEOUT_MS=5000
+BROWSER_UI_PORT=7900
+BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
+```
+
+The backend stays unprivileged. `capture-agent` shares `wa-browser` network namespace, accepts only signed `/v1` control requests and retains only `NET_RAW/NET_ADMIN` after dropping to UID 1000. noVNC remains bound to host loopback and is reached through SSH; it is never an application route.
+
+This mode does not enable the general Network Monitor against the VPS host NIC. It observes metadata from the browser namespace only. A call from a laptop or phone outside that namespace is not captured by the VPS.
 
 ## Audit exports
 

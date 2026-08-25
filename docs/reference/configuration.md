@@ -7,11 +7,15 @@
 | Variable | Default/caso | Requerida | Descripcion |
 | --- | --- | --- | --- |
 | `NODE_ENV` | `development` | Produccion | Activa controles endurecidos cuando vale `production` |
-| `DEPLOYMENT_MODE` | local o detecta Railway | Si | `local-full` o `railway-dashboard` |
+| `DEPLOYMENT_MODE` | local o detecta Railway | Si | `local-full`, `server-full` o `railway-dashboard` |
 | `LOCAL_CAPTURE_ENABLED` | Segun modo | Si | Habilita intento de captura local |
+| `CALL_CAPTURE_MODE` | Derivado | Si | `disabled`, `local` o `agent`; separa captura de llamada del Network Monitor general |
 | `PORT` | Plataforma | Railway | Puerto backend inyectado |
 | `BACKEND_PORT` | `4000` | Local | Fallback del backend |
+| `BACKEND_BIND_ADDRESS` | `127.0.0.1` | Docker | Interfaz host publicada por Compose |
 | `CLIENT_PORT` | `4001` | Local launcher | Puerto del frontend de desarrollo |
+| `CLIENT_BIND_ADDRESS` | `127.0.0.1` | Docker | Interfaz host publicada por Compose |
+| `STATE_NETWORK_NAME` | `wp-monitor-data` | Dokploy/VPS | Red Docker externa y privada que contiene MongoDB y Redis existentes |
 
 ## URLs y acceso
 
@@ -35,6 +39,21 @@
 | `REDIS_KEY_PREFIX` | Recomendado | Namespace unico por despliegue |
 
 El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son dependencias de autenticacion. No uses datos de produccion durante tests.
+
+## Navegador y captura aislada
+
+| Variable | Regla |
+| --- | --- |
+| `CALL_CAPTURE_MODE` | `agent` para Docker/VPS; `local` para workstation nativa; `disabled` en dashboard-only |
+| `CAPTURE_AGENT_URL` | Origen HTTP(S) interno sin path, credenciales, query ni fragmento |
+| `CAPTURE_AGENT_SHARED_SECRET` | Secreto aleatorio de 32+ bytes, igual en backend/agente y distinto de los secretos de auth |
+| `CAPTURE_AGENT_TIMEOUT_MS` | Entero 500-30000; default 5000 |
+| `BROWSER_UI_PORT` | Puerto host de noVNC; Compose lo enlaza solo a `127.0.0.1` |
+| `BROWSER_VNC_PASSWORD` | Valor de 15+ caracteres requerido al arrancar; VNC solo usa los primeros ocho significativos y no sustituye el tunel SSH |
+| `BROWSER_VNC_PASSWORD_FILE` | Alternativa de archivo absoluto dentro del contenedor, con prioridad sobre la variable |
+| `BROWSER_SCREEN` | Geometria Xvfb, default `1440x900x24` |
+
+El control backend→agente firma metodo, path, timestamp, nonce y hash del cuerpo. El agente rechaza replay, cuerpos mayores de 64 KiB, interfaz no enumerada y solicitudes concurrentes cuando ya existe una captura. El puerto `4100` no se publica al host.
 
 ## Operador unico
 
@@ -91,6 +110,7 @@ Solo se usan cuando un evento automatico necesita contexto. Las operaciones manu
 NODE_ENV=development
 DEPLOYMENT_MODE=local-full
 LOCAL_CAPTURE_ENABLED=false
+CALL_CAPTURE_MODE=disabled
 BACKEND_PORT=4000
 CLIENT_PORT=4001
 BACKEND_URL=http://127.0.0.1:4000
@@ -107,6 +127,24 @@ AUTH_IDENTITY_SECRET=generate-a-unique-64-character-secret
 TRUST_PROXY=false
 ENABLE_SWAGGER=false
 ```
+
+## Plantilla Docker/VPS
+
+```env
+NODE_ENV=production
+DEPLOYMENT_MODE=server-full
+LOCAL_CAPTURE_ENABLED=false
+CALL_CAPTURE_MODE=agent
+CAPTURE_AGENT_URL=http://wa-browser:4100
+CAPTURE_AGENT_SHARED_SECRET=generate-a-unique-64-character-secret
+CAPTURE_AGENT_TIMEOUT_MS=5000
+BROWSER_UI_PORT=7900
+BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
+BACKEND_BIND_ADDRESS=127.0.0.1
+CLIENT_BIND_ADDRESS=127.0.0.1
+```
+
+Completa MongoDB, Redis, operador, origenes y secretos con el gestor privado del entorno. No copies placeholders a produccion.
 
 ## Plantilla Railway
 

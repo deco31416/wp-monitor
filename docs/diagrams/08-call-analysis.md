@@ -8,6 +8,9 @@ El numero/JID identifica el contacto operativo y permite relacionar el analisis 
 
 ```mermaid
 flowchart TD
+    Browser[WhatsApp Web en host/namespace observado]
+    Backend[Backend sin capabilities]
+    Agent[Capture agent HMAC]
     Baseline[Linea base sin llamada]
     Window[Ventana de llamada 60-90 s]
     Packets[Metadata de paquetes]
@@ -19,7 +22,9 @@ flowchart TD
     Consistency[Contexto de prefijo y contradicciones]
     Result[Resultado con limitaciones]
 
-    Baseline --> Window --> Packets --> Private
+    Backend -->|start/stop firmado| Agent
+    Browser --> Agent
+    Agent --> Baseline --> Window --> Packets --> Private
     Private -->|Si| Result
     Private -->|No| Known
     Known -->|Si| Result
@@ -36,4 +41,4 @@ flowchart TD
 
 ## Veredictos
 
-`direct`, `relay`, `mixed` o evidencia insuficiente describen la ruta observada. Ninguno confirma por si solo identidad, dispositivo o ubicacion fisica.
+`p2p`, `relay`, `mixed` o `insufficient_data` describen la ruta observada. Ninguno confirma por si solo identidad, dispositivo o ubicacion fisica.

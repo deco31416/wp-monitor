@@ -4,6 +4,7 @@ import { DashboardAccess } from './components/DashboardAccess';
 import { AccountSettings } from './components/AccountSettings';
 import { Smartphone, Globe, Activity, ClipboardList, Briefcase, MapPin, Drone, Menu, PanelLeftClose, PanelLeftOpen, Settings, X } from 'lucide-react';
 import { API_URL, AUTH_UNAUTHORIZED_EVENT, clearLegacyDashboardToken, sessionFetch, type AuthSessionResponse } from './auth';
+import { resolveCaptureIndicator, type RuntimeCapabilities } from './runtime-capabilities';
 import { socket } from './socket';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -15,18 +16,6 @@ const CheckIns = React.lazy(() => import('./components/CheckIns').then(module =>
 export interface ConnectionState {
     whatsapp: boolean;
     whatsappQr: string | null;
-}
-
-interface RuntimeCapabilities {
-    version: string;
-    mode: string;
-    localCapture: boolean;
-    localCaptureAvailable: boolean;
-    networkMonitor: boolean;
-    callTrafficAnalysis: boolean;
-    passiveMessageReceipts?: boolean;
-    experimentalProbes?: boolean;
-    authRequired?: boolean;
 }
 
 interface RuntimeHealth {
@@ -146,22 +135,38 @@ function App() {
     }, []);
 
     useEffect(() => {
-        fetch(`${API_URL}/api/runtime-capabilities`)
-            .then(r => r.json())
-            .then((nextCapabilities: RuntimeCapabilities) => {
+        let cancelled = false;
+
+        async function refreshCapabilities() {
+            try {
+                const response = await fetch(`${API_URL}/api/runtime-capabilities`);
+                if (!response.ok) throw new Error(`Runtime capabilities returned ${response.status}`);
+                const nextCapabilities = await response.json() as RuntimeCapabilities;
+                if (cancelled) return;
                 setCapabilities(nextCapabilities);
                 if (!nextCapabilities.networkMonitor) {
                     setActiveTab(current => current === 'network' ? 'tracker' : current);
                 }
-            })
-            .catch(() => setCapabilities({
-                version: 'unknown',
-                mode: 'unavailable',
-                localCapture: false,
-                localCaptureAvailable: false,
-                networkMonitor: false,
-                callTrafficAnalysis: false,
-            }));
+            } catch {
+                if (cancelled) return;
+                setCapabilities(current => current ?? {
+                    version: 'unknown',
+                    mode: 'unavailable',
+                    localCapture: false,
+                    localCaptureAvailable: false,
+                    networkMonitor: false,
+                    callTrafficAnalysis: false,
+                    callCaptureMode: 'disabled',
+                });
+            }
+        }
+
+        void refreshCapabilities();
+        const interval = window.setInterval(() => void refreshCapabilities(), 30000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
     }, []);
 
     useEffect(() => {
@@ -198,7 +203,7 @@ function App() {
 
     const tabs = [
         { id: 'cases' as AppTab, label: 'Casos', icon: Briefcase },
-        { id: 'tracker' as AppTab, label: 'Seguimiento WhatsApp', icon: Smartphone },
+        { id: 'tracker' as AppTab, label: 'Actividad WhatsApp', icon: Smartphone },
         ...(capabilities?.networkMonitor ? [{ id: 'network' as AppTab, label: 'Monitor de red', icon: Globe }] : []),
         { id: 'checkins' as AppTab, label: 'Verificación', icon: MapPin },
         { id: 'audit' as AppTab, label: 'Auditoría', icon: ClipboardList },
@@ -207,12 +212,13 @@ function App() {
 
     const pageTitle = {
         cases: 'Casos',
-        tracker: 'Seguimiento WhatsApp',
+        tracker: 'Actividad WhatsApp',
         network: 'Monitor de red',
         checkins: 'Verificación autorizada',
         audit: 'Auditoría',
         account: 'Cuenta del operador',
     }[activeTab];
+    const captureIndicator = resolveCaptureIndicator(capabilities);
 
     const handleLogin = async (username: string, password: string) => {
         setAuthError(null);
@@ -390,14 +396,13 @@ function App() {
                                 Conectado
                             </span>
                         )}
-                        {capabilities && !capabilities.localCapture && (
-                            <span className="badge">
-                                Modo panel
-                            </span>
-                        )}
-                        {capabilities?.localCapture && !capabilities.localCaptureAvailable && (
-                            <span className="badge-warning">
-                                Faltan permisos de captura
+                        {captureIndicator && (
+                            <span className={captureIndicator.tone === 'success'
+                                ? 'badge-success'
+                                : captureIndicator.tone === 'warning'
+                                    ? 'badge-warning'
+                                    : 'badge'}>
+                                {captureIndicator.label}
                             </span>
                         )}
                         {authError && <span className="badge-warning max-w-72 truncate" title={authError}>{authError}</span>}

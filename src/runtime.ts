@@ -1,13 +1,26 @@
 import { SOFTWARE_VERSION } from './version.js';
 
+export type CallCaptureMode = 'disabled' | 'local' | 'agent';
+
 export interface RuntimeConfig {
     deploymentMode: string;
     localCaptureEnabled: boolean;
+    callCaptureMode: CallCaptureMode;
     experimentalProbesEnabled: boolean;
     authRequired: true;
 }
 
 export type TrustProxySetting = boolean | number | string;
+
+const PUBLIC_RUNTIME_API_PATHS = new Set([
+    '/runtime-capabilities',
+    '/health',
+    '/health/live',
+]);
+
+export function isPublicRuntimeApiPath(path: string): boolean {
+    return PUBLIC_RUNTIME_API_PATHS.has(path);
+}
 
 export interface RuntimeCapabilities {
     version: string;
@@ -18,6 +31,7 @@ export interface RuntimeCapabilities {
     reports: boolean;
     networkMonitor: boolean;
     callTrafficAnalysis: boolean;
+    callCaptureMode: CallCaptureMode;
     passiveMessageReceipts: boolean;
     experimentalProbes: boolean;
     authRequired: boolean;
@@ -33,11 +47,24 @@ export function resolveLocalCaptureEnabled(env: NodeJS.ProcessEnv, deploymentMod
         : deploymentMode === 'local-full';
 }
 
+export function resolveCallCaptureMode(
+    env: NodeJS.ProcessEnv,
+    localCaptureEnabled = resolveLocalCaptureEnabled(env),
+): CallCaptureMode {
+    const configured = env.CALL_CAPTURE_MODE?.trim().toLowerCase();
+    if (configured === 'disabled' || configured === 'local' || configured === 'agent') return configured;
+    if (configured) return 'disabled';
+    if (env.CAPTURE_AGENT_URL?.trim()) return 'agent';
+    return localCaptureEnabled ? 'local' : 'disabled';
+}
+
 export function buildRuntimeConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     const deploymentMode = resolveDeploymentMode(env);
+    const localCaptureEnabled = resolveLocalCaptureEnabled(env, deploymentMode);
     return {
         deploymentMode,
-        localCaptureEnabled: resolveLocalCaptureEnabled(env, deploymentMode),
+        localCaptureEnabled,
+        callCaptureMode: resolveCallCaptureMode(env, localCaptureEnabled),
         experimentalProbesEnabled: env.ENABLE_EXPERIMENTAL_PROBES === 'true',
         authRequired: true,
     };
@@ -48,6 +75,40 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
     const nodeEnv = env.NODE_ENV || 'development';
     const authIdentitySecret = env.AUTH_IDENTITY_SECRET || '';
     const redisUrl = env.REDIS_URL?.trim() || '';
+    const callCaptureMode = env.CALL_CAPTURE_MODE?.trim().toLowerCase();
+    const captureAgentUrl = env.CAPTURE_AGENT_URL?.trim() || '';
+    const captureAgentSecret = env.CAPTURE_AGENT_SHARED_SECRET || '';
+
+    if (callCaptureMode && !['disabled', 'local', 'agent'].includes(callCaptureMode)) {
+        errors.push('CALL_CAPTURE_MODE must be disabled, local, or agent');
+    }
+    const resolvedCallCaptureMode = resolveCallCaptureMode(env);
+    if (resolvedCallCaptureMode === 'agent') {
+        if (!captureAgentUrl) {
+            errors.push('CAPTURE_AGENT_URL is required when CALL_CAPTURE_MODE=agent');
+        } else {
+            try {
+                const parsed = new URL(captureAgentUrl);
+                if (
+                    !['http:', 'https:'].includes(parsed.protocol)
+                    || parsed.username
+                    || parsed.password
+                    || parsed.pathname !== '/'
+                    || parsed.search
+                    || parsed.hash
+                ) {
+                    throw new Error('invalid origin');
+                }
+            } catch {
+                errors.push('CAPTURE_AGENT_URL must be an HTTP(S) origin without credentials, path, query, or fragment');
+            }
+        }
+        if (Buffer.byteLength(captureAgentSecret, 'utf8') < 32) {
+            errors.push('CAPTURE_AGENT_SHARED_SECRET must contain at least 32 bytes when CALL_CAPTURE_MODE=agent');
+        }
+    } else if (captureAgentUrl || captureAgentSecret) {
+        errors.push('CAPTURE_AGENT_URL and CAPTURE_AGENT_SHARED_SECRET require CALL_CAPTURE_MODE=agent');
+    }
 
     if (nodeEnv === 'production') {
         if (!authIdentitySecret.trim()) {
@@ -94,6 +155,7 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         ['PROBE_INTERVAL_MS', 10_000, 600_000],
         ['PROBE_TIMEOUT_MS', 3_000, 60_000],
         ['PROBE_MAX_BACKOFF_MS', 10_000, 1_800_000],
+        ['CAPTURE_AGENT_TIMEOUT_MS', 500, 30_000],
     ];
     for (const [name, minimum, maximum] of integerRanges) {
         const rawValue = env[name];
@@ -138,8 +200,10 @@ export function resolveTrustProxy(env: NodeJS.ProcessEnv): TrustProxySetting {
 export function buildRuntimeCapabilities(
     config: RuntimeConfig,
     localCaptureAvailable = config.localCaptureEnabled,
+    callCaptureAvailable = config.callCaptureMode === 'local' ? localCaptureAvailable : false,
 ): RuntimeCapabilities {
     const captureOperational = config.localCaptureEnabled && localCaptureAvailable;
+    const callCaptureOperational = config.callCaptureMode !== 'disabled' && callCaptureAvailable;
     return {
         version: SOFTWARE_VERSION,
         mode: config.deploymentMode,
@@ -148,7 +212,8 @@ export function buildRuntimeCapabilities(
         whatsappTracker: true,
         reports: true,
         networkMonitor: captureOperational,
-        callTrafficAnalysis: captureOperational,
+        callTrafficAnalysis: callCaptureOperational,
+        callCaptureMode: config.callCaptureMode,
         passiveMessageReceipts: true,
         experimentalProbes: config.experimentalProbesEnabled,
         authRequired: config.authRequired,

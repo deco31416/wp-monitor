@@ -1,0 +1,32 @@
+[Unit]
+Description=WP MONITOR encrypted application backup
+Documentation=https://github.com/deco31416/wp-monitor
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/wp-monitor/backup.conf
+ConditionPathExists=/etc/wp-monitor/backup-recipients.txt
+ConditionPathIsDirectory=/var/backups/wp-monitor
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/wp-monitor/backup.conf
+ExecStart=/usr/local/libexec/wp-monitor/backup-docker.sh
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/wp-monitor
+NoNewPrivileges=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

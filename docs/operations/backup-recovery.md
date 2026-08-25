@@ -2,90 +2,126 @@
 
 ## Alcance
 
-Un respaldo completo considera cuatro propietarios de datos:
+Un respaldo de aplicacion contiene cinco propietarios de datos:
 
-1. MongoDB: cuenta operadora, casos, contactos, mediciones, auditoria, Check-Ins y analisis.
-2. `auth_info_baileys`: credenciales de la sesion vinculada.
-3. `public/uploads`: imagenes publicas de preview y uploads autorizados.
-4. Redis: contadores de corta vida y futura coordinacion; su volumen/AOF evita reinicios durante despliegues.
+1. MongoDB: operador, casos, contactos, sesiones de tracking, mediciones, actividad, auditoria, Check-Ins y analisis.
+2. `auth_info_baileys`: credenciales de la sesion Baileys.
+3. `whatsapp_browser_profile`: cookies y sesion enlazada de WhatsApp Web.
+4. `public/uploads`: previews y uploads autorizados.
+5. Redis: sesiones opacas, limites/contadores y AOF.
 
-Los logs, `dist`, `client/build` y `node_modules` no son respaldo del producto.
+`dist`, `client/build`, `node_modules` y logs se reconstruyen o gestionan por observabilidad; no son respaldo del producto.
 
-## Objetivos sugeridos
+## Controles implementados
 
-La organizacion debe definir RPO y RTO. Para un laboratorio pequeño puede comenzar con:
+`scripts/operations/backup-docker.sh`:
 
-- RPO: 24 horas para MongoDB y uploads;
-- RTO: 4 horas para restaurar staging;
-- sesion Baileys: volumen persistente y copia cifrada cuando la politica lo permita;
-- prueba de restauracion: mensual y antes de una version mayor.
+- exige nombres/paths validados y un archivo de destinatarios publicos `age`;
+- rechaza salida dentro del repositorio;
+- usa `flock` para impedir dos backups simultaneos;
+- pausa backend, navegador, agente y Redis mientras MongoDB permanece disponible para `mongodump` sin escritores de aplicacion;
+- cifra cada stream antes de publicar su nombre final;
+- elimina su directorio timestamp nuevo si productor o cifrado fallan;
+- reanuda servicios mediante trap incluso tras error/señal;
+- genera manifiesto y checksums SHA-256.
 
-Estos valores son ejemplos, no una garantia del proyecto.
+No acepta credenciales MongoDB como argumento. Cuando hay autenticacion, monta dentro del contenedor Mongo un `mongodump --config` protegido y pasa solo su ruta absoluta.
 
-## MongoDB
+## Dependencias del host
 
-Utiliza herramientas oficiales compatibles con tu proveedor. Nunca pongas la URI en el repositorio o en el nombre del archivo.
+- Docker y containers en ejecucion;
+- `age`, `flock` y `sha256sum`;
+- archivo de recipients `age` publico, fuera del repositorio;
+- directorio de backup fuera del checkout, propietario de root/operador y modo restrictivo;
+- MongoDB con `mongodump`/`mongorestore` compatibles.
 
-Ejemplo conceptual:
+La identidad privada `age` debe permanecer fuera del VPS respaldado o en un gestor separado. No guardes recipient privado, URI, password ni session files en Git.
 
-```text
-mongodump --uri <URI_DESDE_SECRET_MANAGER> --db <DB> --archive=<ARCHIVO> --gzip
-mongorestore --uri <URI_STAGING> --archive=<ARCHIVO> --gzip --nsFrom=<DB>.* --nsTo=<DB_STAGING>.*
+## Ejecucion manual
+
+```bash
+sudo /usr/local/libexec/wp-monitor/backup-docker.sh \
+  --output /var/backups/wp-monitor \
+  --mongo-container wp-monitor-mongodb \
+  --mongo-db wp-monitor-production \
+  --backend-container wp-monitor-backend \
+  --browser-container wp-monitor-wa-browser \
+  --capture-agent-container wp-monitor-capture-agent \
+  --redis-container wp-monitor-redis \
+  --age-recipients /etc/wp-monitor/backup-recipients.txt \
+  --mongodump-config /run/secrets/mongodump-config.yml
 ```
 
-Valida que exista exactamente un `primary-operator` y los conteos de casos, auditoria, Check-Ins y analisis despues de restaurar. No pruebes restauracion sobre produccion.
+Los nombres son ejemplos: resuelvelos con `docker ps` sin copiar variables/secretos a logs.
 
-## Sesion Baileys
+## Verificacion
 
-- detiene el backend o crea una instantanea consistente del volumen;
-- cifra la copia;
-- restringe acceso al administrador responsable;
-- no la adjuntes a issues ni paquetes de evidencia;
-- si existe sospecha de exposicion, cierra dispositivos vinculados y genera una sesion nueva.
+Checksum y estructura, sin clave privada:
 
-La restauracion puede fallar si WhatsApp invalido la sesion. Un `401/loggedOut` requiere nueva vinculacion aunque los archivos existan.
-
-## Uploads
-
-Conserva estructura y nombres bajo `public/uploads`. Verifica que los registros de Check-In referencien archivos existentes y que `PUBLIC_BASE_URL` corresponda al entorno restaurado.
-
-## Redis
-
-Las sesiones y los contadores expiran por TTL y normalmente no requieren backup historico. Si operas Redis en Docker, conserva `redis_data` durante actualizaciones y valida AOF. Una restauracion puede revocar sesiones o descartar contadores vencidos, pero nunca debe sustituir Redis por memoria local para ocultar una falla.
-
-## Procedimiento de restauracion
-
-```mermaid
-flowchart TD
-    A[Crear entorno staging vacio] --> B[Restaurar MongoDB]
-    B --> C[Montar sesion y uploads]
-    C --> D[Configurar secretos del entorno]
-    D --> E[Iniciar backend]
-    E --> F[Validar health]
-    F --> G[Comprobar casos y auditoria]
-    G --> H[Generar informe sintetico]
-    H --> I[Comparar conteos y hashes]
+```bash
+scripts/operations/verify-backup.sh --backup /var/backups/wp-monitor/TIMESTAMP
 ```
 
-## Acta de prueba
+Autenticacion criptografica y descifrado hacia `/dev/null`:
 
-Registra:
+```bash
+scripts/operations/verify-backup.sh \
+  --backup /var/backups/wp-monitor/TIMESTAMP \
+  --age-identity /RUTA/SEPARADA/identity.txt
+```
 
-- fecha UTC;
-- responsable;
-- version de WP MONITOR;
-- origen y fecha del backup;
-- destino aislado;
-- conteos antes/despues;
-- hash del archivo de respaldo;
-- fallos y tiempo total;
-- decision PASS/FAIL.
+El verificador exige exactamente los cinco `.age`, un manifiesto v1 de cuatro campos y un checksum para cada archivo. Un checksum correcto sin identidad demuestra integridad de transporte frente al manifiesto, no que el contenido cifrado pueda recuperarse; ejecuta ambas capas periodicamente.
 
-## Rotacion y borrado
+## Automatizacion systemd
 
-- cifra backups en reposo y transito;
-- separa claves del archivo cifrado;
-- aplica retencion institucional;
-- elimina copias vencidas de forma verificable;
-- rota credenciales del operador, `AUTH_IDENTITY_SECRET`, credenciales Redis/MongoDB y otras claves despues de exposicion;
-- no incluyas secretos en reportes del caso.
+Instala:
+
+- `scripts/operations/backup-docker.sh` en `/usr/local/libexec/wp-monitor/backup-docker.sh` modo `0750` root;
+- `deploy/systemd/wp-monitor-backup.service` y `.timer` en `/etc/systemd/system/`;
+- `deploy/systemd/backup.conf.example` como `/etc/wp-monitor/backup.conf` modo `0600`;
+- recipients publicos en `/etc/wp-monitor/backup-recipients.txt`.
+
+La unidad esta endurecida y solo escribe en `/var/backups/wp-monitor`. Valida rutas/nombres reales antes de habilitar el timer; el archivo del repositorio no puede pasar `systemd-analyze verify` hasta que `ExecStart` exista en su ruta instalada.
+
+## Restauracion MongoDB en staging
+
+```bash
+scripts/operations/restore-mongodb-staging.sh \
+  --backup /var/backups/wp-monitor/TIMESTAMP \
+  --age-identity /RUTA/SEPARADA/identity.txt \
+  --mongo-container wp-monitor-mongodb-staging \
+  --source-db wp-monitor-production \
+  --target-db wp-monitor-staging \
+  --confirm-staging \
+  --mongorestore-config /run/secrets/mongorestore-config.yml
+```
+
+El script rechaza contenedor/base destino que no contengan `staging`, exige origen/destino distintos, verifica todos los artefactos y usa `--drop` solo sobre el namespace staging indicado.
+
+Despues valida:
+
+- exactamente un `primary-operator`;
+- conteos de casos, sesiones, auditoria, actividad, Check-Ins y analisis;
+- indices/TTL;
+- login con una credencial de staging rotada;
+- generacion de informe y Evidence Package sinteticos;
+- ausencia de conexiones salientes no deseadas.
+
+## Sesiones autenticadas
+
+La restauracion automatizada no monta Baileys, Chromium, uploads ni Redis. Replicar sesiones activas en paralelo puede revocar dispositivos, cruzar evidencia o abrir acceso a una cuenta real. Su recuperacion exige un runbook de desastre aprobado: entorno aislado, servicios de produccion detenidos, ownership correcto, claves rotadas y prueba de no simultaneidad.
+
+Si existe sospecha de exposicion, no restaures la sesion: cierra dispositivos vinculados y enlaza de nuevo. Un `401/loggedOut` puede requerir QR aunque el backup sea integro.
+
+## RPO, RTO y copia externa
+
+La organizacion define RPO/RTO. Base inicial razonable para un unico VPS:
+
+- backup diario cifrado y copia fuera del VPS;
+- RPO maximo 24 horas;
+- RTO objetivo 4 horas para staging;
+- verificacion automatica por ejecucion;
+- restauracion de staging mensual y antes de release mayor;
+- alerta si el ultimo backup verificado supera 26 horas.
+
+La retencion/borrado debe ser institucional, auditable y coherente con datos personales. Rotar `AUTH_IDENTITY_SECRET` invalida identidades HMAC; rotar Mongo/Redis/agente/VNC requiere actualizar todos sus consumidores sin imprimir valores.

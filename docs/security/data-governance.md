@@ -8,7 +8,7 @@ Definir responsabilidades sobre datos personales, tecnicos y evidencia. Los TTL 
 
 | Clase | Ejemplos | Manejo |
 | --- | --- | --- |
-| Secreto | token, URI, sesion, API key | Secret manager, acceso minimo |
+| Secreto | token, URI, sesion, API key, perfil Chromium y sesion Baileys | Secret manager o volumen privado, acceso minimo |
 | Personal | numero, JID, alias, IP, GPS | Finalidad, autorizacion, retencion |
 | Tecnico sensible | paquetes, ASN, dispositivo, presencia | Acceso por caso y minimizacion |
 | Evidencia | auditoria, hashes, informes | Integridad, custodia y archivo |
@@ -48,6 +48,8 @@ La politica debe definir plazo por finalidad, suspension por investigacion autor
 - nunca restaurar produccion en desarrollo sin anonimizar;
 - fixtures sinteticos;
 - uploads y paquetes de QA fuera del repositorio.
+- perfiles Chromium y sesiones Baileys separados por entorno y nunca montados simultaneamente en dos replicas;
+- backups cifrados antes de abandonar el host y restaurados solo en staging aislado para su verificacion.
 
 ## Proveedores
 
@@ -55,4 +57,4 @@ DB-IP/ip-api y MongoDB Atlas pueden procesar datos fuera del host. Documenta pro
 
 ## Revision periodica
 
-Trimestralmente revisa colecciones, TTL, volumenes, usuarios, backups, exports y accesos. Un campo que no se usa en decisiones o evidencia debe justificarse o eliminarse.
+Trimestralmente revisa colecciones, TTL, volumenes, perfiles de navegador, sesiones vinculadas, usuarios, backups, exports y accesos. Un campo que no se usa en decisiones o evidencia debe justificarse o eliminarse.

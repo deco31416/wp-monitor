@@ -10,6 +10,7 @@ flowchart TD
     Mongo{Mongo conectado?}
     Redis{Redis conectado?}
     WA{WhatsApp conectado?}
+    Browser{Browser healthy?}
     Capture{Captura disponible?}
     Operational[Operational]
     Degraded[Degraded]
@@ -21,9 +22,12 @@ flowchart TD
     Redis -->|Si| WA
     WA -->|No recuperable| Reconnect[Esperar reconexion]
     WA -->|401 loggedOut| Relink[Respaldar y vincular QR]
-    WA -->|Si| Capture
+    WA -->|Si| Browser
+    Browser -->|No| BrowserRunbook[Revisar proceso, volumen lock, sandbox y audio]
+    Browser -->|Si| Capture
     Capture -->|No por modo| DashboardMode[Operacion dashboard sin captura]
-    Capture -->|No por driver| Driver[Revisar Npcap/libpcap y privilegios]
+    Capture -->|No modo local| Driver[Revisar Npcap/libpcap y privilegios]
+    Capture -->|No modo agent| AgentRunbook[Revisar health, HMAC y capabilities PID 1]
     Capture -->|Si| Operational
     MongoRunbook --> Degraded
     RedisRunbook --> Degraded
@@ -31,11 +35,13 @@ flowchart TD
     Relink --> Health
     DashboardMode --> Operational
     Driver --> Degraded
+    AgentRunbook --> Degraded
+    BrowserRunbook --> Degraded
 ```
 
 ## Principio
 
-Recuperar significa identificar la capa, aplicar el runbook y verificar estado durable. Redis es obligatorio para sesiones y limites compartidos: si no conecta durante el arranque, el backend no debe escuchar. Borrar sesion, reinstalar dependencias o matar procesos sin diagnostico puede ampliar el incidente.
+Recuperar significa identificar la capa, aplicar el runbook y verificar estado durable. Redis es obligatorio para sesiones y limites compartidos: si no conecta durante el arranque, el backend no debe escuchar. No borres perfiles/volumenes para corregir un lock: el navegador usa bloqueo exclusivo y recuperacion acotada. Borrar sesion, reinstalar dependencias o matar procesos sin diagnostico puede ampliar el incidente.
 
 ## Evidencia del incidente
 

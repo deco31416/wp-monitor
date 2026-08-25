@@ -8,7 +8,7 @@ test('resolves the release version from the root manifest', () => {
     const clientManifest = JSON.parse(readFileSync(new URL('../client/package.json', import.meta.url), 'utf8'));
     assert.equal(SOFTWARE_VERSION, rootManifest.version);
     assert.equal(clientManifest.version, rootManifest.version);
-    assert.equal(SOFTWARE_VERSION, '3.0.0');
+    assert.equal(SOFTWARE_VERSION, '3.1.0');
 });
 
 test('prefers an explicit package-manager version without accepting whitespace-only input', () => {

@@ -9,8 +9,9 @@
 5. Redis conecta; si falla, el proceso no escucha.
 6. MongoDB conecta, crea indices y carga/crea el operador unico; si falla, el proceso no escucha.
 7. Socket.IO queda preparado para aceptar solo cookies/origen validos.
-8. Baileys intenta restaurar sesion o emite QR sin bloquear el servidor.
-9. El backend empieza a escuchar y el frontend consulta sesion/capacidades/health antes de abrir el socket.
+8. Si `CALL_CAPTURE_MODE=agent`, el backend consulta readiness y mantiene una comprobacion periodica sin recibir capabilities.
+9. Baileys intenta restaurar sesion o emite QR sin bloquear el servidor.
+10. El backend empieza a escuchar y el frontend consulta sesion/capacidades/health antes de abrir el socket.
 
 ## Login y cambio de credenciales
 
@@ -83,7 +84,13 @@ Una excepcion al abrir interfaz no deja el backend reportando `isCapturing=true`
 
 ## Captura de llamada
 
-Puede iniciarse manualmente o por evento cuando existe metadata por defecto autorizada. El backend asigna `callId`, objetivo, ventana e interfaz; emite progreso; stop finaliza, puntua, enriquece, persiste y emite `call-analysis`.
+Puede iniciarse manualmente o por evento cuando existe metadata por defecto autorizada. El backend asigna `callId`, objetivo, ventana e interfaz y delega mediante `CallCaptureService`:
+
+- `local`: abre libpcap en el mismo proceso para workstation/laboratorio;
+- `agent`: firma una solicitud HMAC al sidecar del navegador, con timestamp y nonce anti-replay;
+- `disabled`: rechaza de forma explicita sin simular resultados.
+
+En modo agente, el sidecar valida privilegios, interfaz enumerada, JID, `callId`, tipo y captura unica. `stop` devuelve un resultado acotado que el cliente vuelve a validar antes de enriquecer, persistir, auditar y emitir `call-analysis`.
 
 El ciclo de evento de llamada y el ciclo de captura no son el mismo objeto. Una llamada puede no producir captura si falta autorizacion/capacidad; una captura manual puede existir sin evento de llamada.
 
@@ -124,6 +131,8 @@ Aplica limites, consentimiento y payload valido; observa IP segun proxy trust; n
 | Socket cae | REST permite reconstruir estado durable |
 | Enriquecimiento expira | Analisis continua sin bloquear con nota |
 | Captura no abre | Revertir estado y explicar permisos/interfaz |
+| Capture agent cae | Health degradado; timeout/error controlado; backend y seguimiento continúan sin privilegios |
+| Chromium deja locks obsoletos | Lock exclusivo WP MONITOR y limpieza acotada de `Singleton*` antes de reiniciar |
 | PDF falla | JSON original permanece disponible; error auditado si aplica |
 | Volumen ausente | Health puede abrir, pero prueba de persistencia debe fallar |
 

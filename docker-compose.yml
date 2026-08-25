@@ -7,20 +7,44 @@ services:
         - NODE_VERSION=${NODE_VERSION:-24.19.0}
         - PORT=${BACKEND_PORT:-4000}
     extra_hosts:
-      - "localhost:host-gateway"
+      - "host.docker.internal:host-gateway"
     ports:
-      - "${BACKEND_PORT:-4000}:${BACKEND_PORT:-4000}"
+      - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-4000}:${BACKEND_PORT:-4000}"
     env_file:
       - .env
     environment:
       - PORT=${BACKEND_PORT:-4000}
       - NODE_ENV=${NODE_ENV:-production}
+      # The Compose backend stays unprivileged; call capture belongs to the sidecar.
+      - LOCAL_CAPTURE_ENABLED=false
       - REDIS_URL=redis://redis:6379
       - REDIS_REQUIRED=true
       - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-wp-monitor}
+      - CALL_CAPTURE_MODE=agent
+      - CAPTURE_AGENT_URL=http://wa-browser:4100
+      - CAPTURE_AGENT_SHARED_SECRET=${CAPTURE_AGENT_SHARED_SECRET:-}
+      - CAPTURE_AGENT_TIMEOUT_MS=${CAPTURE_AGENT_TIMEOUT_MS:-5000}
     depends_on:
       redis:
         condition: service_healthy
+      capture-agent:
+        condition: service_healthy
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${BACKEND_CPU_LIMIT:-2.0}
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-2g}
+    mem_reservation: ${BACKEND_MEMORY_RESERVATION:-512m}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-256}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "const port=process.env.PORT||'4000';fetch('http://127.0.0.1:'+port+'/api/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       # Persist WhatsApp auth state
       - baileys_auth:/app/auth_info_baileys
@@ -29,6 +53,74 @@ services:
     networks:
       - app-network
       - data-network
+    restart: unless-stopped
+
+  wa-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    environment:
+      - BROWSER_VNC_PASSWORD=${BROWSER_VNC_PASSWORD:-}
+      - BROWSER_VNC_PASSWORD_FILE=${BROWSER_VNC_PASSWORD_FILE:-}
+      - BROWSER_SCREEN=${BROWSER_SCREEN:-1440x900x24}
+    ports:
+      - "127.0.0.1:${BROWSER_UI_PORT:-7900}:7900"
+    init: true
+    cap_drop:
+      - ALL
+    # Chromium's own namespace sandbox needs clone/unshare syscalls that Docker's
+    # builtin seccomp profile blocks. Keep Chromium sandboxed; never add SYS_ADMIN
+    # or --no-sandbox. AppArmor, a read-only rootfs, and an empty capability set remain.
+    security_opt:
+      - seccomp=unconfined
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777
+    shm_size: ${BROWSER_SHM_SIZE:-1g}
+    cpus: ${BROWSER_CPU_LIMIT:-2.0}
+    mem_limit: ${BROWSER_MEMORY_LIMIT:-3g}
+    mem_reservation: ${BROWSER_MEMORY_RESERVATION:-1g}
+    pids_limit: ${BROWSER_PIDS_LIMIT:-512}
+    stop_grace_period: 30s
+    volumes:
+      - whatsapp_browser_profile:/home/browser/profile
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  capture-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.capture-agent
+      args:
+        - NODE_VERSION=${NODE_VERSION:-24.19.0}
+    environment:
+      - CAPTURE_AGENT_BIND=0.0.0.0
+      - CAPTURE_AGENT_PORT=4100
+      - CAPTURE_AGENT_SHARED_SECRET=${CAPTURE_AGENT_SHARED_SECRET:-}
+    depends_on:
+      wa-browser:
+        condition: service_healthy
+    network_mode: "service:wa-browser"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - SETPCAP
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    cpus: ${CAPTURE_AGENT_CPU_LIMIT:-1.0}
+    mem_limit: ${CAPTURE_AGENT_MEMORY_LIMIT:-1g}
+    mem_reservation: ${CAPTURE_AGENT_MEMORY_RESERVATION:-256m}
+    pids_limit: ${CAPTURE_AGENT_PIDS_LIMIT:-256}
+    stop_grace_period: 20s
     restart: unless-stopped
 
   redis:
@@ -40,6 +132,25 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    cap_drop:
+      - ALL
+    # The official entrypoint needs these only to repair a newly mounted AOF
+    # volume, switch to UID/GID redis and drop its own bounding set. PID 1 then
+    # executes Redis with no capabilities; verify that invariant after upgrades.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETPCAP
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${REDIS_CPU_LIMIT:-0.5}
+    mem_limit: ${REDIS_MEMORY_LIMIT:-256m}
+    mem_reservation: ${REDIS_MEMORY_RESERVATION:-64m}
+    pids_limit: ${REDIS_PIDS_LIMIT:-128}
+    stop_grace_period: 30s
     volumes:
       - redis_data:/data
     networks:
@@ -55,11 +166,28 @@ services:
         - PORT=${CLIENT_PORT:-4001}
         - VITE_API_URL=${BACKEND_URL:-http://localhost:4000}
     ports:
-      - "${CLIENT_PORT:-4001}:${CLIENT_PORT:-4001}"
+      - "${CLIENT_BIND_ADDRESS:-127.0.0.1}:${CLIENT_PORT:-4001}:${CLIENT_PORT:-4001}"
     environment:
       - PORT=${CLIENT_PORT:-4001}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${CLIENT_CPU_LIMIT:-0.5}
+    mem_limit: ${CLIENT_MEMORY_LIMIT:-256m}
+    mem_reservation: ${CLIENT_MEMORY_RESERVATION:-64m}
+    pids_limit: ${CLIENT_PIDS_LIMIT:-128}
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:$${PORT}/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - app-network
     restart: unless-stopped
@@ -70,6 +198,8 @@ volumes:
   checkin_uploads:
     driver: local
   redis_data:
+    driver: local
+  whatsapp_browser_profile:
     driver: local
 
 networks:

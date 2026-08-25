@@ -10,11 +10,15 @@ Este documento describe controles implementados y responsabilidades operativas. 
 | `AUTH_IDENTITY_SECRET` | Correlacion o falsificacion de identidades opacas | Secreto unico de 32+ caracteres y rotacion controlada |
 | Sesiones Redis | Secuestro de sesion | Token aleatorio, TTL, clave HMAC, cookie `HttpOnly` y revocacion |
 | Sesion Baileys | Control de la cuenta vinculada | Volumen privado, acceso restringido, nunca Git |
+| Perfil Chromium WhatsApp Web | Cookies y control de la segunda sesion vinculada | Volumen exclusivo, backup cifrado, noVNC en loopback y acceso por SSH |
 | URI de MongoDB | Lectura/modificacion de datos | Secret manager, usuario minimo, red restringida |
 | Casos y auditoria | Perdida de trazabilidad | Autenticacion, backup, integridad y retencion |
 | Check-Ins | Recoleccion indebida o replay | Consentimiento, token, expiracion y rate limit |
 | Uploads/reportes | Exposicion de datos | Volumen protegido, URL controlada y minimizacion |
 | Captura local | Acceso privilegiado a red | Autorizacion, misma maquina, driver y metadata minima |
+| Agente de captura | Uso indebido de `NET_RAW/NET_ADMIN` | UID 1000, capabilities exactas, API interna HMAC, anti-replay y sin puerto host |
+| `CAPTURE_AGENT_SHARED_SECRET` | Control remoto de ventanas de captura | Secreto independiente de 32+ bytes, red privada y rotacion coordinada |
+| Acceso noVNC | Control visual de WhatsApp Web | Publicacion exclusiva en `127.0.0.1`, tunel SSH y credencial secundaria |
 
 ## Autenticacion actual
 
@@ -34,11 +38,13 @@ El producto implementa exactamente una cuenta operadora:
 
 - `NODE_ENV=production` en produccion.
 - `ENABLE_SWAGGER=false` en produccion.
-- `LOCAL_CAPTURE_ENABLED=false` en Railway/cloud.
+- `LOCAL_CAPTURE_ENABLED=false` en Railway y en Docker/VPS; la captura de llamadas en VPS usa `CALL_CAPTURE_MODE=agent`.
 - `ALLOWED_ORIGINS` con dominios exactos y HTTPS.
 - `TRUST_PROXY=1` solo detras de un proxy confiable de un salto.
 - usuario inicial no predeterminado y contrasena unica de 15-128 caracteres en un secret manager;
 - `AUTH_IDENTITY_SECRET` aleatorio de al menos 32 caracteres;
+- `CAPTURE_AGENT_SHARED_SECRET` aleatorio, independiente y de al menos 32 bytes;
+- noVNC publicado solo en loopback y alcanzado mediante SSH, nunca mediante el proxy publico;
 - Redis privado y disponible para sesiones/rate limits;
 - MongoDB separado por entorno.
 - secretos almacenados en Railway Variables o secret manager.
@@ -52,6 +58,10 @@ El producto implementa exactamente una cuenta operadora:
 | Spoof de IP | Proxy trust incorrecto | `TRUST_PROXY` configurable | Topologia mal configurada |
 | Fuerza bruta login/Check-In | Intentos repetidos | Limites atomicos compartidos en Redis | Ataque distribuido dentro de umbrales |
 | Exposicion de sesion | Carpeta publicada/backup abierto | `.gitignore`, volumen privado | Error humano |
+| Control del navegador VPS | noVNC expuesto a Internet | Bind host `127.0.0.1`, tunel SSH y contraseña VNC | Usuario SSH o host comprometido; VNC tradicional solo considera ocho caracteres significativos |
+| Abuso del agente de captura | Solicitud no autorizada o repetida | HMAC SHA-256, timestamp de 60 s, nonce, validacion estricta y red interna | Secreto o Docker host comprometido |
+| Escalada desde captura | Proceso con privilegios excesivos | UID/GID 1000, bounding/effective/ambient solo `NET_RAW/NET_ADMIN`, `no-new-privileges` | Vulnerabilidad del kernel/libpcap o control del daemon Docker |
+| Perfil Chromium duplicado | Dos procesos corrompen la sesion | Lock exclusivo y limpieza acotada de marcadores obsoletos | Perdida o corrupcion del volumen subyacente |
 | CORS amplio | Sitio externo llama API | allowlist de origen | Dominio comprometido |
 | Inyeccion en CSV | Campo inicia con formula | Sanitizacion de exportacion | Consumidor desactiva proteccion |
 | Sobreinterpretacion | IP candidata presentada como identidad | Etiquetas y limitaciones | Redaccion humana incorrecta |
@@ -73,9 +83,13 @@ La aplicacion implementa TTL de 30 dias para mediciones y 90 dias para actividad
 - HTTPS obligatorio para GPS fuera de localhost;
 - no disfrazar el enlace ni prometer una finalidad distinta.
 
-## Captura de red
+## Captura de red y navegador persistente
 
 La captura requiere autoridad sobre el host y el trafico. El producto trabaja con metadata, no debe ampliarse a payload sin una evaluacion independiente. Mantiene infraestructura y candidatos para revision; un filtro visual no debe destruir evidencia cruda.
+
+En Docker/VPS el backend no recibe capabilities. Un agente dedicado comparte solamente el namespace de red de `wa-browser`, valida solicitudes firmadas y conserva `NET_RAW/NET_ADMIN` despues de abandonar root. El agente no publica puerto al host y rechaza capturas concurrentes. Chromium ejecuta como UID 10001, sin capabilities, con `no-new-privileges` y rootfs de solo lectura; usa una excepcion seccomp acotada porque el perfil Docker predeterminado impide su sandbox de namespaces. Esa excepcion aumenta el impacto de una vulnerabilidad del navegador y exige mantener imagen/host actualizados, acceso SSH minimo y aislamiento del resto de servicios.
+
+El perfil Chromium contiene una sesion WhatsApp Web completa. Su volumen no se comparte entre replicas, no se descarga para soporte y solo entra en backups cifrados. La credencial VNC no sustituye el limite de red: `7900` debe permanecer en loopback y accederse con tunel SSH.
 
 ## Reporte de vulnerabilidades
 
@@ -93,13 +107,17 @@ Contacta al mantenedor por un canal privado indicado por el repositorio. Incluye
 
 - [ ] Usuario inicial no predeterminado y contrasena unica en secret manager.
 - [ ] `AUTH_IDENTITY_SECRET` aleatorio de 32+ caracteres.
+- [ ] `CAPTURE_AGENT_SHARED_SECRET` independiente y aleatorio de 32+ bytes.
+- [ ] noVNC confirmado en `127.0.0.1` y agente sin puerto host.
+- [ ] UID/capabilities/no-new-privileges del agente verificados en runtime.
+- [ ] Chromium no-root, sin `--no-sandbox`, con perfil exclusivo y volumen privado.
 - [ ] Redis privado, autenticado y persistente.
 - [ ] Login, logout y cambio de credenciales probados.
 - [ ] CORS exacto.
 - [ ] HTTPS extremo a extremo.
 - [ ] Proxy trust verificado.
 - [ ] Swagger apagado.
-- [ ] Captura cloud apagada.
+- [ ] Captura general cloud apagada; captura de llamada usa el modo previsto para la topologia.
 - [ ] Volumenes privados separados.
 - [ ] MongoDB con minimo privilegio.
 - [ ] Backup restaurado en staging.

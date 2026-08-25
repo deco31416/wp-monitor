@@ -2,7 +2,7 @@
 
 - Estado: Accepted
 - Fecha: 2026-06
-- Relacion: depende de ADR 0001
+- Relacion: depende de ADR 0001; complementado por ADR 0004 para Docker/VPS
 - Documentos: [captura](../diagrams/07-network-capture.md), [runbook](../operations/local-runbook.md)
 
 ## Contexto
@@ -52,7 +52,7 @@ Negativas:
 - captura solo en host autorizado;
 - ventana corta;
 - no publicar IPs/exports reales;
-- no elevar todo el producto si puede aislarse el proceso en el futuro;
+- no elevar todo el producto; ADR 0004 materializa el aislamiento para Docker/VPS;
 - detener recursos ante excepcion;
 - documentar filtros y perdida de paquetes.
 

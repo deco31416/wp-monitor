@@ -14,6 +14,8 @@ flowchart LR
       Dashboard[Dashboard web]
       Backend[API y tiempo real]
       Evidence[Informes y evidencia]
+      WebWA[Chromium WhatsApp Web opcional]
+      Agent[Agente de captura aislado]
     end
 
     WhatsApp[WhatsApp]
@@ -29,6 +31,8 @@ flowchart LR
     Backend <--> Mongo
     Backend <--> Redis
     Backend --> Adapter
+    Backend -->|HMAC privado| Agent
+    WebWA --> Agent
     Backend --> Geo
     Participant --> Browser --> Backend
     Backend --> Evidence --> Auditor
@@ -36,7 +40,7 @@ flowchart LR
 
 ## Lectura
 
-- El operador controla el dashboard, pero la captura ocurre en el backend local autorizado.
+- El operador controla el dashboard. La captura general ocurre en el backend local autorizado; la captura de llamada Docker/VPS ocurre en el agente que comparte namespace con Chromium.
 - WhatsApp y los proveedores GeoIP son dependencias externas; WP MONITOR no controla su disponibilidad ni exactitud.
 - MongoDB conserva identidad y evidencia durable; Redis conserva sesiones opacas y contadores compartidos con TTL.
 - El participante entrega datos de Check-In mediante APIs del navegador y consentimiento.

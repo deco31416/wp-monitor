@@ -20,6 +20,15 @@ flowchart TB
       MongoUri[MONGODB_URI]
       BaileysSession[auth_info_baileys]
       ProviderKeys[Keys externas]
+      AgentSecret[CAPTURE_AGENT_SHARED_SECRET]
+      BrowserProfile[Perfil Chromium / cookies]
+      VncPassword[Credencial VNC secundaria]
+    end
+
+    subgraph CaptureZone[Zona aislada de captura]
+      BrowserWA[Chromium UID 10001]
+      Agent[Capture agent UID 1000]
+      BrowserWA --> Agent
     end
 
     subgraph Data[Zona de datos]
@@ -37,6 +46,11 @@ flowchart TB
     MongoUri --> Mongo
     BaileysSession --> Protected
     ProviderKeys --> Protected
+    Protected -->|HMAC timestamp nonce body hash| Agent
+    AgentSecret --> Protected
+    AgentSecret --> Agent
+    BrowserProfile --> BrowserWA
+    VncPassword --> BrowserWA
     Validation --> Mongo
     Validation --> Uploads
     Mongo --> Reports
@@ -52,3 +66,6 @@ flowchart TB
 - Cambiar credenciales revoca sesiones HTTP y Socket.IO anteriores.
 - Validacion se aplica antes de persistir o abrir captura.
 - Los reportes minimizan y excluyen secretos.
+- El puerto del agente no se publica; noVNC se enlaza solo a loopback y requiere tunel SSH.
+- El backend no recibe capabilities. El agente conserva solo `NET_RAW/NET_ADMIN` y el navegador ninguna.
+- Perfiles Chromium, sesiones Baileys, secretos HMAC/VNC y backups quedan fuera de Git y del contexto Docker.

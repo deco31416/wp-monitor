@@ -1,6 +1,6 @@
 # Network Monitor y Analisis de Llamadas
 
-Estas funciones solo estan disponibles cuando el backend corre en `local-full` con `LOCAL_CAPTURE_ENABLED=true`. Necesitan autorizacion sobre la maquina y su trafico.
+Network Monitor general requiere backend nativo `local-full` con `LOCAL_CAPTURE_ENABLED=true`. Analisis de llamada puede usar ese proveedor `local` o el proveedor `agent` de Docker/VPS, donde WhatsApp Web y el sidecar comparten namespace. Ambos necesitan autorizacion sobre la cuenta, maquina y trafico.
 
 Diagramas relacionados: [captura local](../diagrams/07-network-capture.md) y [analisis de llamada](../diagrams/08-call-analysis.md).
 
@@ -8,10 +8,10 @@ Diagramas relacionados: [captura local](../diagrams/07-network-capture.md) y [an
 
 Si el equipo todavia no esta preparado, completa [Instalacion del motor de captura local](../operations/packet-capture-setup.md).
 
-- WhatsApp Web o Desktop en la misma computadora de captura.
+- WhatsApp Web o Desktop en la misma computadora de captura, o Chromium dentro de `wa-browser` para Docker/VPS.
 - Interfaz Wi-Fi/Ethernet correcta.
 - Npcap con compatibilidad WinPcap en Windows o libpcap en Linux.
-- Terminal con privilegios suficientes.
+- Proceso nativo con privilegios suficientes, o sidecar saludable con solo `NET_RAW/NET_ADMIN`.
 - Case ID, operador y motivo completos.
 
 WP MONITOR no inicia la llamada. El operador la realiza desde WhatsApp Web/Desktop para que el trafico pase por la interfaz capturada.
@@ -26,7 +26,7 @@ El flujo correcto es:
 
 1. crear o seleccionar un caso autorizado;
 2. relacionar el numero propio o expresamente autorizado;
-3. ejecutar WP MONITOR en `local-full` sobre la misma computadora donde corre WhatsApp Web/Desktop;
+3. ejecutar WP MONITOR nativo en la misma computadora, o usar el navegador persistente del VPS con `CALL_CAPTURE_MODE=agent`;
 4. capturar una linea base sin llamada;
 5. iniciar una ventana nueva y realizar la llamada desde WhatsApp;
 6. detener la captura al finalizar;
@@ -44,7 +44,7 @@ Infraestructura: Meta, Google, Cloudflare, CDN o relay
 IP publica candidata: direccion observada, paquetes, flujo y score
 ASN/ISP: propietario aproximado del bloque
 GeoIP: pais/region/ciudad aproximados de la red
-Veredicto: directa, relay, mixta o evidencia insuficiente
+Veredicto: p2p, relay, mixed o insufficient_data
 ```
 
 ### Resultado que no puede garantizar
@@ -79,6 +79,8 @@ La red puede utilizar relay, VPN, CGNAT, proxy, roaming o infraestructura compar
 Si aparece `Todo el trafico visible esta filtrado`, la captura puede seguir activa. Desactiva `solo UDP` u `ocultar infraestructura` para revisar metadata cruda.
 
 ## Analisis de llamada
+
+En Docker/VPS enlaza WhatsApp Web por `http://127.0.0.1:7900/vnc.html` a traves de un tunel SSH. El panel VNC no debe estar publicado por el proxy. El backend firma start/status/stop hacia el agente; no recibe capabilities ni captura trafico de otras maquinas.
 
 ### Practica controlada
 
@@ -126,6 +128,8 @@ Significa que la ventana observo infraestructura o que ninguna IP alcanzo criter
 | --- | --- |
 | Start deshabilitado | Completa caso, operador y motivo; revisa capacidades |
 | Cero paquetes | Interfaz, driver, privilegios, VPN y misma maquina |
+| Agente no disponible | Health de `wa-browser`/`capture-agent`, secreto HMAC, modo y capabilities de PID 1 |
+| Chromium no inicia | Volumen montado una sola vez, lock exclusivo, sandbox y recursos |
 | Solo TCP/ruido | Verifica ventana, llamada y filtros |
 | Resultado no aparece | Revisa Socket.IO y endpoint de stop |
 | Muchas IPs cloud | Compara linea base y clasificacion de infraestructura |

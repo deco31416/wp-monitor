@@ -1,0 +1,16 @@
+# Non-secret runtime configuration for wp-monitor-backup.service.
+# Install as /etc/wp-monitor/backup.conf with owner root:root and mode 0600.
+
+WP_BACKUP_OUTPUT=/var/backups/wp-monitor
+WP_MONGO_CONTAINER=replace-with-mongodb-container-name
+WP_MONGO_DB=replace-with-production-database-name
+WP_BACKEND_CONTAINER=replace-with-backend-container-name
+WP_BROWSER_CONTAINER=replace-with-browser-container-name
+WP_CAPTURE_AGENT_CONTAINER=replace-with-capture-agent-container-name
+WP_REDIS_CONTAINER=replace-with-redis-container-name
+WP_AGE_RECIPIENTS_FILE=/etc/wp-monitor/backup-recipients.txt
+
+# Optional path inside the MongoDB container. The referenced YAML file may hold
+# the URI/password and must be mounted as a read-only Docker secret. Never place
+# its content in this host environment file.
+WP_MONGODUMP_CONFIG_PATH=/run/secrets/mongodump-config.yml

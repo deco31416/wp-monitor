@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
-import { buildRuntimeHealth, localCaptureGuard, registerRuntimeRoutes } from '../src/routes/runtime.js';
+import { buildRuntimeHealth, buildRuntimeLiveness, localCaptureGuard, registerRuntimeRoutes } from '../src/routes/runtime.js';
 import { buildRuntimeConfig } from '../src/runtime.js';
 import { SOFTWARE_VERSION } from '../src/version.js';
 
@@ -42,6 +42,7 @@ test('GET /api/runtime-capabilities returns Railway dashboard capabilities over 
             reports: true,
             networkMonitor: false,
             callTrafficAnalysis: false,
+            callCaptureMode: 'disabled',
             passiveMessageReceipts: true,
             experimentalProbes: false,
             authRequired: true,
@@ -94,6 +95,44 @@ test('GET /api/health returns 503 when dependencies are degraded', async () => {
         assert.equal(body.dependencies.localCapture.enabled, true);
         assert.equal(body.dependencies.localCapture.available, true);
     });
+});
+
+test('liveness remains healthy while operational dependencies are degraded', async () => {
+    const app = express();
+    const config = buildRuntimeConfig({
+        DEPLOYMENT_MODE: 'railway-dashboard',
+        LOCAL_CAPTURE_ENABLED: 'false',
+    });
+    registerRuntimeRoutes(app, config, {
+        mongoConfigured: () => true,
+        mongoConnected: () => false,
+        redisConfigured: () => true,
+        redisRequired: () => true,
+        redisConnected: () => false,
+        whatsappConnected: () => false,
+    });
+
+    await withServer(app, async baseUrl => {
+        const readinessResponse = await fetch(`${baseUrl}/api/health`);
+        const livenessResponse = await fetch(`${baseUrl}/api/health/live`);
+        const liveness = await livenessResponse.json();
+
+        assert.equal(readinessResponse.status, 503);
+        assert.equal(livenessResponse.status, 200);
+        assert.equal(liveness.status, 'alive');
+        assert.equal(liveness.service, 'wp-monitor');
+        assert.equal(liveness.version, SOFTWARE_VERSION);
+        assert.equal(JSON.stringify(liveness).includes('dependencies'), false);
+    });
+});
+
+test('buildRuntimeLiveness returns only process-level public metadata', () => {
+    assert.deepEqual(Object.keys(buildRuntimeLiveness()).sort(), [
+        'generatedAt',
+        'service',
+        'status',
+        'version',
+    ]);
 });
 
 test('health reports required Redis that is not configured', () => {
@@ -155,6 +194,30 @@ test('GET /api/health returns 200 when dependencies are operational', async () =
         assert.deepEqual(body.degradedReasons, []);
         assert.equal(body.runtime.networkMonitor, false);
     });
+});
+
+test('health reports an isolated call capture agent independently from local capture', () => {
+    const config = buildRuntimeConfig({
+        DEPLOYMENT_MODE: 'server-full',
+        LOCAL_CAPTURE_ENABLED: 'false',
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://capture-agent:4100',
+    });
+    const unavailable = buildRuntimeHealth(config, {
+        whatsappConnected: () => true,
+        callCaptureAvailable: () => false,
+    });
+    const available = buildRuntimeHealth(config, {
+        whatsappConnected: () => true,
+        callCaptureAvailable: () => true,
+    });
+
+    assert.deepEqual(unavailable.degradedReasons, ['call_capture_agent_unavailable']);
+    assert.deepEqual(unavailable.dependencies.localCapture, { enabled: false, available: false });
+    assert.deepEqual(unavailable.dependencies.callCapture, { mode: 'agent', available: false });
+    assert.equal(unavailable.runtime.networkMonitor, false);
+    assert.equal(unavailable.runtime.callTrafficAnalysis, false);
+    assert.equal(available.runtime.callTrafficAnalysis, true);
 });
 
 test('localCaptureGuard blocks capture routes in Railway mode over HTTP', async () => {

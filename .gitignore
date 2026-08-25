@@ -784,6 +784,10 @@ compose.local.yml
 compose.local.yaml
 docker-compose.dokploy.yml
 
+# This reviewed manifest contains no deployment credentials; keep only this
+# repository-owned production override while local Dokploy files stay ignored.
+!deploy/docker-compose.dokploy.yml
+
 docker-volumes/
 container-data/
 
