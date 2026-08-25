@@ -4,6 +4,8 @@ Matriz inspirada en ISO/IEC 25010. No representa certificacion.
 
 ## Comandos oficiales
 
+En Linux, la instalación completa requiere los headers de `libpcap` (`libpcap-dev` en Debian/Ubuntu) para compilar el módulo nativo `cap`; CI instala ese prerrequisito antes de ejecutar pnpm.
+
 ```powershell
 pnpm run qa
 pnpm run docs:check

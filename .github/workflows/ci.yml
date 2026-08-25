@@ -36,6 +36,11 @@ jobs:
           corepack prepare pnpm@11.22.0 --activate
           pnpm --version
 
+      - name: Dependencias nativas de captura
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpcap-dev
+
       - name: Instalar desde lockfile
         run: pnpm install --frozen-lockfile
 
