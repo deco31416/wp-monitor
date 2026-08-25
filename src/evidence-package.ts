@@ -168,6 +168,118 @@ function formatReportDate(value: unknown): string {
     return date.toISOString().replace('T', ' ').replace('Z', ' UTC');
 }
 
+const REPORT_STATUS_LABELS: Record<string, string> = {
+    draft: 'Borrador',
+    authorized: 'Autorizado',
+    active: 'Activo',
+    closed: 'Cerrado',
+    archived: 'Archivado',
+    unknown: 'No disponible',
+};
+
+const REPORT_SOURCE_LABELS: Record<string, string> = {
+    message: 'Mensaje',
+    receipt: 'Confirmación',
+    presence: 'Presencia',
+    call: 'Llamada',
+    rtt_probe: 'Medición RTT',
+    baileys: 'Sesión WhatsApp',
+};
+
+const REPORT_CONFIDENCE_LABELS: Record<string, string> = {
+    high: 'Alta',
+    medium: 'Media',
+    low: 'Baja',
+    none: 'No determinada',
+};
+
+const REPORT_SCOPE_LABELS: Record<string, string> = {
+    system: 'Sistema',
+    network: 'Red',
+    call: 'Llamada',
+    contact: 'Contacto',
+    report: 'Informe',
+};
+
+const REPORT_ACTION_LABELS: Record<string, string> = {
+    backend_operational: 'Backend operativo',
+    operator_login: 'Inicio de sesión del operador',
+    operator_logout: 'Cierre de sesión del operador',
+    operator_credentials_changed: 'Credenciales del operador actualizadas',
+    case_created: 'Caso creado',
+    case_updated: 'Caso actualizado',
+    case_closed: 'Caso cerrado',
+    checkin_link_created: 'Enlace de verificación creado',
+    checkin_updated: 'Verificación actualizada',
+    checkin_completed: 'Verificación completada',
+    checkin_revoked: 'Verificación revocada',
+    checkin_deleted: 'Verificación eliminada',
+    contact_tracking_start: 'Actividad del contacto iniciada',
+    contact_tracking_reactivated: 'Actividad del contacto reactivada',
+    contact_tracking_restored: 'Actividad del contacto restaurada',
+    contact_tracking_stop: 'Actividad del contacto finalizada',
+    capture_start: 'Captura de red iniciada',
+    capture_stop: 'Captura de red finalizada',
+    call_capture_start: 'Captura de llamada iniciada',
+    call_capture_stop: 'Captura de llamada finalizada',
+    audit_export_requested: 'Exportación de auditoría solicitada',
+    audit_export: 'Auditoría exportada',
+    evidence_package_export_requested: 'Paquete de evidencia solicitado',
+    evidence_package_export: 'Paquete de evidencia exportado',
+    evidence_package_zip_export_requested: 'ZIP de evidencia solicitado',
+    evidence_package_zip_export: 'ZIP de evidencia exportado',
+    final_report_json_export_requested: 'Informe JSON solicitado',
+    final_report_json_export: 'Informe JSON exportado',
+    final_report_html_export_requested: 'Informe HTML solicitado',
+    final_report_html_export: 'Informe HTML exportado',
+    final_report_pdf_export_requested: 'Informe PDF solicitado',
+    final_report_pdf_export: 'Informe PDF exportado',
+};
+
+const REPORT_NETWORK_CATEGORY_LABELS: Record<string, string> = {
+    meta: 'Infraestructura de Meta',
+    stun_turn: 'Relay o servicio STUN/TURN',
+    cdn: 'Red de distribución de contenido',
+    cloud_hosting: 'Infraestructura de nube',
+    cloud_or_cdn: 'Infraestructura de nube o CDN',
+    consumer_isp_or_unknown: 'Red de acceso o proveedor no confirmado',
+    unknown_public: 'Red pública no clasificada',
+    unknown: 'No clasificada',
+};
+
+const REPORT_DIRECTION_LABELS: Record<string, string> = {
+    incoming: 'Entrante',
+    outgoing: 'Saliente',
+    bidirectional: 'Bidireccional',
+    unknown: 'No determinada',
+};
+
+const REPORT_RELIABILITY_LABELS: Record<string, string> = {
+    strong: 'Fuerte',
+    usable: 'Utilizable',
+    initial: 'Inicial',
+    weak: 'Insuficiente',
+};
+
+const REPORT_LIMITATION_LABELS: Record<string, string> = {
+    'Traffic analysis is based on observed metadata only.': 'El análisis de tráfico se basa únicamente en metadatos observados.',
+    'Candidate IPs do not prove identity, exact location, or ownership by a person.': 'Las IP candidatas no prueban identidad, ubicación exacta ni titularidad de una persona.',
+    'WhatsApp/WebRTC traffic may use relays, NAT, VPNs, CGNAT, or provider infrastructure.': 'El tráfico de WhatsApp/WebRTC puede utilizar relays, NAT, VPN, CGNAT o infraestructura del proveedor.',
+};
+
+function reportLabel(value: unknown, labels: Record<string, string>): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return 'No disponible';
+    return labels[normalized] || normalized;
+}
+
+function reportObservedLabel(value: unknown): string {
+    return String(value ?? 'No disponible')
+        .replace(/\(text\)/gi, '(texto)')
+        .replace(/\(image\)/gi, '(imagen)')
+        .replace(/\(document\)/gi, '(documento)');
+}
+
 function getCandidateScore(candidate: any): number {
     if (typeof candidate?.confidenceScore === 'number') {
         return Math.max(0, Math.min(100, Math.round(candidate.confidenceScore)));
@@ -379,9 +491,9 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
             <tr>
                 <td><code>${escapeHtml(candidate.ip)}</code></td>
                 <td><span class="score ${candidate.score >= 75 ? 'strong' : candidate.score >= 45 ? 'medium' : 'low'}">${candidate.score}/100</span></td>
-                <td>${escapeHtml(candidate.networkCategory)}</td>
+                <td>${escapeHtml(reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS))}</td>
                 <td>${escapeHtml(candidate.networkIntelligence?.asn ? `AS${candidate.networkIntelligence.asn}` : '-')}<br><span class="muted">${escapeHtml(candidate.networkIntelligence?.org || '-')}</span></td>
-                <td>${escapeHtml(candidate.direction)}</td>
+                <td>${escapeHtml(reportLabel(candidate.direction, REPORT_DIRECTION_LABELS))}</td>
                 <td>${escapeHtml(candidate.packets)}</td>
                 <td>${escapeHtml(candidate.geo?.country || '-')} / ${escapeHtml(candidate.geo?.city || candidate.geo?.region || '-')}</td>
                 <td>${escapeHtml(candidate.technicalNote)}</td>
@@ -394,8 +506,8 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
             <tr>
                 <td><code>${escapeHtml(candidate.ip)}</code></td>
                 <td><span class="score low">${candidate.score}/100</span></td>
-                <td>${escapeHtml(candidate.networkCategory)}</td>
-                <td>${escapeHtml(candidate.direction)}</td>
+                <td>${escapeHtml(reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS))}</td>
+                <td>${escapeHtml(reportLabel(candidate.direction, REPORT_DIRECTION_LABELS))}</td>
                 <td>${escapeHtml(candidate.packets)}</td>
                 <td>${escapeHtml(candidate.technicalNote)}</td>
             </tr>
@@ -414,7 +526,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
                 <td>${(item.last7d?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last7d.onlinePct)}% <span class="muted">(${escapeHtml(formatStatsChange(item.last7d.changeOnlinePct))})</span>` : '—'}</td>
                 <td>${(item.last30d?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last30d.onlinePct)}%` : '—'}</td>
                 <td>${escapeHtml(item.coverageActiveDays14)}/14</td>
-                <td><span class="score ${item.reliability?.label === 'strong' ? 'strong' : item.reliability?.label === 'usable' ? 'medium' : 'low'}">${escapeHtml(item.reliability?.score ?? 0)}/100</span><br><span class="muted">${escapeHtml(item.reliability?.label || 'initial')}</span></td>
+                <td><span class="score ${item.reliability?.label === 'strong' ? 'strong' : item.reliability?.label === 'usable' ? 'medium' : 'low'}">${escapeHtml(item.reliability?.score ?? 0)}/100</span><br><span class="muted">${escapeHtml(reportLabel(item.reliability?.label || 'initial', REPORT_RELIABILITY_LABELS))}</span></td>
             </tr>
         `).join('')
         : '<tr><td colspan="10" class="muted">No se registraron estadisticas de actividad para contactos vinculados.</td></tr>';
@@ -424,9 +536,9 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
             <tr>
                 <td>${escapeHtml(formatReportDate(item.timestampUtc))}</td>
                 <td><code>${escapeHtml(item.targetJid)}</code></td>
-                <td>${escapeHtml(item.source)}</td>
-                <td>${escapeHtml(item.label)}</td>
-                <td>${escapeHtml(item.confidence)}</td>
+                <td>${escapeHtml(reportLabel(item.source, REPORT_SOURCE_LABELS))}</td>
+                <td>${escapeHtml(reportObservedLabel(item.label))}</td>
+                <td>${escapeHtml(reportLabel(item.confidence, REPORT_CONFIDENCE_LABELS))}</td>
             </tr>
         `).join('')
         : '<tr><td colspan="5" class="muted">No se registraron señales observables atribuibles al caso.</td></tr>';
@@ -435,8 +547,8 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         ? timelineRows.map(item => `
             <tr>
                 <td>${escapeHtml(formatReportDate(item.timestampUtc))}</td>
-                <td>${escapeHtml(item.scope)}</td>
-                <td>${escapeHtml(item.action)}</td>
+                <td>${escapeHtml(reportLabel(item.scope, REPORT_SCOPE_LABELS))}</td>
+                <td>${escapeHtml(reportLabel(item.action, REPORT_ACTION_LABELS))}</td>
                 <td>${escapeHtml(item.operatorName)}</td>
                 <td><code>${escapeHtml(item.targetJid || '-')}</code></td>
             </tr>
@@ -444,7 +556,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         : '<tr><td colspan="5" class="muted">No hay eventos de auditoria disponibles.</td></tr>';
 
     const limitationHtml = report.findings.limitations
-        .map(item => `<li>${escapeHtml(item)}</li>`)
+        .map(item => `<li>${escapeHtml(reportLabel(item, REPORT_LIMITATION_LABELS))}</li>`)
         .join('');
 
     return `<!doctype html>
@@ -616,12 +728,12 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
       <p class="brand">WP MONITOR</p>
       <h1>Informe Final de Caso</h1>
       <p class="subtitle">${escapeHtml(report.summary.title)} · ${escapeHtml(report.summary.caseId)}</p>
-      <span class="classification">Documento de auditoria autorizada</span>
+      <span class="classification">Documento de auditoría autorizada</span>
     </div>
     <div class="meta">
       <p>Generado: ${escapeHtml(formatReportDate(report.summary.generatedAt))}</p>
-      <p>Estado: ${escapeHtml(report.summary.status)}</p>
-      <p>Version: ${escapeHtml(report.version)}</p>
+      <p>Estado: ${escapeHtml(reportLabel(report.summary.status, REPORT_STATUS_LABELS))}</p>
+      <p>Versión: ${escapeHtml(report.version)}</p>
     </div>
   </header>
 
@@ -629,14 +741,14 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
   <div class="grid">
     <div class="metric"><strong>${escapeHtml(report.summary.auditEventCount)}</strong><span>Eventos de auditoria</span></div>
     <div class="metric"><strong>${escapeHtml(report.summary.evidenceLinkCount)}</strong><span>Evidencias vinculadas</span></div>
-    <div class="metric"><strong>${escapeHtml(report.summary.callAnalysisCount)}</strong><span>Analisis de llamada</span></div>
-    <div class="metric"><strong><span class="score ${scoreTone}">${escapeHtml(report.summary.highestCandidateScore)}/100</span></strong><span>Mayor score candidato</span></div>
+    <div class="metric"><strong>${escapeHtml(report.summary.callAnalysisCount)}</strong><span>Análisis de llamada</span></div>
+    <div class="metric"><strong><span class="score ${scoreTone}">${escapeHtml(report.summary.highestCandidateScore)}/100</span></strong><span>Mayor puntaje candidato</span></div>
     <div class="metric"><strong>${escapeHtml(report.summary.observedActivityEventCount)}</strong><span>Señales observadas</span></div>
   </div>
 
   <section class="panel">
     <h2>Resumen Ejecutivo</h2>
-    <p>Este informe consolida actividad autorizada, auditoria, enlaces de evidencia, analisis de llamadas y resumen de capturas para el caso <strong>${escapeHtml(report.summary.caseId)}</strong>.</p>
+    <p>Este informe consolida actividad autorizada, auditoría, enlaces de evidencia, análisis de llamadas y resumen de capturas para el caso <strong>${escapeHtml(report.summary.caseId)}</strong>.</p>
     <p class="muted">Operador principal: ${escapeHtml(report.summary.primaryOperator)} · Objetivos vinculados: ${escapeHtml(report.summary.targetCount)} · Capturas de red completadas: ${escapeHtml(report.summary.networkCaptureCount)}</p>
   </section>
 
@@ -654,7 +766,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>UTC</th><th>Target</th><th>Fuente</th><th>Evento</th><th>Confianza</th></tr></thead>
+        <thead><tr><th>UTC</th><th>Contacto</th><th>Fuente</th><th>Evento</th><th>Confianza</th></tr></thead>
         <tbody>${observedSignalRows}</tbody>
       </table>
     </div>
@@ -667,7 +779,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Target</th><th>Señales 30d / días</th><th>M / C / P / L (30d)</th><th>RTT concl. / intentos</th><th>Online RTT</th><th>Online / concl. 24h</th><th>Online / concl. 7d</th><th>Online / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
+        <thead><tr><th>Contacto</th><th>Señales 30d / días</th><th>Mens. / conf. / pres. / llam. (30d)</th><th>RTT concl. / intentos</th><th>En línea RTT</th><th>En línea / concl. 24h</th><th>En línea / concl. 7d</th><th>En línea / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
         <tbody>${activityRows}</tbody>
       </table>
     </div>
@@ -680,7 +792,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>IP</th><th>Score</th><th>Categoria</th><th>ASN/ORG</th><th>Direccion</th><th>Paquetes</th><th>Geo</th><th>Nota tecnica</th></tr></thead>
+        <thead><tr><th>IP</th><th>Puntaje</th><th>Categoría</th><th>ASN/ORG</th><th>Dirección</th><th>Paquetes</th><th>Geografía</th><th>Nota técnica</th></tr></thead>
         <tbody>${candidateRows}</tbody>
       </table>
     </div>
@@ -693,17 +805,17 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>IP</th><th>Score</th><th>Categoria</th><th>Direccion</th><th>Paquetes</th><th>Nota tecnica</th></tr></thead>
+        <thead><tr><th>IP</th><th>Puntaje</th><th>Categoría</th><th>Dirección</th><th>Paquetes</th><th>Nota técnica</th></tr></thead>
         <tbody>${nonConclusiveRows}</tbody>
       </table>
     </div>
   </section>
 
   <section>
-    <h2>Timeline de Auditoria</h2>
+    <h2>Cronología de Auditoría</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>UTC</th><th>Scope</th><th>Accion</th><th>Operador</th><th>Target</th></tr></thead>
+        <thead><tr><th>UTC</th><th>Ámbito</th><th>Acción</th><th>Operador</th><th>Contacto</th></tr></thead>
         <tbody>${timelineHtml}</tbody>
       </table>
     </div>
@@ -786,9 +898,10 @@ class PdfReportCanvas {
         this.pageNumber += 1;
         this.content = '';
         this.y = this.height - this.margin;
-        this.text(this.margin, this.height - 28, 'WP MONITOR - Final Case Report', 8, 'F2', '475569');
-        this.text(this.width - this.margin - 55, this.height - 28, `Page ${this.pageNumber}`, 8, 'F1', '64748B');
+        this.text(this.margin, this.height - 28, 'WP MONITOR - Informe final del caso', 8, 'F2', '475569');
+        this.text(this.width - this.margin - 55, this.height - 28, `Pagina ${this.pageNumber}`, 8, 'F1', '64748B');
         this.line(this.margin, this.height - 36, this.width - this.margin, this.height - 36, 'CBD5E1');
+        this.y = this.height - this.margin - 18;
     }
 
     finish(): Buffer {
@@ -891,14 +1004,14 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     pdf.rect(pdf.margin, pdf.y - 82, usable, 78, '0F766E', '0F766E');
     pdf.text(pdf.margin + 18, pdf.y - 30, 'INFORME FINAL DE CASO', 22, 'F2', 'FFFFFF');
     pdf.text(pdf.margin + 18, pdf.y - 52, `${report.summary.caseId} - ${report.summary.title}`, 10, 'F1', 'DDFCF4');
-    pdf.text(pdf.margin + 18, pdf.y - 68, `Generado: ${formatReportDate(report.summary.generatedAt)} - Estado: ${report.summary.status}`, 8, 'F1', 'CCFBF1');
+    pdf.text(pdf.margin + 18, pdf.y - 68, `Generado: ${formatReportDate(report.summary.generatedAt)} - Estado: ${reportLabel(report.summary.status, REPORT_STATUS_LABELS)}`, 8, 'F1', 'CCFBF1');
     pdf.y -= 112;
 
     const metrics = [
         ['Eventos', report.summary.auditEventCount],
         ['Evidencias', report.summary.evidenceLinkCount],
         ['Analisis llamada', report.summary.callAnalysisCount],
-        ['Score maximo', `${report.summary.highestCandidateScore}/100`],
+        ['Puntaje maximo', `${report.summary.highestCandidateScore}/100`],
     ];
     metrics.forEach(([label, value], index) => {
         const x = pdf.margin + index * (metricWidth + 8);
@@ -928,9 +1041,9 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
             pdf.ensure(20);
             pdf.text(pdf.margin, pdf.y, formatReportDate(item.timestampUtc), 7, 'F3', '64748B');
             pdf.text(pdf.margin + 150, pdf.y, item.targetJid, 7, 'F3', '334155');
-            pdf.text(pdf.margin + 315, pdf.y, item.source, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 370, pdf.y, item.label, 7, 'F1', '172033');
-            pdf.text(pdf.margin + 500, pdf.y, item.confidence, 7, 'F2', item.confidence === 'high' ? '166534' : '92400E');
+            pdf.text(pdf.margin + 315, pdf.y, reportLabel(item.source, REPORT_SOURCE_LABELS), 7, 'F1', '334155');
+            pdf.text(pdf.margin + 370, pdf.y, reportObservedLabel(item.label), 7, 'F1', '172033');
+            pdf.text(pdf.margin + 500, pdf.y, reportLabel(item.confidence, REPORT_CONFIDENCE_LABELS), 7, 'F2', item.confidence === 'high' ? '166534' : '92400E');
             pdf.y -= 14;
         }
     }
@@ -942,10 +1055,10 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
         pdf.paragraph('No se registraron estadisticas de actividad para contactos vinculados.');
     } else {
         pdf.ensure(28);
-        pdf.text(pdf.margin, pdf.y, 'Target', 8, 'F2', '64748B');
+        pdf.text(pdf.margin, pdf.y, 'Contacto', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 145, pdf.y, 'Senales', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 195, pdf.y, 'Concl./int.', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 255, pdf.y, 'Online RTT', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 255, pdf.y, 'En linea RTT', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 315, pdf.y, '24h', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 360, pdf.y, '7d', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 405, pdf.y, '30d', 8, 'F2', '64748B');
@@ -976,9 +1089,10 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     pdf.y -= 54;
 
     const candidates = report.findings.candidateIps.slice(0, 12);
-    pdf.ensure(34);
+    // Keep the header with the first row so a page break never leaves an orphan table heading.
+    pdf.ensure(candidates.length === 0 ? 34 : 74);
     pdf.text(pdf.margin, pdf.y, 'IP', 8, 'F2', '64748B');
-    pdf.text(pdf.margin + 95, pdf.y, 'Score', 8, 'F2', '64748B');
+    pdf.text(pdf.margin + 95, pdf.y, 'Puntaje', 8, 'F2', '64748B');
     pdf.text(pdf.margin + 145, pdf.y, 'Categoria', 8, 'F2', '64748B');
     pdf.text(pdf.margin + 250, pdf.y, 'Paquetes', 8, 'F2', '64748B');
     pdf.text(pdf.margin + 310, pdf.y, 'Geo / nota tecnica', 8, 'F2', '64748B');
@@ -993,16 +1107,20 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
             const geo = `${candidate.geo?.country || '-'} / ${candidate.geo?.city || candidate.geo?.region || '-'}`;
             const note = `${geo}. ${candidate.technicalNote}`;
             const noteLines = wrapPdfText(note, 45).slice(0, 3);
+            const categoryLines = wrapPdfText(
+                reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS),
+                27,
+            ).slice(0, 2);
             const org = candidate.networkIntelligence?.asn
                 ? `AS${candidate.networkIntelligence.asn} ${candidate.networkIntelligence.org}`
                 : candidate.networkIntelligence?.org || '-';
-            const rowHeight = Math.max(36, noteLines.length * 11 + 12);
+            const rowHeight = Math.max(40, noteLines.length * 11 + 12, categoryLines.length * 9 + 20);
             pdf.ensure(rowHeight + 8);
             pdf.rect(pdf.margin, pdf.y - rowHeight + 8, usable, rowHeight, 'FFFFFF', 'E2E8F0');
             pdf.text(pdf.margin + 8, pdf.y - 8, candidate.ip, 8, 'F3', '172033');
             pdf.text(pdf.margin + 98, pdf.y - 8, `${candidate.score}/100`, 9, 'F2', candidate.score >= 75 ? '166534' : candidate.score >= 45 ? '92400E' : '475569');
-            pdf.text(pdf.margin + 145, pdf.y - 8, candidate.networkCategory, 8, 'F1', '334155');
-            pdf.text(pdf.margin + 145, pdf.y - 19, org.slice(0, 22), 6, 'F1', '64748B');
+            categoryLines.forEach((line, idx) => pdf.text(pdf.margin + 145, pdf.y - 8 - idx * 9, line, 7, 'F1', '334155'));
+            pdf.text(pdf.margin + 145, pdf.y - 11 - categoryLines.length * 9, org.slice(0, 22), 6, 'F1', '64748B');
             pdf.text(pdf.margin + 255, pdf.y - 8, String(candidate.packets), 8, 'F1', '334155');
             noteLines.forEach((line, idx) => pdf.text(pdf.margin + 310, pdf.y - 8 - idx * 11, line, 7, 'F1', '475569'));
             pdf.y -= rowHeight + 6;
@@ -1016,30 +1134,30 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
         pdf.paragraph('No se registraron observaciones no concluyentes separadas.');
     } else {
         for (const candidate of nonConclusive) {
-            const note = `${candidate.networkCategory || 'unknown'} · ${candidate.direction || 'unknown'} · ${candidate.technicalNote || ''}`;
+            const note = `${reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS)} · ${reportLabel(candidate.direction, REPORT_DIRECTION_LABELS)} · ${candidate.technicalNote || ''}`;
             const noteLines = wrapPdfText(note, 64).slice(0, 2);
             const rowHeight = Math.max(28, noteLines.length * 10 + 10);
             pdf.ensure(rowHeight + 8);
             pdf.rect(pdf.margin, pdf.y - rowHeight + 8, usable, rowHeight, 'FFFFFF', 'E2E8F0');
             pdf.text(pdf.margin + 8, pdf.y - 8, candidate.ip, 8, 'F3', '172033');
             pdf.text(pdf.margin + 98, pdf.y - 8, `${candidate.score}/100`, 8, 'F2', '475569');
-            pdf.text(pdf.margin + 150, pdf.y - 8, `${candidate.packets} pkts`, 8, 'F1', '334155');
+            pdf.text(pdf.margin + 150, pdf.y - 8, `${candidate.packets} paquetes`, 8, 'F1', '334155');
             noteLines.forEach((line, idx) => pdf.text(pdf.margin + 215, pdf.y - 8 - idx * 10, line, 7, 'F1', '475569'));
             pdf.y -= rowHeight + 6;
         }
     }
 
-    pdf.heading('Timeline de auditoria');
+    pdf.heading('Cronologia de auditoria');
     const timeline = report.timeline.slice(-70);
     const drawTimelineHeader = (continued = false) => {
         if (continued) {
-            pdf.text(pdf.margin, pdf.y, 'Timeline de auditoria (continuacion)', 9, 'F2', '0F766E');
+            pdf.text(pdf.margin, pdf.y, 'Cronologia de auditoria (continuacion)', 9, 'F2', '0F766E');
             pdf.y -= 16;
         }
         pdf.text(pdf.margin, pdf.y, 'UTC', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 125, pdf.y, 'Scope', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 125, pdf.y, 'Ambito', 8, 'F2', '64748B');
         pdf.text(pdf.margin + 190, pdf.y, 'Accion', 8, 'F2', '64748B');
-        pdf.text(pdf.margin + 330, pdf.y, 'Operador / target', 8, 'F2', '64748B');
+        pdf.text(pdf.margin + 330, pdf.y, 'Operador / contacto', 8, 'F2', '64748B');
         pdf.y -= 10;
         pdf.line(pdf.margin, pdf.y, pdf.width - pdf.margin, pdf.y, 'CBD5E1');
         pdf.y -= 14;
@@ -1054,8 +1172,8 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
                 drawTimelineHeader(true);
             }
             pdf.text(pdf.margin, pdf.y, formatReportDate(item.timestampUtc), 7, 'F3', '334155');
-            pdf.text(pdf.margin + 125, pdf.y, item.scope, 7, 'F1', '334155');
-            pdf.text(pdf.margin + 190, pdf.y, item.action, 7, 'F1', '172033');
+            pdf.text(pdf.margin + 125, pdf.y, reportLabel(item.scope, REPORT_SCOPE_LABELS), 7, 'F1', '334155');
+            pdf.text(pdf.margin + 190, pdf.y, reportLabel(item.action, REPORT_ACTION_LABELS), 7, 'F1', '172033');
             pdf.text(pdf.margin + 330, pdf.y, `${item.operatorName} / ${item.targetJid || '-'}`, 7, 'F1', '475569');
             pdf.y -= 16;
         }
@@ -1069,7 +1187,7 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
 
     pdf.heading('Limitaciones tecnicas');
     for (const item of report.findings.limitations) {
-        pdf.paragraph(`- ${item}`, 90, 8, '334155');
+        pdf.paragraph(`- ${reportLabel(item, REPORT_LIMITATION_LABELS)}`, 90, 8, '334155');
     }
 
     return pdf.finish();

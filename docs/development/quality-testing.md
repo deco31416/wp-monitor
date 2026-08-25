@@ -6,6 +6,9 @@ Matriz inspirada en ISO/IEC 25010. No representa certificacion.
 
 ```powershell
 pnpm run qa
+pnpm run docs:check
+pnpm run containers:check
+pnpm run licenses:check
 pnpm audit
 pnpm audit --prod
 pnpm run qa:report-fixture
@@ -98,6 +101,8 @@ Revisa navegacion colapsada, textos largos, tablas, scroll, botones, tooltips y 
 - todas las suites PASS;
 - builds PASS;
 - fixture de reportes PASS y revisado visualmente;
+- etiquetas comerciales HTML/PDF localizadas sin alterar contratos JSON/CSV;
+- CI del commit exacto PASS, incluidos Docker y licencias;
 - smoke local PASS;
 - smoke Railway PASS si aplica;
 - restauracion staging PASS;

@@ -257,13 +257,33 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.match(html, /Mensaje entregado/);
     assert.match(html, /Actividad y Medición Técnica/);
     assert.match(html, /720 \/ 1200/);
-    assert.match(html, /Online \/ concl\. 24h/);
+    assert.match(html, /En línea \/ concl\. 24h/);
     assert.match(html, /85\/100/);
     assert.match(html, /No prueban identidad/);
     assert.match(html, /Observaciones No Concluyentes/);
+    assert.match(html, /Estado: Autorizado/);
+    assert.match(html, /Red de acceso o proveedor no confirmado/);
+    assert.match(html, /Bidireccional/);
+    assert.match(html, /Confirmación/);
+    assert.match(html, /Alta/);
+    assert.match(html, /Captura de llamada finalizada/);
+    assert.match(html, /Fuerte/);
+    assert.doesNotMatch(html, />authorized</);
+    assert.doesNotMatch(html, />consumer_isp_or_unknown</);
+    assert.doesNotMatch(html, />Scope</);
+    assert.doesNotMatch(html, />Target</);
 
     const pdf = renderFinalCaseReportPdf(report);
     assert.equal(pdf.subarray(0, 5).toString('ascii'), '%PDF-');
+    const pdfText = pdf.toString('ascii');
+    assert.match(pdfText, /Estado: Autorizado/);
+    assert.match(pdfText, /Puntaje maximo/);
+    assert.match(pdfText, /Captura de llamada finalizada/);
+    assert.match(pdfText, /\(Red de acceso o proveedor\) Tj/);
+    assert.match(pdfText, /\(no confirmado\) Tj/);
+    assert.doesNotMatch(pdfText, /\(Red de acceso o proveedor no confirmado\) Tj/);
+    assert.doesNotMatch(pdfText, /consumer_isp_or_unknown/);
+    assert.doesNotMatch(pdfText, /Timeline de auditoria/);
 });
 
 test('declares when passive activity is truncated instead of presenting a partial export as complete', () => {

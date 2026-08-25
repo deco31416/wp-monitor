@@ -18,13 +18,24 @@ Publicar una version reproducible con codigo, contratos, documentacion y evidenc
 ```powershell
 pnpm install --frozen-lockfile
 pnpm run qa
+pnpm run docs:check
+pnpm run containers:check
+pnpm run licenses:check
 pnpm audit --prod
 pnpm audit
 pnpm run qa:report-fixture
 git diff --check
 ```
 
-Ademas valida enlaces Markdown, sintaxis/renderizado Mermaid, exclusiones Git/Docker, smoke local, QA responsive, Docker y Railway staging cuando el alcance los afecte.
+Ademas valida exclusiones Git/Docker, smoke local, QA responsive, Docker y el entorno objetivo cuando el alcance los afecte. CI debe pasar sobre el commit exacto; un resultado local no sustituye esa puerta.
+
+## Licencias y cadena de suministro
+
+- revisa [avisos de terceros](../../THIRD_PARTY_NOTICES.md) y conserva sus textos dentro de los artefactos;
+- `licenses:check` debe fallar ante copyleft desconocido o cambio de versión revisada;
+- las imágenes base deben usar tag legible y digest inmutable;
+- toda actualización propuesta por Dependabot se prueba como cambio normal, nunca se fusiona automáticamente;
+- una entrega self-hosted incluye commit, lockfile, parches, fuentes de construcción y acceso al código correspondiente requerido.
 
 ## Compatibilidad Baileys
 

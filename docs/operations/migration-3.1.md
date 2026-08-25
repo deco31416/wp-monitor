@@ -37,7 +37,7 @@ En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokplo
 
 ## Despliegue
 
-1. ejecuta `pnpm install --frozen-lockfile`, `pnpm run qa` y `pnpm audit --audit-level=low` en staging/build;
+1. ejecuta `pnpm install --frozen-lockfile`, `pnpm run qa`, `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run licenses:check` y ambos audits en staging/build;
 2. construye backend, frontend, `wa-browser` y `capture-agent`;
 3. inicia browser/agente y valida health, UID/capabilities, audio y loopback;
 4. inicia backend/cliente conectados a MongoDB/Redis existentes;
@@ -56,6 +56,8 @@ En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokplo
 - captura sintetica no cero y llamada real produce resultado o `relay/insufficient_data` honesto;
 - backup cifrado verificable y restore MongoDB staging aprobado;
 - ningun secreto en Git, bundle, logs o reportes.
+- CI verde en el commit exacto, reportes HTML/PDF localizados y avisos de terceros presentes.
+- imágenes construidas desde las referencias tag/digest registradas.
 
 ## Rollback
 

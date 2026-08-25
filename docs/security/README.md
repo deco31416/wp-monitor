@@ -2,6 +2,8 @@
 
 Este documento describe controles implementados y responsabilidades operativas. No sustituye asesoria legal ni afirma certificacion ISO.
 
+La licencia MIT cubre el código propio, no sustituye las licencias de dependencias. Revisa [avisos de terceros y política de distribución](../../THIRD_PARTY_NOTICES.md) antes de entregar imágenes, binarios o instalaciones self-hosted.
+
 ## Activos protegidos
 
 | Activo | Riesgo principal | Control minimo |
@@ -124,6 +126,8 @@ Contacta al mantenedor por un canal privado indicado por el repositorio. Incluye
 - [ ] Retencion y borrado aprobados.
 - [ ] Aviso de privacidad y autorizacion revisados.
 - [ ] Logs y reportes sin secretos.
+- [ ] `licenses:check` PASS y avisos de terceros incluidos en el artefacto.
+- [ ] Referencias tag/digest de imágenes revisadas y CI del commit exacto en verde.
 
 ## Documentos relacionados
 

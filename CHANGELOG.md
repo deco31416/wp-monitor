@@ -40,6 +40,8 @@ Maintainer guidance:
 - Added encrypted Docker backup, checksum/authentication verification, staging-only MongoDB restoration, and hardened systemd service/timer templates.
 - Added a Dokploy production override that reuses the audited private MongoDB/Redis network, suppresses the bundled Redis service and removes direct backend/client host publications.
 - Added regression tests for backup atomicity/tampering and capture-agent authentication, validation, failure handling and client contracts.
+- Added pinned GitHub Actions CI for QA, audits, documentation, license drift, report fixtures, Compose contracts and four-unit Docker builds.
+- Added an audited third-party notice/distribution policy plus automated review gates for the exact GPL/LGPL production dependencies.
 
 ### Changed
 
@@ -48,6 +50,8 @@ Maintainer guidance:
 - Runtime capture status now distinguishes local privileges, an operational/unavailable call sidecar and a deliberately disabled mode; the dashboard refreshes that state every 30 seconds without discarding the last known result on a transient failure.
 - Separated general host Network Monitor privileges from isolated browser call capture; the backend no longer needs packet-capture capabilities for the sidecar flow.
 - Backups now pause application writers, encrypt every data stream before writing its final filename, include the browser profile, and remove incomplete timestamp directories after producer/encryption failure.
+- Final HTML/PDF reports now localize presentation labels while preserving raw JSON/CSV evidence contracts.
+- Docker base images and Redis now use immutable multi-architecture digests; Dependabot targets `develop` for reviewed update proposals.
 
 ### Fixed
 
@@ -58,17 +62,22 @@ Maintainer guidance:
 - Prevented the default Docker environment from inheriting native host-capture mode, and replaced the invalid `localhost` host-gateway alias with `host.docker.internal` for explicitly configured host MongoDB access.
 - Restored first-start Redis AOF volume ownership under `cap_drop: ALL` by granting only the bootstrap capabilities consumed and discarded by the official entrypoint before its non-root PID starts.
 - Exempted the exact `/api/health/live` path from operator-session middleware so container liveness can work without making adjacent API paths public.
+- Prevented localized IP categories from overlapping adjacent PDF columns and kept report table headers with their first row across page breaks.
 
 ### Security
 
 - noVNC is published only on `127.0.0.1`; production access requires an SSH tunnel and the port must not be routed through the public application proxy.
 - The capture-agent control port is not published, and every non-health route requires an HMAC signature tied to method, path, timestamp, nonce and body hash.
 - Browser and capture-agent secrets, Chromium profiles, Baileys sessions, captures, reports, uploads and backups remain excluded from Git/Docker build context.
+- All four application images now carry the project license and third-party notices; backend/capture-agent images also retain dependency licenses, and commercial distribution claims distinguish MIT-owned code from transitive obligations.
 
 ### Verification
 
 - `pnpm run qa`: 158 backend tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
-- `pnpm audit --audit-level=low`: no known dependency vulnerabilities found on 2026-08-24.
+- `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-08-25.
+- `pnpm run docs:check`, `pnpm run containers:check` and `pnpm run licenses:check`: 65 Markdown files, 138 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts and 218 production packages passed their release gates.
+- Report fixture: JSON/HTML/PDF/ZIP generation and ZIP integrity passed; the localized two-page A4 PDF was visually reviewed without clipping, overlap or orphan table headers.
+- Docker build gate: backend, client, capture agent and WhatsApp browser images built from immutable base digests; backend/agent artifacts retained project and reviewed dependency license files.
 - Docker E3 smoke: Chromium, virtual audio, loopback noVNC and capture agent became healthy; PID 1 ran non-root with the intended capability set; a signed synthetic capture observed 10/10 UDP packets and produced a classified result.
 - Full-stack Docker E3 smoke: backend, client, Redis, MongoDB, Chromium and capture agent were healthy; public liveness/capabilities, login/session/logout, same-stack dependencies and loopback bindings passed without touching the native QA instance.
 - Dokploy-override E3 smoke: the four application services were healthy against temporary MongoDB/Redis services on an external network; runtime reported `server-full`, backend/client had no host publications, agent readiness passed, and secure-cookie login/session/logout/revocation returned `200/200/204/401`.

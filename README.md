@@ -8,6 +8,9 @@
   <a href="CHANGELOG.md">
     <img src="https://img.shields.io/badge/version-3.1.0--candidate-F59E0B?style=flat-square" alt="Version 3.1.0 candidate" />
   </a>
+  <a href="https://github.com/deco31416/wp-monitor/actions/workflows/ci.yml">
+    <img src="https://github.com/deco31416/wp-monitor/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI develop" />
+  </a>
   <img src="https://img.shields.io/badge/Node.js-24.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24.19" />
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.7+" />
   <img src="https://img.shields.io/badge/Express-5-000000?style=flat-square&logo=express&logoColor=white" alt="Express 5" />
@@ -350,9 +353,9 @@ Candidate scoring is deliberately limited by sample size, directionality, infras
 
 ### Dependency audit status
 
-The repository uses one root pnpm lockfile, a Vite/Vitest frontend toolchain, allowlisted native build scripts, and a local patch for `cap` compatibility on Node.js 24. The documented final audit runs both full and production-only dependency scans from the workspace root.
+The repository uses one root pnpm lockfile, a Vite/Vitest frontend toolchain, allowlisted native build scripts, and a local patch for `cap` compatibility on Node.js 24. CI runs the full QA suite, production/full dependency audits, documentation checks, report fixtures, Compose contracts, Docker builds and a production-license drift gate.
 
-Baileys remains an unofficial upstream integration. Dependency upgrades must be tested with QR authentication, contact restoration, call-event handling, reports, dashboard mode, and local packet-capture smoke tests before promotion. Commercial or closed-source distribution must also review the licenses of transitive Baileys/libsignal components.
+Baileys remains an unofficial upstream integration. Dependency upgrades must be tested with QR authentication, contact restoration, call-event handling, reports, dashboard mode, and local packet-capture smoke tests before promotion. The reviewed production tree includes GPL/LGPL components through Baileys/Sharp; distribution rules and exact versions are recorded in [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 ---
 
@@ -1042,6 +1045,6 @@ Professional support, authorized integrations, deployment assistance, architectu
 
 Copyright (c) 2025-2026 deco31416 and WP MONITOR contributors.
 
-Distributed under the [MIT License](LICENSE).
+WP MONITOR's own source code is distributed under the [MIT License](LICENSE).
 
-Use, modification, redistribution, sublicensing, and commercial distribution are permitted under the terms of the license. Retain the copyright and permission notice in copies or substantial portions of the software.
+Use, modification, redistribution, sublicensing, and commercial use of that source are permitted under MIT. A complete build also contains third-party components under their own terms, including reviewed GPL/LGPL dependencies. Any self-hosted, container or binary distribution must additionally comply with [Third-Party Notices and the distribution policy](THIRD_PARTY_NOTICES.md); this repository does not promise a proprietary-only distribution right over third-party code.

@@ -1,6 +1,7 @@
 # Client Dockerfile
-ARG NODE_VERSION=24.19.0
-FROM node:${NODE_VERSION}-bookworm-slim AS build
+ARG NODE_IMAGE=node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+ARG NGINX_IMAGE=nginx:1.31.4-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
+FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
@@ -34,9 +35,10 @@ ENV VITE_API_URL=${VITE_API_URL}
 WORKDIR /app/client
 RUN pnpm run build
 
-FROM nginx:alpine
+FROM ${NGINX_IMAGE}
 
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/wp-monitor/
 
 COPY --from=build /app/client/build /usr/share/nginx/html
 

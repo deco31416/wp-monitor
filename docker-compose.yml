@@ -4,7 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - NODE_VERSION=${NODE_VERSION:-24.19.0}
         - PORT=${BACKEND_PORT:-4000}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -93,8 +92,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.capture-agent
-      args:
-        - NODE_VERSION=${NODE_VERSION:-24.19.0}
     environment:
       - CAPTURE_AGENT_BIND=0.0.0.0
       - CAPTURE_AGENT_PORT=4100
@@ -124,7 +121,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -162,7 +159,6 @@ services:
       context: .
       dockerfile: client/Dockerfile
       args:
-        - NODE_VERSION=${NODE_VERSION:-24.19.0}
         - PORT=${CLIENT_PORT:-4001}
         - VITE_API_URL=${BACKEND_URL:-http://localhost:4000}
     ports:

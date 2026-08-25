@@ -1,6 +1,6 @@
 # Backend Dockerfile
-ARG NODE_VERSION=24.19.0
-FROM node:${NODE_VERSION}-bookworm-slim AS build
+ARG NODE_IMAGE=node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ COPY public ./public
 
 RUN pnpm run build
 
-FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+FROM ${NODE_IMAGE} AS runtime
 
 WORKDIR /app
 
@@ -36,6 +36,7 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
 
 ARG PORT=4000
 ENV PORT=${PORT}
