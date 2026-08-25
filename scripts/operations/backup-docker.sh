@@ -15,6 +15,17 @@ Usage:
     --age-recipients /absolute/public-recipients-file \
     [--mongodump-config /path/inside/mongo/container.yml]
 
+Pre-3.1 migration, before browser/capture containers exist:
+  backup-docker.sh \
+    --pre-browser-migration \
+    --output /absolute/encrypted-backup-directory \
+    --mongo-container NAME \
+    --mongo-db NAME \
+    --backend-container NAME \
+    --redis-container NAME \
+    --age-recipients /absolute/public-recipients-file \
+    [--mongodump-config /path/inside/mongo/container.yml]
+
 The recipients file must contain age public recipients only. MongoDB credentials,
 when required, must be provided through a protected mongodump --config file that
 already exists inside the MongoDB container. Secrets are never accepted as CLI
@@ -50,6 +61,7 @@ capture_agent_container="${WP_CAPTURE_AGENT_CONTAINER:-}"
 redis_container="${WP_REDIS_CONTAINER:-}"
 age_recipients="${WP_AGE_RECIPIENTS_FILE:-}"
 mongodump_config="${WP_MONGODUMP_CONFIG_PATH:-}"
+pre_browser_migration=false
 
 while (($#)); do
     case "$1" in
@@ -98,6 +110,10 @@ while (($#)); do
             mongodump_config="$2"
             shift 2
             ;;
+        --pre-browser-migration)
+            pre_browser_migration=true
+            shift
+            ;;
         --help|-h)
             usage
             exit 0
@@ -112,10 +128,15 @@ done
 [[ -n "$mongo_container" ]] || die '--mongo-container is required'
 [[ -n "$mongo_db" ]] || die '--mongo-db is required'
 [[ -n "$backend_container" ]] || die '--backend-container is required'
-[[ -n "$browser_container" ]] || die '--browser-container is required'
-[[ -n "$capture_agent_container" ]] || die '--capture-agent-container is required'
 [[ -n "$redis_container" ]] || die '--redis-container is required'
 [[ -n "$age_recipients" ]] || die '--age-recipients is required'
+if [[ "$pre_browser_migration" == true ]]; then
+    [[ -z "$browser_container" ]] || die '--browser-container is incompatible with --pre-browser-migration'
+    [[ -z "$capture_agent_container" ]] || die '--capture-agent-container is incompatible with --pre-browser-migration'
+else
+    [[ -n "$browser_container" ]] || die '--browser-container is required'
+    [[ -n "$capture_agent_container" ]] || die '--capture-agent-container is required'
+fi
 
 [[ "$output_dir" == /* ]] || die '--output must be an absolute path'
 [[ "$output_dir" != / && "$output_dir" != "$HOME" ]] || die 'refusing broad backup output path'
@@ -128,16 +149,22 @@ fi
 
 validate_container_name "$mongo_container"
 validate_container_name "$backend_container"
-validate_container_name "$browser_container"
-validate_container_name "$capture_agent_container"
 validate_container_name "$redis_container"
+if [[ "$pre_browser_migration" == false ]]; then
+    validate_container_name "$browser_container"
+    validate_container_name "$capture_agent_container"
+fi
 validate_database_name "$mongo_db"
 
-for command_name in age docker flock sha256sum; do
+for command_name in age docker flock sha256sum tar; do
     command -v "$command_name" >/dev/null 2>&1 || die "required command is unavailable: $command_name"
 done
 
-for container_name in "$mongo_container" "$backend_container" "$browser_container" "$capture_agent_container" "$redis_container"; do
+required_containers=("$mongo_container" "$backend_container" "$redis_container")
+if [[ "$pre_browser_migration" == false ]]; then
+    required_containers+=("$browser_container" "$capture_agent_container")
+fi
+for container_name in "${required_containers[@]}"; do
     [[ "$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null)" == true ]] \
         || die "required container is not running: $container_name"
 done
@@ -208,10 +235,12 @@ encrypt_command_to_file() {
 printf 'Pausing application writers for a consistent encrypted backup...\n'
 docker pause "$backend_container" >/dev/null
 backend_paused=true
-docker pause "$browser_container" >/dev/null
-browser_paused=true
-docker pause "$capture_agent_container" >/dev/null
-capture_agent_paused=true
+if [[ "$pre_browser_migration" == false ]]; then
+    docker pause "$browser_container" >/dev/null
+    browser_paused=true
+    docker pause "$capture_agent_container" >/dev/null
+    capture_agent_paused=true
+fi
 docker pause "$redis_container" >/dev/null
 redis_paused=true
 
@@ -226,24 +255,36 @@ encrypt_command_to_file "$backup_dir/baileys-auth.tar.age" \
     docker cp "$backend_container:/app/auth_info_baileys/." -
 encrypt_command_to_file "$backup_dir/uploads.tar.age" \
     docker cp "$backend_container:/app/public/uploads/." -
-encrypt_command_to_file "$backup_dir/browser-profile.tar.age" \
-    docker cp "$browser_container:/home/browser/profile/." -
+if [[ "$pre_browser_migration" == true ]]; then
+    encrypt_command_to_file "$backup_dir/browser-profile.tar.age" \
+        tar --create --files-from /dev/null
+else
+    encrypt_command_to_file "$backup_dir/browser-profile.tar.age" \
+        docker cp "$browser_container:/home/browser/profile/." -
+fi
 encrypt_command_to_file "$backup_dir/redis-data.tar.age" \
     docker cp "$redis_container:/data/." -
 
 docker unpause "$redis_container" >/dev/null
 redis_paused=false
-docker unpause "$capture_agent_container" >/dev/null
-capture_agent_paused=false
-docker unpause "$browser_container" >/dev/null
-browser_paused=false
+if [[ "$pre_browser_migration" == false ]]; then
+    docker unpause "$capture_agent_container" >/dev/null
+    capture_agent_paused=false
+    docker unpause "$browser_container" >/dev/null
+    browser_paused=false
+fi
 docker unpause "$backend_container" >/dev/null
 backend_paused=false
 
-printf 'format=wp-monitor-encrypted-backup-v1\n' >"$backup_dir/manifest.txt"
+printf 'format=wp-monitor-encrypted-backup-v2\n' >"$backup_dir/manifest.txt"
 printf 'created_at_utc=%s\n' "$timestamp" >>"$backup_dir/manifest.txt"
 printf 'mongo_database=%s\n' "$mongo_db" >>"$backup_dir/manifest.txt"
 printf 'components=mongodb,baileys-auth,browser-profile,uploads,redis-data\n' >>"$backup_dir/manifest.txt"
+if [[ "$pre_browser_migration" == true ]]; then
+    printf 'browser_profile_source=empty_pre_3_1_migration\n' >>"$backup_dir/manifest.txt"
+else
+    printf 'browser_profile_source=container\n' >>"$backup_dir/manifest.txt"
+fi
 
 (
     cd "$backup_dir"

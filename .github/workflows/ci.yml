@@ -71,10 +71,13 @@ jobs:
           PUBLIC_BASE_URL: https://monitor.example.invalid
           CAPTURE_AGENT_SHARED_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           BROWSER_VNC_PASSWORD: synthetic-vnc-password
+          BAILEYS_AUTH_VOLUME_NAME: ci-wp-monitor-baileys-auth
+          CHECKIN_UPLOADS_VOLUME_NAME: ci-wp-monitor-checkin-uploads
+          WHATSAPP_BROWSER_PROFILE_VOLUME_NAME: ci-wp-monitor-browser-profile
         run: |
           cp .env.example .env
           docker compose config --quiet
-          docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config --quiet
+          pnpm run compose:dokploy:check
 
       - name: Publicar evidencia sintética
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -95,6 +98,9 @@ jobs:
       PUBLIC_BASE_URL: https://monitor.example.invalid
       CAPTURE_AGENT_SHARED_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       BROWSER_VNC_PASSWORD: synthetic-vnc-password
+      BAILEYS_AUTH_VOLUME_NAME: ci-wp-monitor-baileys-auth
+      CHECKIN_UPLOADS_VOLUME_NAME: ci-wp-monitor-checkin-uploads
+      WHATSAPP_BROWSER_PROFILE_VOLUME_NAME: ci-wp-monitor-browser-profile
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

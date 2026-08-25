@@ -25,9 +25,15 @@ flowchart TB
       Browser[Chromium WhatsApp Web]
       Agent[Capture agent]
       VpsRedis[(Redis privado)]
+      VpsAuth[(Baileys externo\nnombre explicito)]
+      VpsUploads[(Uploads externos\nnombre explicito)]
+      VpsProfile[(Perfil Chromium externo\nnombre explicito)]
       Browser --> Agent
       VpsUI -->|HMAC privado| Agent
       VpsUI <--> VpsRedis
+      VpsUI <--> VpsAuth
+      VpsUI <--> VpsUploads
+      Browser <--> VpsProfile
     end
 
     subgraph Cloud[Railway dashboard]
@@ -60,7 +66,7 @@ flowchart TB
 | --- | --- | --- | --- |
 | Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas, Redis y disco local |
 | Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker + Mongo externo |
-| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; noVNC solo por SSH/loopback | Mongo/Redis privados + Baileys/uploads/perfil |
+| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; noVNC solo por SSH/loopback | Mongo/Redis privados + tres volúmenes externos con nombre explícito |
 | Railway | Deshabilitada | HTTPS | MongoDB + Redis + dos volumenes |
 
 ## Decision

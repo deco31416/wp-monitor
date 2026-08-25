@@ -60,7 +60,8 @@ for expected_file in "${expected_files[@]}"; do
         || die "required backup file is missing or unsafe: $expected_file"
 done
 
-grep -Fxq 'format=wp-monitor-encrypted-backup-v1' "$backup_dir/manifest.txt" \
+backup_format="$(sed -n 's/^format=//p' "$backup_dir/manifest.txt")"
+[[ "$backup_format" == wp-monitor-encrypted-backup-v1 || "$backup_format" == wp-monitor-encrypted-backup-v2 ]] \
     || die 'manifest format is missing or unsupported'
 grep -Eq '^created_at_utc=[0-9]{8}T[0-9]{6}Z$' "$backup_dir/manifest.txt" \
     || die 'manifest creation timestamp is invalid'
@@ -68,8 +69,15 @@ grep -Eq '^mongo_database=[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' "$backup_dir/manife
     || die 'manifest MongoDB database is invalid'
 grep -Fxq 'components=mongodb,baileys-auth,browser-profile,uploads,redis-data' "$backup_dir/manifest.txt" \
     || die 'manifest component set is missing or unsupported'
-[[ "$(wc -l <"$backup_dir/manifest.txt")" -eq 4 ]] \
-    || die 'manifest contains unexpected fields'
+if [[ "$backup_format" == wp-monitor-encrypted-backup-v1 ]]; then
+    [[ "$(wc -l <"$backup_dir/manifest.txt")" -eq 4 ]] \
+        || die 'v1 manifest contains unexpected fields'
+else
+    grep -Eq '^browser_profile_source=(container|empty_pre_3_1_migration)$' "$backup_dir/manifest.txt" \
+        || die 'v2 manifest browser profile source is missing or invalid'
+    [[ "$(wc -l <"$backup_dir/manifest.txt")" -eq 5 ]] \
+        || die 'v2 manifest contains unexpected fields'
+fi
 
 mapfile -t checksum_entries < <(awk '{print $2}' "$backup_dir/checksums.sha256" | LC_ALL=C sort)
 mapfile -t expected_entries < <(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)

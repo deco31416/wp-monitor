@@ -20,6 +20,7 @@ pnpm install --frozen-lockfile
 pnpm run qa
 pnpm run docs:check
 pnpm run containers:check
+pnpm run compose:dokploy:check
 pnpm run licenses:check
 pnpm audit --prod
 pnpm audit

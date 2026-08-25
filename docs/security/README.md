@@ -128,6 +128,7 @@ Contacta al mantenedor por un canal privado indicado por el repositorio. Incluye
 - [ ] Logs y reportes sin secretos.
 - [ ] `licenses:check` PASS y avisos de terceros incluidos en el artefacto.
 - [ ] Referencias tag/digest de imágenes revisadas y CI del commit exacto en verde.
+- [ ] Volúmenes Dokploy externos inspeccionados y coincidentes con los tres nombres configurados; no basta conservar `-p`.
 
 ## Documentos relacionados
 

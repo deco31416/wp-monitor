@@ -27,6 +27,8 @@ Un respaldo de aplicacion contiene cinco propietarios de datos:
 
 No acepta credenciales MongoDB como argumento. Cuando hay autenticacion, monta dentro del contenedor Mongo un `mongodump --config` protegido y pasa solo su ruta absoluta.
 
+El backup lee las rutas ya montadas dentro de cada contenedor; no crea, renombra ni migra volúmenes Docker. Antes de una actualización Dokploy ejecuta `compose:dokploy:check -- --require-existing-volumes` y registra los tres nombres exactos. Así se demuestra que el contenedor respaldado y el despliegue nuevo apuntan a la misma persistencia.
+
 ## Dependencias del host
 
 - Docker y containers en ejecucion;
@@ -54,6 +56,24 @@ sudo /usr/local/libexec/wp-monitor/backup-docker.sh \
 
 Los nombres son ejemplos: resuelvelos con `docker ps` sin copiar variables/secretos a logs.
 
+### Backup previo a migrar desde `3.0.0`
+
+`3.0.0` todavía no tiene `wa-browser` ni `capture-agent`. Para el backup inmediatamente anterior a `3.1.0`, usa el modo explícito siguiente y no pases esos dos contenedores:
+
+```bash
+sudo /usr/local/libexec/wp-monitor/backup-docker.sh \
+  --pre-browser-migration \
+  --output /var/backups/wp-monitor \
+  --mongo-container MONGO_EXISTENTE \
+  --mongo-db wp-monitor-production \
+  --backend-container BACKEND_3_0_EXISTENTE \
+  --redis-container REDIS_EXISTENTE \
+  --age-recipients /etc/wp-monitor/backup-recipients.txt \
+  --mongodump-config /run/secrets/mongodump-config.yml
+```
+
+Este modo sigue respaldando MongoDB, Baileys, uploads y Redis, y genera un `browser-profile.tar.age` vacío y válido porque antes de `3.1.0` no existe perfil que conservar. El manifiesto v2 registra `browser_profile_source=empty_pre_3_1_migration`; no puede combinarse con argumentos de navegador/agente. Después del primer despliegue usa siempre el modo normal completo.
+
 ## Verificacion
 
 Checksum y estructura, sin clave privada:
@@ -70,7 +90,7 @@ scripts/operations/verify-backup.sh \
   --age-identity /RUTA/SEPARADA/identity.txt
 ```
 
-El verificador exige exactamente los cinco `.age`, un manifiesto v1 de cuatro campos y un checksum para cada archivo. Un checksum correcto sin identidad demuestra integridad de transporte frente al manifiesto, no que el contenido cifrado pueda recuperarse; ejecuta ambas capas periodicamente.
+El verificador exige exactamente los cinco `.age`, checksum para cada archivo y un manifiesto soportado. Conserva compatibilidad con v1; v2 añade la procedencia obligatoria del perfil (`container` o `empty_pre_3_1_migration`). Un checksum correcto sin identidad demuestra integridad de transporte frente al manifiesto, no que el contenido cifrado pueda recuperarse; ejecuta ambas capas periodicamente.
 
 ## Automatizacion systemd
 

@@ -10,6 +10,7 @@ En Linux, la instalación completa requiere los headers de `libpcap` (`libpcap-d
 pnpm run qa
 pnpm run docs:check
 pnpm run containers:check
+pnpm run compose:dokploy:check
 pnpm run licenses:check
 pnpm audit
 pnpm audit --prod

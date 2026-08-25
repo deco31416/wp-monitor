@@ -37,3 +37,17 @@ networks:
   data-network: !override
     name: ${STATE_NETWORK_NAME:-wp-monitor-data}
     external: true
+
+# Production persistence is an explicit deployment contract. Required names
+# prevent Compose/Dokploy project-name changes from silently attaching empty
+# volumes and making authenticated state appear lost.
+volumes:
+  baileys_auth: !override
+    name: ${BAILEYS_AUTH_VOLUME_NAME:?Set BAILEYS_AUTH_VOLUME_NAME to the existing Baileys volume}
+    external: true
+  checkin_uploads: !override
+    name: ${CHECKIN_UPLOADS_VOLUME_NAME:?Set CHECKIN_UPLOADS_VOLUME_NAME to the existing uploads volume}
+    external: true
+  whatsapp_browser_profile: !override
+    name: ${WHATSAPP_BROWSER_PROFILE_VOLUME_NAME:?Set WHATSAPP_BROWSER_PROFILE_VOLUME_NAME to the dedicated browser profile volume}
+    external: true

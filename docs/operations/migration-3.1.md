@@ -10,11 +10,12 @@ La version permanece candidata hasta completar E4 en Ubuntu, promover el commit 
 
 1. registra digests/commit de `3.0.0` y exporta configuracion no secreta;
 2. verifica MongoDB, Redis y volúmenes actuales;
-3. crea y verifica un backup cifrado fuera del VPS;
+3. crea en el VPS un backup cifrado con `--pre-browser-migration`, transfiérelo a almacenamiento separado y verifícalo allí, porque `3.0.0` aún no posee navegador/agente;
 4. confirma espacio para la imagen Chromium y el volumen de perfil;
 5. confirma que `7900`, `4000`, `4001`, `27017`, `6379` y `4100` no son publicos;
 6. prepara secretos distintos para auth, agente y VNC;
 7. conserva imagen/configuracion `3.0.0` para rollback.
+8. resuelve los nombres Docker reales de Baileys/uploads y prepara un volumen exclusivo para el nuevo perfil Chromium; no infieras nombres a partir de `-p`.
 
 ## Configuracion nueva
 
@@ -29,15 +30,18 @@ BROWSER_UI_PORT=7900
 BROWSER_VNC_PASSWORD=STORE_UNIQUE_15_PLUS_CHARACTERS_PRIVATELY
 BACKEND_BIND_ADDRESS=127.0.0.1
 CLIENT_BIND_ADDRESS=127.0.0.1
+BAILEYS_AUTH_VOLUME_NAME=EXISTING_BAILEYS_VOLUME
+CHECKIN_UPLOADS_VOLUME_NAME=EXISTING_UPLOADS_VOLUME
+WHATSAPP_BROWSER_PROFILE_VOLUME_NAME=PRECREATED_BROWSER_PROFILE_VOLUME
 ```
 
 MongoDB y Redis existentes permanecen privados e independientes. No crees un segundo MongoDB si Dokploy ya administra el servicio operativo.
 
-En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokploy.yml`. El override exige las URI privadas, reutiliza `wp-monitor-data`, elimina las publicaciones host de backend/cliente y desactiva el Redis incluido en el manifiesto local. Conserva el nombre de proyecto Compose que ya usa Dokploy para no abandonar los volumenes existentes.
+En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokploy.yml`. El override exige las URI privadas y los tres nombres de volumen, reutiliza `wp-monitor-data`, elimina las publicaciones host de backend/cliente y desactiva el Redis incluido. Los volúmenes son externos y Compose falla cerrado si no existen. Conserva también el nombre de proyecto Dokploy, pero no lo uses como sustituto de los nombres explícitos.
 
 ## Despliegue
 
-1. ejecuta `pnpm install --frozen-lockfile`, `pnpm run qa`, `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run licenses:check` y ambos audits en staging/build;
+1. ejecuta `pnpm install --frozen-lockfile`, `pnpm run qa`, `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run compose:dokploy:check -- --require-existing-volumes`, `pnpm run licenses:check` y ambos audits en staging/build;
 2. construye backend, frontend, `wa-browser` y `capture-agent`;
 3. inicia browser/agente y valida health, UID/capabilities, audio y loopback;
 4. inicia backend/cliente conectados a MongoDB/Redis existentes;

@@ -20,7 +20,7 @@ El Compose fuerza `LOCAL_CAPTURE_ENABLED=false` y `CALL_CAPTURE_MODE=agent` aunq
 
 Las imágenes Node, Debian, Nginx y Redis se resuelven mediante tag legible más digest OCI multi-arquitectura. No reemplaces un digest manualmente: actualiza tag/digest juntos mediante un PR, reconstruye las cuatro unidades, repite auditorías y ejecuta el smoke afectado. El pin inmoviliza la imagen base, pero los paquetes obtenidos por `apt` todavía requieren reconstrucciones periódicas y revisión de seguridad.
 
-En el VPS auditado aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`, reutiliza MongoDB/Redis en la red externa `wp-monitor-data`, desactiva el Redis local y retira las publicaciones host de backend/cliente. No ejecutes ese override en una maquina sin los servicios de estado externos.
+En el VPS auditado aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`, reutiliza MongoDB/Redis en la red externa `wp-monitor-data`, desactiva el Redis local y retira las publicaciones host de backend/cliente. El override exige nombres reales para los tres volúmenes de aplicación y los declara externos; no lo ejecutes hasta confirmar que existen y pertenecen a este despliegue.
 
 ## Preflight
 
@@ -29,6 +29,7 @@ En el VPS auditado aplica tambien `deploy/docker-compose.dokploy.yml`: usa `serv
 3. Genera valores distintos para `AUTH_IDENTITY_SECRET` y `CAPTURE_AGENT_SHARED_SECRET`, ambos de 32 bytes o mas.
 4. Define una contraseña VNC aleatoria de 15 o mas caracteres. El servicio falla cerrado con una menor, aunque la autenticacion VNC tradicional solo usa los primeros ocho significativos; el control principal es que `7900` permanezca en loopback y se acceda por SSH.
 5. Verifica que MongoDB no publique `27017` y que ningun servicio externo use `4000`, `4001` o `7900`.
+6. En Dokploy define `BAILEYS_AUTH_VOLUME_NAME`, `CHECKIN_UPLOADS_VOLUME_NAME` y `WHATSAPP_BROWSER_PROFILE_VOLUME_NAME` con nombres inspeccionados, distintos y preexistentes.
 
 ```bash
 docker version
@@ -47,10 +48,10 @@ docker compose ps
 
 Estados esperados: `backend`, `client`, `redis`, `wa-browser` y `capture-agent` en `healthy`. El backend espera Redis y el agente; el agente espera el navegador.
 
-En Dokploy/VPS valida e inicia con ambos archivos; conserva el `-p` real ya existente:
+En Dokploy/VPS valida e inicia con ambos archivos. Conservar el `-p` real mantiene identidad de proyecto, contenedores y redes, pero la reutilización de datos depende de las tres variables de volumen explícitas:
 
 ```bash
-docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config --quiet
+pnpm run compose:dokploy:check -- --require-existing-volumes
 docker compose -p NOMBRE_EXISTENTE -f docker-compose.yml -f deploy/docker-compose.dokploy.yml up -d --build --remove-orphans
 ```
 

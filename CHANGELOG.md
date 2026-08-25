@@ -38,6 +38,7 @@ Maintainer guidance:
 - Added authenticated HMAC service-to-service capture contracts with bounded timestamps, nonce replay protection, strict request/response validation, response-size limits and controlled JSON failures.
 - Added call-capture provider modes (`disabled`, `local`, `agent`), runtime capability/health reporting and a periodic availability monitor.
 - Added encrypted Docker backup, checksum/authentication verification, staging-only MongoDB restoration, and hardened systemd service/timer templates.
+- Added an explicit pre-browser migration backup mode for `3.0.0` hosts, with a versioned manifest that distinguishes an intentionally empty pre-3.1 profile from a captured Chromium profile.
 - Added a Dokploy production override that reuses the audited private MongoDB/Redis network, suppresses the bundled Redis service and removes direct backend/client host publications.
 - Added regression tests for backup atomicity/tampering and capture-agent authentication, validation, failure handling and client contracts.
 - Added pinned GitHub Actions CI for QA, audits, documentation, license drift, report fixtures, Compose contracts and four-unit Docker builds.
@@ -63,6 +64,7 @@ Maintainer guidance:
 - Restored first-start Redis AOF volume ownership under `cap_drop: ALL` by granting only the bootstrap capabilities consumed and discarded by the official entrypoint before its non-root PID starts.
 - Exempted the exact `/api/health/live` path from operator-session middleware so container liveness can work without making adjacent API paths public.
 - Prevented localized IP categories from overlapping adjacent PDF columns and kept report table headers with their first row across page breaks.
+- Prevented Dokploy project-name drift from attaching empty application volumes by requiring exact external names for Baileys auth, uploads and the Chromium profile, with an executable rendered-Compose contract gate.
 
 ### Security
 
@@ -73,9 +75,9 @@ Maintainer guidance:
 
 ### Verification
 
-- `pnpm run qa`: 158 backend tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
+- `pnpm run qa`: 160 backend tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
 - `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-08-25.
-- `pnpm run docs:check`, `pnpm run containers:check` and `pnpm run licenses:check`: 65 Markdown files, 138 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts and 218 production packages passed their release gates.
+- `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run compose:dokploy:check -- --require-existing-volumes` and `pnpm run licenses:check`: 65 Markdown files, 139 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts, three existing external volumes and 218 production packages passed their release gates.
 - Report fixture: JSON/HTML/PDF/ZIP generation and ZIP integrity passed; the localized two-page A4 PDF was visually reviewed without clipping, overlap or orphan table headers.
 - Docker build gate: backend, client, capture agent and WhatsApp browser images built from immutable base digests; backend/agent artifacts retained project and reviewed dependency license files.
 - Docker E3 smoke: Chromium, virtual audio, loopback noVNC and capture agent became healthy; PID 1 ran non-root with the intended capability set; a signed synthetic capture observed 10/10 UDP packets and produced a classified result.

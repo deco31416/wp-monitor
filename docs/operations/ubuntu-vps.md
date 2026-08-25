@@ -69,6 +69,9 @@ BACKEND_URL=https://monitor.example.com
 PUBLIC_BASE_URL=https://monitor.example.com
 ALLOWED_ORIGINS=https://monitor.example.com
 STATE_NETWORK_NAME=wp-monitor-data
+BAILEYS_AUTH_VOLUME_NAME=wp-monitor-develop-baileys-auth
+CHECKIN_UPLOADS_VOLUME_NAME=wp-monitor-develop-checkin-uploads
+WHATSAPP_BROWSER_PROFILE_VOLUME_NAME=wp-monitor-develop-whatsapp-browser-profile
 MONGODB_URI=mongodb://USER:REDACTED@MONGO_PRIVATE_DNS:27017/wp-monitor
 MONGODB_DB=wp-monitor-production
 REDIS_URL=redis://USER:REDACTED@REDIS_PRIVATE_DNS:6379
@@ -94,18 +97,27 @@ Construye el frontend con `VITE_API_URL=https://monitor.example.com`. Nunca pong
 El VPS auditado usa Docker Compose administrado por Dokploy, no Docker Stack para esta aplicacion. Mantiene `docker-compose.yml` como manifiesto base y añade `deploy/docker-compose.dokploy.yml` como override. Este segundo archivo:
 
 - exige `MONGODB_URI`, `REDIS_URL` y `PUBLIC_BASE_URL`;
+- exige nombres exactos y preexistentes para Baileys, uploads y perfil Chromium;
 - conecta `backend` a la red externa `wp-monitor-data`;
 - desactiva el Redis incluido en el Compose local;
 - elimina publicaciones host de `backend` y `client`, dejando solo puertos internos para Traefik;
 - conserva `127.0.0.1:7900` para el tunel noVNC.
 
-En **Advanced > Command**, copia primero el comando actual mostrado por Dokploy. Conserva exactamente su `-p NOMBRE_EXISTENTE` para reutilizar `baileys_auth`, uploads y el perfil Chromium, e inserta el segundo archivo despues del base:
+Antes de cambiar Dokploy, inspecciona en modo lectura los dos volúmenes históricos. En el VPS auditado deben resolver exactamente a `wp-monitor-develop-baileys-auth` y `wp-monitor-develop-checkin-uploads`; si alguno no existe, detén la migración y no crees un sustituto vacío. Ejecuta y verifica primero el backup de migración descrito en [Backup y recuperación](backup-recovery.md) con `--pre-browser-migration`. El perfil Chromium es nuevo en `3.1.0`: crea una sola vez el volumen dedicado `wp-monitor-develop-whatsapp-browser-profile`, después del backup aprobado y antes del Preview Compose.
+
+Ejecuta la puerta automatizada con las variables protegidas ya cargadas:
+
+```bash
+pnpm run compose:dokploy:check -- --require-existing-volumes
+```
+
+En **Advanced > Command**, copia primero el comando actual mostrado por Dokploy. Conserva exactamente su `-p NOMBRE_EXISTENTE` para mantener identidad de proyecto, contenedores y redes, e inserta el segundo archivo después del base. La persistencia se resuelve por las variables explícitas anteriores; `-p` por sí solo no reutiliza nombres históricos personalizados:
 
 ```text
 compose -p NOMBRE_EXISTENTE -f ./docker-compose.yml -f ./deploy/docker-compose.dokploy.yml up -d --build --remove-orphans
 ```
 
-Dokploy antepone `docker` al campo. No inventes ni cambies `NOMBRE_EXISTENTE` durante la migracion. Antes de desplegar usa **Preview Compose** y comprueba: cuatro servicios activos de aplicacion, ningun servicio `redis` nuevo, red externa `wp-monitor-data`, ningun puerto host para backend/cliente y ningun secreto renderizado en un canal compartido.
+Dokploy antepone `docker` al campo. No inventes ni cambies `NOMBRE_EXISTENTE` durante la migración. Antes de desplegar usa **Preview Compose** y comprueba: cuatro servicios activos de aplicación, ningún `redis` nuevo, red externa `wp-monitor-data`, ningún puerto host para backend/cliente, y los tres volúmenes marcados `external: true` con los nombres exactos declarados. No compartas el render porque contiene configuración interpolada.
 
 En **Domains** configura el mismo host HTTPS, sin `Strip Path`, con estas rutas:
 

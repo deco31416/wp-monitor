@@ -47,6 +47,7 @@
     "qa": "pnpm run typecheck && pnpm run typecheck:test && pnpm run lint && pnpm run test && pnpm run build:all",
     "docs:check": "node scripts/check-docs.mjs",
     "containers:check": "node scripts/check-container-pins.mjs",
+    "compose:dokploy:check": "node scripts/check-dokploy-compose.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "qa:report-fixture": "tsx scripts/generate-report-fixture.ts",
     "start": "node dist/server.js",
