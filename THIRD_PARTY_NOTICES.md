@@ -28,6 +28,15 @@ Una entrega de código, imagen o instalación autocontenida que incluya este com
 
 La distribución debe conservar los avisos del paquete, permitir el cumplimiento de las licencias LGPL aplicables y publicar las modificaciones realizadas a esos componentes cuando corresponda. WP MONITOR no modifica actualmente libvips ni sus bibliotecas empaquetadas.
 
+### `Selkies` commit `9a90b6c3a99d9fb6cad69e70692daf52f365e304`
+
+- licencia declarada: `MPL-2.0`;
+- procedencia: <https://github.com/selkies-project/selkies>;
+- fuente exacta: <https://github.com/selkies-project/selkies/tree/9a90b6c3a99d9fb6cad69e70692daf52f365e304>;
+- uso: escritorio HTML5 de baja latencia y reenvío consentido de audio/micrófono para el navegador aislado del VPS.
+
+La imagen de navegador conserva este aviso y la referencia exacta al código fuente. WP MONITOR no modifica Selkies; lo integra como componente independiente dentro de la imagen. Cualquier modificación futura a sus fuentes debe publicarse bajo MPL-2.0 y conservar sus avisos.
+
 ## Política aprobada para `3.1.0`
 
 1. El servicio alojado por el operador puede ejecutarse en infraestructura controlada sin entregar imágenes a terceros.

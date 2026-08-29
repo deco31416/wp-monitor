@@ -1,5 +1,7 @@
-ARG BROWSER_BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+ARG BROWSER_BASE_IMAGE=ghcr.io/selkies-project/selkies/base@sha256:1d573f1080e4a39b6a5bc56c499878400adc6028cc14aa2cc91efd96ecca71b0
 FROM ${BROWSER_BASE_IMAGE}
+
+USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
@@ -21,6 +23,7 @@ RUN apt-get update \
         novnc \
         pulseaudio \
         pulseaudio-utils \
+        python3 \
         websockify \
         x11-utils \
         x11vnc \
@@ -43,12 +46,13 @@ RUN apt-get update \
 ENV HOME=/tmp/browser-home
 
 COPY --chmod=755 scripts/browser/entrypoint.sh /usr/local/bin/wp-browser-entrypoint
+COPY --chmod=0755 scripts/browser/fbsetbg /usr/local/lib/wp-monitor/bin/fbsetbg
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/wp-monitor/
 
 USER browser
 WORKDIR /home/browser
 
-EXPOSE 7900
+EXPOSE 7900 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7900"]

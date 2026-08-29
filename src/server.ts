@@ -11,7 +11,7 @@ import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { existsSync, readFileSync } from 'fs';
-import { mkdir, rename, rm, writeFile } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { Server } from 'socket.io';
@@ -54,6 +54,7 @@ import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
 import { CallCaptureService } from './call-capture-service.js';
+import { quarantineAuthStateContents } from './auth-state-rotation.js';
 
 const originalConsoleLog = console.log.bind(console);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -1988,22 +1989,17 @@ app.post('/public/checkin/:token/submit', async (req, res) => {
     });
 });
 
-async function rotateWhatsAppAuthState(reason: string) {
-    if (isRotatingWhatsAppAuth) return;
+async function rotateWhatsAppAuthState(reason: string): Promise<boolean> {
+    if (isRotatingWhatsAppAuth) return false;
     isRotatingWhatsAppAuth = true;
-    const backupDir = `${WHATSAPP_AUTH_DIR}.logged-out-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     try {
-        console.log(`[WHATSAPP] Auth session invalid (${reason}). Rotating ${WHATSAPP_AUTH_DIR} -> ${backupDir}`);
-        await rm(backupDir, { recursive: true, force: true });
-        await rename(WHATSAPP_AUTH_DIR, backupDir);
-        console.log(`[WHATSAPP] Old auth session backed up at ${backupDir}. A new QR will be generated.`);
+        console.log(`[WHATSAPP] Auth session invalid (${reason}). Quarantining active auth files inside the persistent volume.`);
+        const result = await quarantineAuthStateContents(WHATSAPP_AUTH_DIR);
+        console.log(`[WHATSAPP] Auth quarantine complete (${result.movedEntries} entries). A new QR will be generated.`);
+        return true;
     } catch (err: any) {
-        if (err?.code === 'ENOENT') {
-            console.log(`[WHATSAPP] Auth directory not found. A new QR will be generated.`);
-        } else {
-            console.log(`[WHATSAPP] Warning: could not backup auth directory (${err?.message || err}). Removing stale auth data.`);
-            await rm(WHATSAPP_AUTH_DIR, { recursive: true, force: true });
-        }
+        console.error(`[WHATSAPP] Auth quarantine failed (${err?.code || 'unknown'}). Manual recovery is required; stale auth data was preserved.`);
+        return false;
     } finally {
         isRotatingWhatsAppAuth = false;
     }
@@ -2056,8 +2052,10 @@ async function connectToWhatsApp() {
                 setTimeout(() => connectToWhatsApp(), 3000);
             } else {
                 isWhatsAppConnecting = false;
-                await rotateWhatsAppAuthState(`status ${statusCode}`);
-                setTimeout(() => connectToWhatsApp(), 1000);
+                const rotated = await rotateWhatsAppAuthState(`status ${statusCode}`);
+                if (rotated) {
+                    setTimeout(() => connectToWhatsApp(), 1000);
+                }
             }
         } else if (connection === 'open') {
             isWhatsAppConnected = true;

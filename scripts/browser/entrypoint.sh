@@ -19,6 +19,7 @@ read_password() {
 
 vnc_password="$(read_password)"
 (( ${#vnc_password} >= 15 )) || die 'browser VNC password must contain at least 15 characters'
+selkies_password="$vnc_password"
 
 umask 077
 mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" /tmp/pulse /tmp/.X11-unix /tmp/fluxbox /home/browser/profile
@@ -96,7 +97,35 @@ for _attempt in {1..100}; do
 done
 [[ "$pulse_ready" == true ]] || die 'PulseAudio did not become ready'
 
-fluxbox -display "$DISPLAY" >/tmp/fluxbox/fluxbox.log 2>&1 &
+export SELKIES_ADDR=0.0.0.0
+export SELKIES_MODE=websockets
+export SELKIES_ENABLE_HTTPS=false
+export SELKIES_AUDIO_ENABLED=true
+export SELKIES_MICROPHONE_ENABLED=true
+export SELKIES_BASIC_AUTH_USER="${SELKIES_BASIC_AUTH_USER:-browser}"
+export SELKIES_BASIC_AUTH_PASSWORD="$selkies_password"
+unset selkies_password
+export SELKIES_UI_TITLE="WP MONITOR Browser"
+export SELKIES_FILE_TRANSFERS=""
+export SELKIES_CLIPBOARD_ENABLED=false
+export SELKIES_COMMAND_ENABLED=false
+
+selkies >/tmp/selkies.log 2>&1 &
+child_pids+=("$!")
+child_names+=("Selkies")
+
+selkies_ready=false
+for _attempt in {1..200}; do
+    if bash -c "exec 3<>/dev/tcp/127.0.0.1/8080" 2>/dev/null; then
+        selkies_ready=true
+        break
+    fi
+    sleep 0.1
+done
+[[ "$selkies_ready" == true ]] || die 'Selkies did not become ready'
+
+PATH="/usr/local/lib/wp-monitor/bin:$PATH" \
+    fluxbox -display "$DISPLAY" >/tmp/fluxbox/fluxbox.log 2>&1 &
 child_pids+=("$!")
 child_names+=("Fluxbox")
 
@@ -110,7 +139,6 @@ chromium \
     --disable-sync \
     --metrics-recording-only \
     --password-store=basic \
-    --use-fake-ui-for-media-stream \
     --window-size=1440,900 \
     https://web.whatsapp.com/ >/tmp/chromium.log 2>&1 &
 child_pids+=("$!")
@@ -159,6 +187,9 @@ case "$exited_name" in
         ;;
     "noVNC websockify")
         tail -n 40 /tmp/novnc.log >&2 || true
+        ;;
+    Selkies)
+        tail -n 40 /tmp/selkies.log >&2 || true
         ;;
 esac
 die "$exited_name exited unexpectedly with status $exit_code"
