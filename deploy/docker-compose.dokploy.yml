@@ -7,6 +7,13 @@
 # This override deliberately disables the bundled Redis service, removes direct
 # backend/client host publications and requires the external connection URLs.
 services:
+  wa-browser:
+    networks:
+      app-network:
+      tunnel-network:
+        aliases:
+          - wp-monitor-develop-browser
+
   backend:
     ports: !reset []
     expose:
@@ -36,6 +43,9 @@ services:
 networks:
   data-network: !override
     name: ${STATE_NETWORK_NAME:-wp-monitor-data}
+    external: true
+  tunnel-network:
+    name: dokploy-network
     external: true
 
 # Production persistence is an explicit deployment contract. Required names
