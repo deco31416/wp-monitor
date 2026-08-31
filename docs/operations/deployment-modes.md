@@ -108,10 +108,13 @@ CAPTURE_AGENT_URL=http://wa-browser:4100
 CAPTURE_AGENT_SHARED_SECRET=generate-a-unique-64-character-secret
 CAPTURE_AGENT_TIMEOUT_MS=5000
 BROWSER_UI_PORT=7900
+SELKIES_UI_PORT=7901
+BROWSER_TUNNEL_ALIAS=wp-monitor-browser
+TUNNEL_NETWORK_NAME=dokploy-network
 BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 ```
 
-The backend stays unprivileged. `capture-agent` shares `wa-browser` network namespace, accepts only signed `/v1` control requests and retains only `NET_RAW/NET_ADMIN` after dropping to UID 1000. noVNC remains bound to host loopback and is reached through SSH; it is never an application route.
+The backend stays unprivileged. `capture-agent` shares `wa-browser` network namespace, accepts only signed `/v1` control requests and retains only `NET_RAW/NET_ADMIN` after dropping to UID 1000. Selkies is reached through the configured protected access/tunnel network. Its contingency binding and noVNC remain on host loopback; neither is an application route.
 
 This mode does not enable the general Network Monitor against the VPS host NIC. It observes metadata from the browser namespace only. A call from a laptop or phone outside that namespace is not captured by the VPS.
 

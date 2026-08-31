@@ -80,7 +80,7 @@ Si aparece `Todo el trafico visible esta filtrado`, la captura puede seguir acti
 
 ## Analisis de llamada
 
-En Docker/VPS enlaza WhatsApp Web por `http://127.0.0.1:7900/vnc.html` a traves de un tunel SSH. El panel VNC no debe estar publicado por el proxy. El backend firma start/status/stop hacia el agente; no recibe capabilities ni captura trafico de otras maquinas.
+En Docker/VPS enlaza WhatsApp Web mediante Selkies detras del acceso/tunel protegido configurado por el operador. La autenticacion del proxy y la autenticacion Selkies son capas distintas. Los bindings locales `7900/7901` son solo contingencia en loopback y nunca deben publicarse. El backend firma start/status/stop hacia el agente; no recibe capabilities ni captura trafico de otras maquinas.
 
 ### Practica controlada
 

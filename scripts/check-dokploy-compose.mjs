@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { validateBrowserContract } from './dokploy-browser-contract.mjs';
 
 const volumeContracts = [
     {
@@ -27,6 +28,36 @@ if (unknownArguments.length) {
     process.exit(1);
 }
 const requireExistingVolumes = process.argv.includes('--require-existing-volumes');
+
+function configuredPort(name, fallback) {
+    const value = String(process.env[name] || fallback);
+    if (!/^\d{1,5}$/.test(value) || Number(value) < 1 || Number(value) > 65535) {
+        console.error(`[compose:dokploy:check] ${name} debe ser un puerto valido`);
+        process.exit(1);
+    }
+    return value;
+}
+
+function configuredDockerName(name, fallback) {
+    const value = String(process.env[name] || fallback).trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(value)) {
+        console.error(`[compose:dokploy:check] ${name} debe ser un nombre Docker valido`);
+        process.exit(1);
+    }
+    return value;
+}
+
+const browserContract = {
+    noVncPort: configuredPort('BROWSER_UI_PORT', '7900'),
+    selkiesPort: configuredPort('SELKIES_UI_PORT', '7901'),
+    browserTunnelAlias: configuredDockerName('BROWSER_TUNNEL_ALIAS', 'wp-monitor-browser'),
+    tunnelNetworkName: configuredDockerName('TUNNEL_NETWORK_NAME', 'dokploy-network'),
+};
+
+if (browserContract.noVncPort === browserContract.selkiesPort) {
+    console.error('[compose:dokploy:check] BROWSER_UI_PORT y SELKIES_UI_PORT deben ser distintos');
+    process.exit(1);
+}
 
 const errors = [];
 const expectedNames = new Set();
@@ -106,10 +137,7 @@ for (const serviceName of ['backend', 'client', 'capture-agent']) {
     }
 }
 
-const browserPorts = config.services?.['wa-browser']?.ports || [];
-if (browserPorts.length !== 1 || browserPorts[0]?.host_ip !== '127.0.0.1') {
-    errors.push('wa-browser debe publicar noVNC una sola vez y solo en 127.0.0.1');
-}
+errors.push(...validateBrowserContract(config, browserContract));
 
 if (config.services?.redis) {
     errors.push('Redis incluido no debe formar parte de la topologia Dokploy renderizada');

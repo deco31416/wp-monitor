@@ -13,7 +13,7 @@ El VPS debe originar una llamada autorizada desde WhatsApp Web para que su metad
 
 Crear dos unidades:
 
-1. `wa-browser`: Chromium no-root persistente con display/audio virtual y noVNC en loopback.
+1. `wa-browser`: Chromium no-root persistente con display/audio virtual, Selkies tras una red de tunel protegida y noVNC de contingencia en loopback.
 2. `capture-agent`: proceso Node no-root que comparte exactamente el namespace de red del navegador y conserva solo `CAP_NET_RAW`/`CAP_NET_ADMIN`.
 
 El backend controla el agente mediante `/v1` interno firmado con HMAC SHA-256 sobre metodo, path, timestamp, nonce y hash del cuerpo. El agente rechaza replay, interfaz no enumerada, entradas invalidas y capturas concurrentes. El backend valida de nuevo todas las respuestas.
@@ -40,7 +40,7 @@ Negativas/riesgo aceptado:
 
 - Chromium añade consumo y superficie de ataque;
 - `seccomp=unconfined` queda acotado al navegador para permitir su sandbox de namespaces;
-- VNC tradicional tiene autenticacion limitada, por lo que loopback + SSH son obligatorios;
+- el acceso gráfico agrega una puerta de identidad/tunel y autenticacion Selkies; las rutas de contingencia siguen limitadas a loopback;
 - sigue siendo instancia unica y no demuestra que una IP observada pertenezca al contacto.
 
 ## Aceptacion
@@ -48,7 +48,7 @@ Negativas/riesgo aceptado:
 - browser/agent healthy;
 - Chromium UID 10001, capabilities vacias y sin `--no-sandbox`;
 - agente PID 1 UID/GID 1000, `NoNewPrivs=1`, `CapEff/Prm/Bnd/Amb` solo `0x3000`;
-- noVNC en `127.0.0.1`, agente sin puerto host;
+- noVNC/Selkies de contingencia en `127.0.0.1`, Selkies interno tras la red de tunel y agente sin puerto host;
 - ciclo HMAC start/status/stop y rechazo de replay;
 - captura sintetica con paquetes observados;
 - perfil sobrevive a recreacion y rechaza uso concurrente;

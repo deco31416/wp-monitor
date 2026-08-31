@@ -66,7 +66,7 @@ flowchart TB
 | --- | --- | --- | --- |
 | Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas, Redis y disco local |
 | Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker + Mongo externo |
-| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; noVNC solo por SSH/loopback | Mongo/Redis privados + tres volúmenes externos con nombre explícito |
+| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; Selkies tras acceso/tunel protegido; contingencia solo loopback | Mongo/Redis privados + tres volúmenes externos con nombre explícito |
 | Railway | Deshabilitada | HTTPS | MongoDB + Redis + dos volumenes |
 
 ## Decision

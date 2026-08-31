@@ -52,6 +52,10 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 | `BROWSER_VNC_PASSWORD` | Valor de 15+ caracteres requerido al arrancar; VNC solo usa los primeros ocho significativos y no sustituye el tunel SSH |
 | `BROWSER_VNC_PASSWORD_FILE` | Alternativa de archivo absoluto dentro del contenedor, con prioridad sobre la variable |
 | `BROWSER_SCREEN` | Geometria Xvfb, default `1440x900x24` |
+| `SELKIES_UI_PORT` | Binding host de contingencia; Compose lo enlaza solo a `127.0.0.1` y apunta al `8080` interno |
+| `SELKIES_BASIC_AUTH_USER` | Usuario no secreto de la segunda capa de autenticacion Selkies |
+| `BROWSER_TUNNEL_ALIAS` | Obligatorio en Dokploy; el valor concreto del despliegue se mantiene fuera de Git |
+| `TUNNEL_NETWORK_NAME` | Obligatorio en Dokploy; red externa del proveedor de tunel/acceso |
 
 El control backend→agente firma metodo, path, timestamp, nonce y hash del cuerpo. El agente rechaza replay, cuerpos mayores de 64 KiB, interfaz no enumerada y solicitudes concurrentes cuando ya existe una captura. El puerto `4100` no se publica al host.
 
@@ -139,6 +143,10 @@ CAPTURE_AGENT_URL=http://wa-browser:4100
 CAPTURE_AGENT_SHARED_SECRET=generate-a-unique-64-character-secret
 CAPTURE_AGENT_TIMEOUT_MS=5000
 BROWSER_UI_PORT=7900
+SELKIES_UI_PORT=7901
+SELKIES_BASIC_AUTH_USER=browser
+BROWSER_TUNNEL_ALIAS=wp-monitor-browser
+TUNNEL_NETWORK_NAME=dokploy-network
 BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 BACKEND_BIND_ADDRESS=127.0.0.1
 CLIENT_BIND_ADDRESS=127.0.0.1

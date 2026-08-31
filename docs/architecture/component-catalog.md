@@ -77,7 +77,7 @@ Administra una ventana de llamada, agrupa paquetes y produce ruta observada, inf
 
 ### `Dockerfile.browser` y `scripts/browser/entrypoint.sh`
 
-Ejecutan Chromium persistente como UID 10001 con Xvfb, Fluxbox, PulseAudio virtual y noVNC. El entrypoint supervisa procesos, mantiene un lock exclusivo del perfil y recupera marcadores Chromium obsoletos tras un stop no limpio.
+Ejecutan Chromium persistente como UID 10001 con Xvfb, Fluxbox, PulseAudio virtual, Selkies y un fallback noVNC en loopback. El entrypoint supervisa procesos, mantiene un lock exclusivo del perfil y recupera marcadores Chromium obsoletos tras un stop no limpio. En servidor, el acceso principal atraviesa una red externa y un proxy/tunel con control de identidad; sus nombres concretos pertenecen a la configuración privada del despliegue.
 
 ### `Dockerfile.capture-agent` y `scripts/capture-agent/entrypoint.sh`
 
@@ -159,7 +159,7 @@ Contratos compartidos del lado cliente. Un cambio de payload backend requiere ac
 | MongoDB | Persistencia | Health degradado y perdida de funciones durables |
 | Redis | Sesiones, rate limits y contadores compartidos | El backend no inicia; login/submit fallan cerrados |
 | Npcap/libpcap | Captura local | Network/Call no disponibles |
-| Chromium/noVNC/Xvfb/PulseAudio | Sesion WhatsApp Web en VPS | Llamada desde navegador no disponible; backend/Baileys continúan |
+| Chromium/Selkies/noVNC/Xvfb/PulseAudio | Sesion WhatsApp Web en VPS | Llamada desde navegador no disponible; backend/Baileys continúan |
 | Capture agent | Captura del namespace Chromium | Call analysis degradado; backend sin privilegios permanece operativo |
 | DB-IP/ip-api | Enriquecimiento | Resultado sin metadata ampliada |
 | Navegador | GPS y metadata Check-In | Permiso denegado o campos no disponibles |

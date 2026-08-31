@@ -12,7 +12,7 @@ La version permanece candidata hasta completar E4 en Ubuntu, promover el commit 
 2. verifica MongoDB, Redis y volúmenes actuales;
 3. crea en el VPS un backup cifrado con `--pre-browser-migration`, transfiérelo a almacenamiento separado y verifícalo allí, porque `3.0.0` aún no posee navegador/agente;
 4. confirma espacio para la imagen Chromium y el volumen de perfil;
-5. confirma que `7900`, `4000`, `4001`, `27017`, `6379` y `4100` no son publicos;
+5. confirma que `7900`, `7901`, `8080`, `4000`, `4001`, `27017`, `6379` y `4100` no son publicaciones directas a Internet;
 6. prepara secretos distintos para auth, agente y VNC;
 7. conserva imagen/configuracion `3.0.0` para rollback.
 8. resuelve los nombres Docker reales de Baileys/uploads y prepara un volumen exclusivo para el nuevo perfil Chromium; no infieras nombres a partir de `-p`.
@@ -27,6 +27,10 @@ CAPTURE_AGENT_URL=http://wa-browser:4100
 CAPTURE_AGENT_SHARED_SECRET=GENERATE_UNIQUE_32_PLUS_BYTES
 CAPTURE_AGENT_TIMEOUT_MS=5000
 BROWSER_UI_PORT=7900
+SELKIES_UI_PORT=7901
+SELKIES_BASIC_AUTH_USER=browser
+BROWSER_TUNNEL_ALIAS=wp-monitor-browser
+TUNNEL_NETWORK_NAME=dokploy-network
 BROWSER_VNC_PASSWORD=STORE_UNIQUE_15_PLUS_CHARACTERS_PRIVATELY
 BACKEND_BIND_ADDRESS=127.0.0.1
 CLIENT_BIND_ADDRESS=127.0.0.1
@@ -36,6 +40,8 @@ WHATSAPP_BROWSER_PROFILE_VOLUME_NAME=PRECREATED_BROWSER_PROFILE_VOLUME
 ```
 
 MongoDB y Redis existentes permanecen privados e independientes. No crees un segundo MongoDB si Dokploy ya administra el servicio operativo.
+
+`BROWSER_TUNNEL_ALIAS` y `TUNNEL_NETWORK_NAME` son contratos obligatorios del despliegue. Define sus valores concretos únicamente en la configuración protegida antes del primer redeploy con Selkies; el override falla cerrado si faltan.
 
 En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokploy.yml`. El override exige las URI privadas y los tres nombres de volumen, reutiliza `wp-monitor-data`, elimina las publicaciones host de backend/cliente y desactiva el Redis incluido. Los volúmenes son externos y Compose falla cerrado si no existen. Conserva también el nombre de proyecto Dokploy, pero no lo uses como sustituto de los nombres explícitos.
 
@@ -56,7 +62,7 @@ En el VPS auditado despliega con el Compose base y `deploy/docker-compose.dokplo
 - login/cambio de credenciales y Socket.IO funcionan;
 - sesion Baileys y perfil Chromium sobreviven a recreacion sin `-v`;
 - backend sin capabilities y agente limitado a `NET_RAW/NET_ADMIN` despues de bajar UID;
-- noVNC solo loopback y control del agente sin puerto host;
+- noVNC y la contingencia Selkies solo en loopback, Selkies interno `8080` tras acceso/tunel protegido y control del agente sin puerto host;
 - captura sintetica no cero y llamada real produce resultado o `relay/insufficient_data` honesto;
 - backup cifrado verificable y restore MongoDB staging aprobado;
 - ningun secreto en Git, bundle, logs o reportes.

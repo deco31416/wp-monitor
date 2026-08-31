@@ -4,20 +4,24 @@
 
 Este runbook describe la topologia objetivo para un VPS Ubuntu 26.04 LTS de 64 bits con IP dedicada. La configuracion local y las pruebas automatizadas alcanzan evidencia E2/E3; el VPS concreto requiere una validacion E4 antes de declararlo operativo.
 
-El VPS auditado (8 vCPU, 22 GiB RAM, 251 GiB libres, KVM, AppArmor, Docker 29 y Compose 5) tiene recursos suficientes. MongoDB y Redis ya existen como servicios privados independientes de Dokploy y no deben duplicarse. La captura de llamada solo observa trafico que atraviesa el namespace de `wa-browser`; una llamada iniciada desde otro equipo no aparece en el VPS.
+Dimensiona y registra privadamente los recursos del VPS antes de desplegar. Si MongoDB y Redis ya existen como servicios privados independientes de Dokploy, no deben duplicarse. La captura de llamada solo observa trafico que atraviesa el namespace de `wa-browser`; una llamada iniciada desde otro equipo no aparece en el VPS.
 
 ## Topologia recomendada
 
 ```mermaid
 flowchart LR
     Internet -->|443| Proxy[Reverse proxy HTTPS]
+    Internet -->|443| Access[Puerta de identidad]
+    Access --> Tunnel[Tunel administrado]
+    Tunnel --> Selkies[Selkies :8080 privado]
+    Selkies --> Browser[Chromium WhatsApp Web UID 10001]
     Proxy --> UI[Frontend estatico]
     Proxy --> API[Backend Node :4000 privado]
     API <--> Mongo[(MongoDB privado)]
     API <--> Redis[(Redis privado/AOF)]
     API <--> WA[WhatsApp/Baileys]
     API -->|HMAC privado| Agent[Capture agent UID 1000]
-    Browser[Chromium WhatsApp Web UID 10001] --> Agent
+    Browser --> Agent
     Browser <--> Profile[(Perfil persistente)]
     Agent -->|NET_RAW + NET_ADMIN| Namespace[Namespace de red compartido]
 ```
@@ -64,14 +68,18 @@ CAPTURE_AGENT_SHARED_SECRET=generate-a-different-64-character-secret
 CAPTURE_AGENT_TIMEOUT_MS=5000
 BROWSER_UI_PORT=7900
 BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
+SELKIES_UI_PORT=7901
+SELKIES_BASIC_AUTH_USER=browser
+BROWSER_TUNNEL_ALIAS=wp-monitor-browser
+TUNNEL_NETWORK_NAME=dokploy-network
 PORT=4000
 BACKEND_URL=https://monitor.example.com
 PUBLIC_BASE_URL=https://monitor.example.com
 ALLOWED_ORIGINS=https://monitor.example.com
 STATE_NETWORK_NAME=wp-monitor-data
-BAILEYS_AUTH_VOLUME_NAME=wp-monitor-develop-baileys-auth
-CHECKIN_UPLOADS_VOLUME_NAME=wp-monitor-develop-checkin-uploads
-WHATSAPP_BROWSER_PROFILE_VOLUME_NAME=wp-monitor-develop-whatsapp-browser-profile
+BAILEYS_AUTH_VOLUME_NAME=EXISTING_BAILEYS_VOLUME
+CHECKIN_UPLOADS_VOLUME_NAME=EXISTING_UPLOADS_VOLUME
+WHATSAPP_BROWSER_PROFILE_VOLUME_NAME=EXISTING_BROWSER_PROFILE_VOLUME
 MONGODB_URI=mongodb://USER:REDACTED@MONGO_PRIVATE_DNS:27017/wp-monitor
 MONGODB_DB=wp-monitor-production
 REDIS_URL=redis://USER:REDACTED@REDIS_PRIVATE_DNS:6379
@@ -101,9 +109,10 @@ El VPS auditado usa Docker Compose administrado por Dokploy, no Docker Stack par
 - conecta `backend` a la red externa `wp-monitor-data`;
 - desactiva el Redis incluido en el Compose local;
 - elimina publicaciones host de `backend` y `client`, dejando solo puertos internos para Traefik;
-- conserva `127.0.0.1:7900` para el tunel noVNC.
+- conserva noVNC `7900` y la contingencia Selkies `7901` exclusivamente en `127.0.0.1`;
+- conecta `wa-browser` a la red externa de tunel con un alias definido en configuracion privada.
 
-Antes de cambiar Dokploy, inspecciona en modo lectura los dos volúmenes históricos. En el VPS auditado deben resolver exactamente a `wp-monitor-develop-baileys-auth` y `wp-monitor-develop-checkin-uploads`; si alguno no existe, detén la migración y no crees un sustituto vacío. Ejecuta y verifica primero el backup de migración descrito en [Backup y recuperación](backup-recovery.md) con `--pre-browser-migration`. El perfil Chromium es nuevo en `3.1.0`: crea una sola vez el volumen dedicado `wp-monitor-develop-whatsapp-browser-profile`, después del backup aprobado y antes del Preview Compose.
+Antes de cambiar Dokploy, inspecciona en modo lectura los volúmenes históricos y carga sus nombres exactos mediante variables protegidas. Si alguno no existe, detén la migración y no crees un sustituto vacío. Ejecuta y verifica primero el backup de migración descrito en [Backup y recuperación](backup-recovery.md) con `--pre-browser-migration`. El perfil Chromium es nuevo en `3.1.0`: crea una sola vez un volumen dedicado, después del backup aprobado y antes del Preview Compose. No publiques nombres reales de recursos en documentación, issues o logs.
 
 Ejecuta la puerta automatizada con las variables protegidas ya cargadas:
 
@@ -128,6 +137,8 @@ En **Domains** configura el mismo host HTTPS, sin `Strip Path`, con estas rutas:
 
 Las rutas especificas del backend deben tener prioridad sobre `/`. No publiques `backend`, `client` ni `capture-agent` mediante **Advanced > Ports**. Dokploy genera las etiquetas y la conectividad de Traefik desde Domains; valida el resultado en Preview Compose.
 
+El acceso gráfico es un contrato independiente de las rutas de aplicación: proveedor de identidad/acceso → tunel administrado → red externa configurada → alias privado de `wa-browser:8080` → Selkies → Chromium. La identidad concreta del tunel, el hostname, el alias operativo y las políticas de acceso pertenecen al gestor privado del despliegue. Selkies aporta una segunda autenticación; no sustituye la puerta de identidad externa.
+
 ## Servicios y privilegios
 
 No otorgues capacidades al backend. En Compose queda no-root, `cap_drop: ALL`, `no-new-privileges`, limites y healthcheck. Solo el entrypoint de `capture-agent` recibe temporalmente `SETUID/SETGID/SETPCAP` para bajar a UID/GID 1000 y descarta esas capacidades antes de ejecutar Node; PID 1 conserva exclusivamente `NET_RAW/NET_ADMIN`, `NoNewPrivs=1` y rootfs de solo lectura.
@@ -140,8 +151,8 @@ El backend Baileys no necesita un navegador para tracker, QR, casos e informes. 
 
 Para esa prueba:
 
-1. confirma que `7900` escucha solo en `127.0.0.1` y abre un tunel `ssh -L 7900:127.0.0.1:7900 USER@VPS`;
-2. abre `http://127.0.0.1:7900/vnc.html`, enlaza WhatsApp Web y confirma que el perfil sobrevive a una recreacion sin `-v`;
+1. confirma que `7900` y `7901` escuchan solo en `127.0.0.1`, mientras `8080` es interno a la red de tunel;
+2. entra por el acceso/tunel protegido y la autenticación Selkies, enlaza WhatsApp Web y confirma que el perfil sobrevive a una recreacion sin `-v`; usa noVNC por SSH solo como contingencia;
 3. valida una captura corta de trafico UDP sintetico mediante el agente y el contador de paquetes;
 4. inicia manualmente la ventana de captura ligada a un caso activo;
 5. realiza una llamada entre cuentas propias/autorizadas;
@@ -158,12 +169,12 @@ WhatsApp/WebRTC puede usar relays. El resultado puede ser `solo relay` o no cont
 5. Socket.IO conecta con sesion valida y se desconecta al revocarla;
 6. health no expone URI, claves ni contrasenas;
 7. reiniciar backend conserva cuenta, sesion Baileys, uploads y contadores/sesiones Redis vigentes;
-8. `27017`, `6379`, `4000`, `4001`, `4100` y `7900` no responden desde Internet; no existe un segundo Redis;
+8. `27017`, `6379`, `4000`, `4001`, `4100`, `7900`, `7901` y `8080` no responden directamente desde Internet; no existe un segundo Redis;
 9. agente sin privilegios falla cerrado; PID 1 con capabilities minimas ve la interfaz y el primer paquete del namespace del navegador;
 10. backup cifrado se verifica y la restauracion MongoDB se prueba en staging;
 11. logs, bundle frontend y Git se revisan contra secretos;
 12. QR, contacto sintetico, caso, reporte y paquete de evidencia se validan con datos propios.
-13. los 16 zombies heredados de MongoDB/Dokploy no crecen durante la ventana; el servicio MongoDB recibe un init/reaper o healthcheck corregido antes del PASS si vuelven a aumentar.
+13. los procesos zombie preexistentes, si los hubiera, no crecen durante la ventana; MongoDB recibe un init/reaper o healthcheck corregido antes del PASS si vuelven a aumentar.
 
 No declares captura de llamada operativa hasta completar la prueba en el VPS real. Tampoco publiques el servicio antes de rotar cualquier secreto que haya sido mostrado en una terminal o canal no controlado.
 

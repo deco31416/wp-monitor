@@ -437,9 +437,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Before the first Compose start, set a unique `CAPTURE_AGENT_SHARED_SECRET` (32+ random bytes) and a 15+ character `BROWSER_VNC_PASSWORD` in the ignored `.env`. Traditional VNC only considers the first eight significant characters, so loopback plus SSH remains the real access boundary. Provide a private MongoDB URI reachable from the backend container; use `host.docker.internal` instead of `127.0.0.1` when MongoDB runs on the Linux host. Compose forces general local capture off and delegates call capture to the isolated agent. The stack exposes the frontend on `4001`, backend on `4000`, and noVNC only on `127.0.0.1:7900`; it persists Baileys authentication, uploads, Redis AOF and the Chromium profile in named volumes. MongoDB remains an independently managed private service.
+Before the first Compose start, set a unique `CAPTURE_AGENT_SHARED_SECRET` (32+ random bytes) and a 15+ character `BROWSER_VNC_PASSWORD` in the ignored `.env`. Provide a private MongoDB URI reachable from the backend container; use `host.docker.internal` instead of `127.0.0.1` when MongoDB runs on the Linux host. Compose forces general local capture off and delegates call capture to the isolated agent. The stack exposes the frontend on `4001`, backend on `4000`, noVNC fallback on `127.0.0.1:7900`, and a Selkies contingency binding on `127.0.0.1:7901` targeting internal port `8080`. Neither browser port is an Internet publication. It persists Baileys authentication, uploads, Redis AOF and the Chromium profile in named volumes. MongoDB remains an independently managed private service.
 
-The audited Dokploy VPS already owns private MongoDB/Redis services. Deploy it with `docker-compose.yml` plus `deploy/docker-compose.dokploy.yml`; the override selects `server-full`, reuses `wp-monitor-data`, suppresses the bundled Redis container and removes backend/client host publications. Production volume names are mandatory and external: set them to the exact existing Baileys/uploads volumes and a dedicated pre-created browser-profile volume. Keeping the Compose project name alone does not guarantee compatibility with historical explicit names. See [Ubuntu VPS](docs/operations/ubuntu-vps.md) for the preview gate and E4 checklist.
+A Dokploy deployment may reuse private MongoDB/Redis services. Deploy it with `docker-compose.yml` plus `deploy/docker-compose.dokploy.yml`; the override selects `server-full`, reuses the configured data and tunnel networks, suppresses the bundled Redis container and removes backend/client host publications. Production volume names are mandatory and external: set them privately to the exact existing Baileys/uploads volumes and a dedicated pre-created browser-profile volume. Keeping the Compose project name alone does not guarantee compatibility with historical explicit names. See [Ubuntu VPS](docs/operations/ubuntu-vps.md) for the preview gate and E4 checklist.
 
 ---
 
@@ -489,6 +489,10 @@ CALL_CAPTURE_MODE=local
 # CAPTURE_AGENT_SHARED_SECRET=generate-a-different-64-character-secret
 # CAPTURE_AGENT_TIMEOUT_MS=5000
 # BROWSER_UI_PORT=7900
+# SELKIES_UI_PORT=7901
+# SELKIES_BASIC_AUTH_USER=browser
+# BROWSER_TUNNEL_ALIAS=wp-monitor-browser
+# TUNNEL_NETWORK_NAME=dokploy-network
 # BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 
 # Client IP handling
@@ -946,7 +950,7 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 
 ### v3.1.0 candidate
 
-- Adds a persistent containerized WhatsApp Web browser with virtual display/audio and loopback-only noVNC access
+- Adds a persistent containerized WhatsApp Web browser with virtual display/audio, Selkies access through a private tunnel network and loopback-only contingency bindings
 - Isolates privileged packet observation in an HMAC-authenticated sidecar sharing the browser network namespace
 - Adds container healthchecks, non-root execution, capability/resource limits and safe Chromium profile restart recovery
 - Adds encrypted backups, verification, staging restore tooling and regression coverage for incomplete/tampered archives

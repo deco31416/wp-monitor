@@ -180,7 +180,7 @@ Consulta [Deployment modes](../operations/deployment-modes.md). La regla central
 - Redis comparte sesiones, limites de login y rate limit publico entre replicas; la coordinacion de trackers y capturas sigue siendo de instancia unica.
 - Una instancia controla como maximo una captura general y una captura de llamada; el agente rechaza una segunda ventana concurrente.
 - La sesion y los uploads necesitan volumenes separados en infraestructura efimera.
-- Chromium requiere un perfil persistente exclusivo, loopback/SSH para noVNC y una excepcion seccomp acotada para su sandbox de namespaces.
+- Chromium requiere un perfil persistente exclusivo, Selkies tras un acceso/tunel protegido, bindings de contingencia solo en loopback y una excepcion seccomp acotada para su sandbox de namespaces.
 
 ## Lecturas relacionadas
 

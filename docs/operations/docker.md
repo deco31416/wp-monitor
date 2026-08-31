@@ -11,7 +11,7 @@ Ejecutar WP MONITOR con procesos aislados, persistencia explicita y captura de l
 | `backend` | REST, Socket.IO, Baileys, casos e informes | `127.0.0.1:4000` por defecto | `baileys_auth`, `checkin_uploads`; sin capabilities |
 | `client` | Nginx no-root con build React | `127.0.0.1:4001` por defecto | Stateless |
 | `redis` | Sesiones y limites compartidos en Compose local | Solo `data-network` | `redis_data`, AOF, sin puerto host; PID final sin capabilities |
-| `wa-browser` | Chromium/WhatsApp Web, Xvfb y audio virtual | `127.0.0.1:7900` | `whatsapp_browser_profile`; UID 10001, sin capabilities |
+| `wa-browser` | Chromium/WhatsApp Web, Xvfb, audio virtual y Selkies | `127.0.0.1:7900/7901`; `8080` solo en red de tunel | `whatsapp_browser_profile`; UID 10001, sin capabilities |
 | `capture-agent` | Captura UDP de la ventana de llamada | Sin puerto host | Comparte namespace de `wa-browser`; PID 1 UID 1000 con solo `NET_RAW/NET_ADMIN` |
 
 El agente recibe inicialmente capacidades auxiliares de Docker para bajar UID/GID; su entrypoint elimina `SETUID`, `SETGID` y `SETPCAP` antes de ejecutar Node. Redis recibe durante bootstrap `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` y `SETPCAP`: su entrypoint oficial corrige un volumen AOF nuevo, cambia a UID 999/GID 1000 y elimina todo el bounding set antes de ejecutar el servidor. El backend nunca recibe privilegios de captura en este modelo.
@@ -20,15 +20,15 @@ El Compose fuerza `LOCAL_CAPTURE_ENABLED=false` y `CALL_CAPTURE_MODE=agent` aunq
 
 Las imágenes Node, Debian, Nginx y Redis se resuelven mediante tag legible más digest OCI multi-arquitectura. No reemplaces un digest manualmente: actualiza tag/digest juntos mediante un PR, reconstruye las cuatro unidades, repite auditorías y ejecuta el smoke afectado. El pin inmoviliza la imagen base, pero los paquetes obtenidos por `apt` todavía requieren reconstrucciones periódicas y revisión de seguridad.
 
-En el VPS auditado aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`, reutiliza MongoDB/Redis en la red externa `wp-monitor-data`, desactiva el Redis local y retira las publicaciones host de backend/cliente. El override exige nombres reales para los tres volúmenes de aplicación y los declara externos; no lo ejecutes hasta confirmar que existen y pertenecen a este despliegue.
+En Dokploy aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`, reutiliza MongoDB/Redis en la red externa configurada, desactiva el Redis local y retira las publicaciones host de backend/cliente. El override exige nombres reales para los tres volúmenes de aplicación y los declara externos; mantenlos en configuración privada y no lo ejecutes hasta confirmar que existen y pertenecen a este despliegue.
 
 ## Preflight
 
 1. Crea `.env` desde `.env.example`.
 2. Configura una URI MongoDB privada alcanzable desde `backend`. Si MongoDB corre en el mismo host Linux, usa `host.docker.internal` en la URI y limita el listener/firewall al host; `127.0.0.1` dentro del contenedor apunta al propio backend.
 3. Genera valores distintos para `AUTH_IDENTITY_SECRET` y `CAPTURE_AGENT_SHARED_SECRET`, ambos de 32 bytes o mas.
-4. Define una contraseña VNC aleatoria de 15 o mas caracteres. El servicio falla cerrado con una menor, aunque la autenticacion VNC tradicional solo usa los primeros ocho significativos; el control principal es que `7900` permanezca en loopback y se acceda por SSH.
-5. Verifica que MongoDB no publique `27017` y que ningun servicio externo use `4000`, `4001` o `7900`.
+4. Define una contraseña aleatoria de 15 o mas caracteres. El servicio falla cerrado con una menor; la puerta de identidad/tunel y los binds loopback son límites de acceso independientes.
+5. Verifica que MongoDB no publique `27017` y que ningún servicio exponga directamente `4000`, `4001`, `7900`, `7901` o `8080` a Internet.
 6. En Dokploy define `BAILEYS_AUTH_VOLUME_NAME`, `CHECKIN_UPLOADS_VOLUME_NAME` y `WHATSAPP_BROWSER_PROFILE_VOLUME_NAME` con nombres inspeccionados, distintos y preexistentes.
 
 ```bash
@@ -59,13 +59,7 @@ Alli se esperan cuatro contenedores nuevos/actualizados (`backend`, `client`, `w
 
 ## Primer enlace de WhatsApp Web
 
-Desde la computadora del operador crea un tunel SSH:
-
-```bash
-ssh -L 7900:127.0.0.1:7900 USER@VPS
-```
-
-Abre `http://127.0.0.1:7900/vnc.html`, introduce la contraseña y enlaza WhatsApp Web. No enrutes `7900` por Dokploy, Cloudflare, Nginx ni el firewall publico. El perfil queda en `whatsapp_browser_profile` y sobrevive a recreaciones normales.
+En servidor, entra mediante la puerta de identidad y el tunel administrado configurados privadamente; el destino interno es el alias de `wa-browser` en el puerto `8080`. Completa después la autenticación Selkies y enlaza WhatsApp Web. No publiques directamente `7900`, `7901` ni `8080`. noVNC sobre un tunel SSH puede conservarse como contingencia operativa, nunca como ruta pública. El perfil queda en `whatsapp_browser_profile` y sobrevive a recreaciones normales.
 
 El entrypoint mantiene un lock exclusivo propio sobre el volumen. Tras una detencion no limpia elimina unicamente marcadores `SingletonLock`, `SingletonCookie` y `SingletonSocket` obsoletos, y solo despues de adquirir ese lock. Nunca montes el mismo perfil en dos navegadores simultaneos.
 
@@ -85,7 +79,7 @@ Comprueba ademas:
 4. Chromium sin `--no-sandbox`, UID 10001 y `CapEff=0`;
 5. PID 1 del agente con UID/GID 1000, `NoNewPrivs=1` y capabilities efectivas `NET_RAW/NET_ADMIN` solamente;
 6. PID 1 de Redis con UID 999/GID 1000, `NoNewPrivs=1` y `CapEff/CapBnd=0`;
-7. `7900` enlazado unicamente a `127.0.0.1`, y backend/cliente sin publicaciones host en Dokploy;
+7. `7900/7901` enlazados únicamente a `127.0.0.1`, `8080` accesible solo desde la red de tunel, y backend/cliente sin publicaciones host en Dokploy;
 8. una captura UDP sintetica antes de utilizar una llamada real autorizada;
 9. caso, llamada, persistencia, informe y auditoria con datos de prueba.
 
@@ -139,6 +133,6 @@ Esta orden retira contenedores/red del proyecto y conserva volumenes. No borres 
 
 - El Network Monitor general sigue siendo una funcion nativa `local-full`; el sidecar esta dedicado al trafico del navegador.
 - Chromium usa su sandbox interno, UID no-root, `no-new-privileges`, rootfs de solo lectura y capabilities vacias. El contenedor necesita `seccomp=unconfined` porque el perfil Docker predeterminado bloquea las operaciones de namespace requeridas por ese sandbox; esta excepcion queda limitada al navegador.
-- noVNC no ofrece el limite de confianza principal: SSH/loopback si lo hacen.
+- Selkies no sustituye la puerta de identidad/tunel; noVNC tampoco sustituye SSH/loopback como contingencia.
 - Un relay, VPN o CGNAT puede impedir observar una ruta directa. Una candidata nunca prueba identidad ni ubicacion exacta.
 - MongoDB debe suministrarse como servicio privado independiente y entrar en la politica de backup.

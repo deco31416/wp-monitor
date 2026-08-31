@@ -98,7 +98,7 @@ En Docker/VPS distingue proveedor `agent`: confirma `wa-browser` y `capture-agen
 - valida Chromium UID 10001, sin capabilities y sin `--no-sandbox`;
 - valida agente PID 1 UID/GID 1000, `NoNewPrivs=1` y solo `NET_RAW/NET_ADMIN`;
 - confirma que backend/agente reciben el mismo secreto HMAC sin imprimirlo;
-- `7900` debe aparecer solo en `127.0.0.1` y `4100` no debe publicarse;
+- `7900/7901` deben aparecer solo en `127.0.0.1`, `8080` solo en la red de tunel y `4100` no debe publicarse;
 - genera UDP publico sintetico: rangos privados/reservados pueden ser descartados correctamente por el clasificador.
 
 ## Todo el trafico esta filtrado

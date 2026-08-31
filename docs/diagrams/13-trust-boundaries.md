@@ -66,6 +66,6 @@ flowchart TB
 - Cambiar credenciales revoca sesiones HTTP y Socket.IO anteriores.
 - Validacion se aplica antes de persistir o abrir captura.
 - Los reportes minimizan y excluyen secretos.
-- El puerto del agente no se publica; noVNC se enlaza solo a loopback y requiere tunel SSH.
+- El puerto del agente no se publica; Selkies usa una red de tunel protegida y sus bindings de contingencia/noVNC permanecen solo en loopback.
 - El backend no recibe capabilities. El agente conserva solo `NET_RAW/NET_ADMIN` y el navegador ninguna.
 - Perfiles Chromium, sesiones Baileys, secretos HMAC/VNC y backups quedan fuera de Git y del contexto Docker.

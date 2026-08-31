@@ -34,6 +34,7 @@ Maintainer guidance:
 ### Added
 
 - Added a persistent Chromium/WhatsApp Web service with Xvfb, Fluxbox, virtual PulseAudio, loopback-only noVNC access and a named browser-profile volume.
+- Added Selkies browser streaming on internal port `8080`, a loopback-only contingency binding and a configurable external tunnel-network alias without embedding deployment identities in the public repository.
 - Added a dedicated call-capture sidecar that shares only the browser network namespace, runs Node as UID/GID 1000 and retains only `CAP_NET_RAW` and `CAP_NET_ADMIN` after startup.
 - Added authenticated HMAC service-to-service capture contracts with bounded timestamps, nonce replay protection, strict request/response validation, response-size limits and controlled JSON failures.
 - Added call-capture provider modes (`disabled`, `local`, `agent`), runtime capability/health reporting and a periodic availability monitor.
@@ -65,17 +66,19 @@ Maintainer guidance:
 - Exempted the exact `/api/health/live` path from operator-session middleware so container liveness can work without making adjacent API paths public.
 - Prevented localized IP categories from overlapping adjacent PDF columns and kept report table headers with their first row across page breaks.
 - Prevented Dokploy project-name drift from attaching empty application volumes by requiring exact external names for Baileys auth, uploads and the Chromium profile, with an executable rendered-Compose contract gate.
+- Updated the rendered-Compose gate for the dual noVNC/Selkies browser contract and added negative coverage for public binds, wrong targets, extra ports, missing networks and alias drift.
 
 ### Security
 
 - noVNC is published only on `127.0.0.1`; production access requires an SSH tunnel and the port must not be routed through the public application proxy.
+- Selkies is reached through a protected access proxy/tunnel on the configured external network; its `7901` host binding and the noVNC fallback remain loopback-only, while deployment-specific identifiers stay outside version control.
 - The capture-agent control port is not published, and every non-health route requires an HMAC signature tied to method, path, timestamp, nonce and body hash.
 - Browser and capture-agent secrets, Chromium profiles, Baileys sessions, captures, reports, uploads and backups remain excluded from Git/Docker build context.
 - All four application images now carry the project license and third-party notices; backend/capture-agent images also retain dependency licenses, and commercial distribution claims distinguish MIT-owned code from transitive obligations.
 
 ### Verification
 
-- `pnpm run qa`: 160 backend tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
+- `pnpm run qa`: 171 backend/contract tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
 - `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-08-25.
 - `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run compose:dokploy:check -- --require-existing-volumes` and `pnpm run licenses:check`: 65 Markdown files, 139 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts, three existing external volumes and 218 production packages passed their release gates.
 - Report fixture: JSON/HTML/PDF/ZIP generation and ZIP integrity passed; the localized two-page A4 PDF was visually reviewed without clipping, overlap or orphan table headers.

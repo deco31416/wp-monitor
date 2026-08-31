@@ -12,7 +12,7 @@ services:
       app-network:
       tunnel-network:
         aliases:
-          - wp-monitor-develop-browser
+          - ${BROWSER_TUNNEL_ALIAS:?Set BROWSER_TUNNEL_ALIAS in protected deployment configuration}
 
   backend:
     ports: !reset []
@@ -45,7 +45,7 @@ networks:
     name: ${STATE_NETWORK_NAME:-wp-monitor-data}
     external: true
   tunnel-network:
-    name: dokploy-network
+    name: ${TUNNEL_NETWORK_NAME:?Set TUNNEL_NETWORK_NAME in protected deployment configuration}
     external: true
 
 # Production persistence is an explicit deployment contract. Required names

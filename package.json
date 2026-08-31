@@ -41,7 +41,7 @@
     "typecheck": "tsc --noEmit && pnpm --dir client run typecheck",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm run test:unit && pnpm run test:client",
-    "test:unit": "tsx --test test/*.test.ts",
+    "test:unit": "tsx --test test/*.test.ts test/*.test.mjs",
     "test:client": "pnpm --dir client run test",
     "lint": "pnpm --dir client run lint",
     "qa": "pnpm run typecheck && pnpm run typecheck:test && pnpm run lint && pnpm run test && pnpm run build:all",
