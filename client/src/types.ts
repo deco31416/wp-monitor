@@ -99,6 +99,7 @@ export interface CallEvent {
     callId: string;
     from: string;
     status: string;
+    label?: string;
     isVideo: boolean;
     date?: string | number;
     offline?: boolean;
@@ -154,6 +155,18 @@ export interface ObservedActivityEvent {
     confidence: 'none' | 'low' | 'medium' | 'high';
     timestamp: string;
     timestampUtc: string;
+    call?: {
+        outcome: 'incoming' | 'ringing' | 'active' | 'completed' | 'busy' | 'rejected' | 'missed' | 'ended_unconfirmed';
+        direction: 'incoming' | 'outgoing' | 'unknown';
+        evidence: 'protocol_confirmed' | 'protocol_observed';
+        signalCount: number;
+        technicalSignalCount: number;
+        startedAt: string;
+        endedAt: string | null;
+        durationSec: number | null;
+        relayLatencyMs: number | null;
+        isVideo: boolean;
+    };
 }
 
 export interface ObservedActivityResponse {

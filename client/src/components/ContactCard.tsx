@@ -1111,6 +1111,9 @@ export function ContactCard({
                                 intel={intel}
                                 intelLoading={intelLoading}
                                 anomalies={anomalies}
+                                observedEvents={observedActivity}
+                                observedEventTotal={observedActivityPage.total}
+                                observedEventsTruncated={observedActivityPage.truncated}
                             />
                         )}
                         {activePanel === 'profile' && (

@@ -14,6 +14,13 @@ import { buildStatsInsights } from './stats-insights.js';
 import type { StatsInsights } from './stats-insights.js';
 import { buildPageMetadata, type PageMetadata } from './page-metadata.js';
 import {
+    buildCommercialCallActivity,
+    COMMERCIAL_CALL_STATUSES,
+    type CommercialCallMetadata,
+    type CommercialCallOutcome,
+    type RawCallActivitySignal,
+} from './call-activity.js';
+import {
     CONCLUSIVE_TRACKER_STATE_REGEX,
     ONLINE_TRACKER_STATE_REGEX,
     hasAcknowledgedTrackerRtt,
@@ -59,6 +66,10 @@ export interface ObservedActivityListItem {
     confidence: ActivityEventDoc['confidence'];
     timestamp: Date;
     timestampUtc: string;
+}
+
+export interface CommercialObservedActivityListItem extends ObservedActivityListItem {
+    call?: CommercialCallMetadata;
 }
 
 export interface ContactDoc {
@@ -914,6 +925,189 @@ export async function getObservedActivityEvents(
     }
 }
 
+interface CommercialActivityAggregate {
+    source: ActivityEventSource;
+    type: string;
+    label: string;
+    confidence: ActivityEventDoc['confidence'];
+    timestamp: Date;
+    timestampUtc: string;
+    lastTimestamp: Date;
+    callTypes: string[];
+    callSignals: RawCallActivitySignal[];
+}
+
+function commercialActivityGroupingStages(scope: Record<string, unknown>): Record<string, unknown>[] {
+    return [
+        { $match: scope },
+        { $sort: { timestamp: 1, _id: 1 } },
+        {
+            $set: {
+                commercialActivityKey: {
+                    $cond: [
+                        {
+                            $and: [
+                                { $eq: ['$source', 'call'] },
+                                { $eq: [{ $type: '$details.callIdHash' }, 'string'] },
+                                { $ne: ['$details.callIdHash', ''] },
+                            ],
+                        },
+                        {
+                            $concat: [
+                                'call:',
+                                { $ifNull: ['$trackingSessionId', 'legacy'] },
+                                ':',
+                                '$details.callIdHash',
+                            ],
+                        },
+                        { $concat: ['event:', { $toString: '$_id' }] },
+                    ],
+                },
+            },
+        },
+        {
+            $group: {
+                _id: '$commercialActivityKey',
+                source: { $first: '$source' },
+                type: { $first: '$type' },
+                label: { $first: '$label' },
+                confidence: { $first: '$confidence' },
+                timestamp: { $first: '$timestamp' },
+                timestampUtc: { $first: '$timestampUtc' },
+                lastTimestamp: { $last: '$timestamp' },
+                callTypes: { $push: '$type' },
+                callSignals: {
+                    $push: {
+                        type: '$type',
+                        confidence: '$confidence',
+                        timestamp: '$timestamp',
+                        timestampUtc: '$timestampUtc',
+                        details: '$details',
+                    },
+                },
+            },
+        },
+        {
+            $match: {
+                $or: [
+                    { source: { $ne: 'call' } },
+                    { callTypes: { $in: [...COMMERCIAL_CALL_STATUSES] } },
+                ],
+            },
+        },
+    ];
+}
+
+function commercialCallOutcomeExpression(): Record<string, unknown> {
+    return {
+        $switch: {
+            branches: [
+                { case: { $in: ['reject', '$callTypes'] }, then: 'rejected' },
+                { case: { $in: ['timeout', '$callTypes'] }, then: 'missed' },
+                {
+                    case: {
+                        $and: [
+                            { $in: ['accept', '$callTypes'] },
+                            { $in: ['terminate', '$callTypes'] },
+                        ],
+                    },
+                    then: 'completed',
+                },
+                { case: { $in: ['accept', '$callTypes'] }, then: 'active' },
+                { case: { $in: ['busy', '$callTypes'] }, then: 'busy' },
+                { case: { $in: ['terminate', '$callTypes'] }, then: 'ended_unconfirmed' },
+                { case: { $in: ['offer', '$callTypes'] }, then: 'incoming' },
+            ],
+            default: 'ringing',
+        },
+    };
+}
+
+function emptyCallOutcomeCounts(): Record<CommercialCallOutcome, number> {
+    return {
+        incoming: 0,
+        ringing: 0,
+        active: 0,
+        completed: 0,
+        busy: 0,
+        rejected: 0,
+        missed: 0,
+        ended_unconfirmed: 0,
+    };
+}
+
+function mapCommercialActivityAggregate(
+    row: CommercialActivityAggregate,
+): CommercialObservedActivityListItem | null {
+    if (row.source !== 'call') {
+        return {
+            source: row.source,
+            type: row.type,
+            label: row.label,
+            confidence: row.confidence,
+            timestamp: row.timestamp,
+            timestampUtc: row.timestampUtc,
+        };
+    }
+
+    const callEvent = buildCommercialCallActivity(row.callSignals);
+    if (!callEvent) return null;
+    return {
+        ...callEvent,
+        timestamp: callEvent.timestamp instanceof Date
+            ? callEvent.timestamp
+            : new Date(callEvent.timestamp),
+    };
+}
+
+/**
+ * Return the customer-facing activity timeline. Raw call protocol signals stay
+ * persisted, while all signals sharing one call ID become one truthful call.
+ */
+export async function getCommercialObservedActivityEvents(
+    jid: string,
+    trackingSessionId: string,
+    limit: number = 50,
+): Promise<CommercialObservedActivityListItem[]> {
+    if (!db) return [];
+    try {
+        const rows = await activityEvents.aggregate<CommercialActivityAggregate>([
+            ...commercialActivityGroupingStages(
+                buildObservedActivityScope(jid, undefined, trackingSessionId),
+            ),
+            { $sort: { lastTimestamp: -1 } },
+            { $limit: limit },
+        ]).toArray();
+
+        return rows
+            .map(mapCommercialActivityAggregate)
+            .filter((event): event is CommercialObservedActivityListItem => event !== null);
+    } catch (err) {
+        console.error('[DB] Error fetching commercial observed activity:', err);
+        return [];
+    }
+}
+
+export async function countCommercialObservedActivityEvents(
+    jid: string,
+    caseId?: string,
+    trackingSessionId?: string,
+): Promise<number> {
+    if (!db) return 0;
+    try {
+        const rows = await activityEvents.aggregate<{ total: number }>([
+            ...commercialActivityGroupingStages(
+                buildObservedActivityScope(jid, caseId, trackingSessionId),
+            ),
+            { $count: 'total' },
+        ]).toArray();
+        return rows[0]?.total || 0;
+    } catch (err) {
+        console.error('[DB] Error counting commercial observed activity:', err);
+        return 0;
+    }
+}
+
 export async function getObservedActivityEventsForCase(
     jid: string,
     caseId: string,
@@ -1015,6 +1209,28 @@ export function buildObservationWindow(
     return { firstSeen, lastSeen, durationMs, label };
 }
 
+export function consolidateObservedActivityTypes(
+    groups: Array<{
+        source: string;
+        type: string;
+        label: string;
+        count: number;
+    }>,
+): Array<{ source: string; type: string; label: string; count: number }> {
+    const consolidated = new Map<string, { source: string; type: string; label: string; count: number }>();
+    groups.forEach(group => {
+        const key = `${group.source}:${group.type}:${group.label}`;
+        const current = consolidated.get(key);
+        consolidated.set(key, {
+            source: group.source,
+            type: group.type,
+            label: group.label,
+            count: (current?.count || 0) + group.count,
+        });
+    });
+    return [...consolidated.values()].sort((left, right) => right.count - left.count);
+}
+
 export async function getObservedActivitySummary(
     jid: string,
     days: number = 30,
@@ -1023,14 +1239,16 @@ export async function getObservedActivitySummary(
 ): Promise<{
     totalEvents: number;
     activeEvents: number;
-    firstEvent: ActivityEventDoc | null;
-    lastEvent: ActivityEventDoc | null;
-    lastPresence: ActivityEventDoc | null;
-    lastCall: ActivityEventDoc | null;
-    lastMessage: ActivityEventDoc | null;
+    firstEvent: CommercialObservedActivityListItem | null;
+    lastEvent: CommercialObservedActivityListItem | null;
+    lastPresence: CommercialObservedActivityListItem | null;
+    lastCall: CommercialObservedActivityListItem | null;
+    lastMessage: CommercialObservedActivityListItem | null;
     bySource: Record<string, number>;
     byType: Array<{ type: string; label: string; count: number; source: string }>;
     confidence: Record<string, number>;
+    callOutcomes: Record<CommercialCallOutcome, number>;
+    messageDirections: { incoming: number; outgoing: number };
     activeDays: number;
     windowDays: number;
 }> {
@@ -1045,6 +1263,8 @@ export async function getObservedActivitySummary(
         bySource: {},
         byType: [],
         confidence: {},
+        callOutcomes: emptyCallOutcomeCounts(),
+        messageDirections: { incoming: 0, outgoing: 0 },
         activeDays: 0,
         windowDays: days,
     };
@@ -1055,43 +1275,110 @@ export async function getObservedActivitySummary(
             ...buildObservedActivityScope(jid, caseId, trackingSessionId),
             timestamp: { $gte: since },
         };
-        const [events, firstEvents, grouped] = await Promise.all([
-            activityEvents
-                .find(match)
-                .sort({ timestamp: -1 })
-                .limit(500)
-                .toArray(),
-            activityEvents
-                .find(match)
-                .sort({ timestamp: 1 })
-                .limit(1)
-                .toArray(),
+        const [eventRows, firstEventRows, grouped, callOutcomeGroups] = await Promise.all([
+            activityEvents.aggregate<CommercialActivityAggregate>([
+                ...commercialActivityGroupingStages(match),
+                { $sort: { lastTimestamp: -1 } },
+                { $limit: 500 },
+            ]).toArray(),
+            activityEvents.aggregate<CommercialActivityAggregate>([
+                ...commercialActivityGroupingStages(match),
+                { $sort: { lastTimestamp: 1 } },
+                { $limit: 1 },
+            ]).toArray(),
             activityEvents.aggregate<{
                 _id: { source: string; type: string; label: string; confidence: string };
                 count: number;
                 activeDays: string[];
             }>([
-                { $match: match },
+                ...commercialActivityGroupingStages(match),
+                {
+                    $set: {
+                        commercialType: {
+                            $cond: [{ $eq: ['$source', 'call'] }, 'call_session', '$type'],
+                        },
+                        commercialLabel: {
+                            $cond: [{ $eq: ['$source', 'call'] }, 'Llamada observada', '$label'],
+                        },
+                        commercialConfidence: {
+                            $cond: [
+                                { $eq: ['$source', 'call'] },
+                                {
+                                    $cond: [
+                                        {
+                                            $or: [
+                                                { $in: ['accept', '$callTypes'] },
+                                                { $in: ['reject', '$callTypes'] },
+                                                { $in: ['timeout', '$callTypes'] },
+                                                { $in: ['busy', '$callTypes'] },
+                                            ],
+                                        },
+                                        'high',
+                                        'medium',
+                                    ],
+                                },
+                                '$confidence',
+                            ],
+                        },
+                        commercialTimestamp: {
+                            $cond: [{ $eq: ['$source', 'call'] }, '$lastTimestamp', '$timestamp'],
+                        },
+                    },
+                },
                 {
                     $group: {
-                        _id: { source: '$source', type: '$type', label: '$label', confidence: '$confidence' },
+                        _id: {
+                            source: '$source',
+                            type: '$commercialType',
+                            label: '$commercialLabel',
+                            confidence: '$commercialConfidence',
+                        },
                         count: { $sum: 1 },
-                        activeDays: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } } },
+                        activeDays: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$commercialTimestamp' } } },
                     },
                 },
                 { $sort: { count: -1 } },
             ]).toArray(),
+            activityEvents.aggregate<{ _id: CommercialCallOutcome; count: number }>([
+                ...commercialActivityGroupingStages(match),
+                { $match: { source: 'call' } },
+                { $set: { commercialOutcome: commercialCallOutcomeExpression() } },
+                { $group: { _id: '$commercialOutcome', count: { $sum: 1 } } },
+            ]).toArray(),
         ]);
+        const events = eventRows
+            .map(mapCommercialActivityAggregate)
+            .filter((event): event is CommercialObservedActivityListItem => event !== null);
+        const firstEvents = firstEventRows
+            .map(mapCommercialActivityAggregate)
+            .filter((event): event is CommercialObservedActivityListItem => event !== null);
 
         const bySource: Record<string, number> = {};
         const confidence: Record<string, number> = {};
+        const messageDirections = { incoming: 0, outgoing: 0 };
         const daySet = new Set<string>();
         let totalEvents = 0;
         grouped.forEach(group => {
             totalEvents += group.count;
             bySource[group._id.source] = (bySource[group._id.source] || 0) + group.count;
             confidence[group._id.confidence] = (confidence[group._id.confidence] || 0) + group.count;
+            if (group._id.source === 'message' && group._id.type === 'incoming') {
+                messageDirections.incoming += group.count;
+            }
+            if (group._id.source === 'message' && group._id.type === 'outgoing') {
+                messageDirections.outgoing += group.count;
+            }
             group.activeDays.forEach(day => daySet.add(day));
+        });
+        const consolidatedTypes = consolidateObservedActivityTypes(grouped.map(group => ({
+            source: group._id.source,
+            type: group._id.type,
+            label: group._id.label,
+            count: group.count,
+        })));
+        const callOutcomes = emptyCallOutcomeCounts();
+        callOutcomeGroups.forEach(group => {
+            callOutcomes[group._id] = group.count;
         });
 
         const activeTypes = new Set([
@@ -1108,6 +1395,7 @@ export async function getObservedActivitySummary(
             'delivered',
             'read',
             'played',
+            'call_session',
         ]);
         const activeEvents = grouped
             .filter(group => activeTypes.has(group._id.type))
@@ -1122,13 +1410,10 @@ export async function getObservedActivitySummary(
             lastCall: events.find(event => event.source === 'call') || null,
             lastMessage: events.find(event => event.source === 'message') || null,
             bySource,
-            byType: grouped.slice(0, 8).map(group => ({
-                type: group._id.type,
-                label: group._id.label,
-                source: group._id.source,
-                count: group.count,
-            })),
+            byType: consolidatedTypes.slice(0, 8),
             confidence,
+            callOutcomes,
+            messageDirections,
             activeDays: daySet.size,
             windowDays: days,
         };
@@ -1191,6 +1476,8 @@ export async function getStateDistribution(
             bySource: {},
             byType: [],
             confidence: {},
+            callOutcomes: emptyCallOutcomeCounts(),
+            messageDirections: { incoming: 0, outgoing: 0 },
             activeDays: 0,
             windowDays: 30,
         },
@@ -1305,7 +1592,7 @@ export async function generateReport(
         caseId: string | null;
         trackingSessionId: string | null;
     };
-    observedActivityEvents: ObservedActivityListItem[];
+    observedActivityEvents: CommercialObservedActivityListItem[];
     observedActivityPage: PageMetadata;
     summary: {
         trackingDuration: string;
@@ -1326,8 +1613,8 @@ export async function generateReport(
         getOnlinePatterns(jid, trackingSessionId),
         getActivityHistory(jid, 200, trackingSessionId),
         getRecentMeasurements(jid, 500, trackingSessionId),
-        trackingSessionId ? getObservedActivityEvents(jid, trackingSessionId, observedEventLimit) : Promise.resolve([]),
-        trackingSessionId ? countObservedActivityEvents(jid, caseId, trackingSessionId) : Promise.resolve(0),
+        trackingSessionId ? getCommercialObservedActivityEvents(jid, trackingSessionId, observedEventLimit) : Promise.resolve([]),
+        trackingSessionId ? countCommercialObservedActivityEvents(jid, caseId, trackingSessionId) : Promise.resolve(0),
         trackingSessionId
             ? getObservedActivityBounds(jid, caseId, trackingSessionId)
             : Promise.resolve({ firstEventAt: null, lastEventAt: null }),

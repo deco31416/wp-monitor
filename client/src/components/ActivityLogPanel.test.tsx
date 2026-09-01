@@ -40,17 +40,17 @@ test('renders persisted human activity without presenting it as RTT', () => {
     expect(screen.getByText('Mensaje entregado')).toBeInTheDocument();
     expect(screen.getByText(/Confirmación · confianza alta/)).toBeInTheDocument();
     expect(screen.getByText('Escribiendo')).toBeInTheDocument();
-    expect(screen.getByText('3 eventos observados')).toBeInTheDocument();
-    expect(screen.getByText('Distribución horaria de señales')).toBeInTheDocument();
+    expect(screen.getByText('3 actividades observadas')).toBeInTheDocument();
+    expect(screen.getByText('Distribución horaria de actividad')).toBeInTheDocument();
     expect(screen.getByLabelText('Gráfica de actividad observada por hora')).toBeInTheDocument();
-    expect(screen.getByText(/eventos reales de esta sesión, no mediciones RTT/i)).toBeInTheDocument();
+    expect(screen.getByText(/una misma llamada se muestran como una sola actividad/i)).toBeInTheDocument();
     expect(screen.queryByText(/RTT:/)).not.toBeInTheDocument();
 });
 
 test('explains when no attributable activity exists', () => {
     render(<ActivityLogPanel events={[]} formatDateTime={value => value || '-'} />);
     expect(screen.getByText('Sin actividad observada')).toBeInTheDocument();
-    expect(screen.queryByText('Distribución horaria de señales')).not.toBeInTheDocument();
+    expect(screen.queryByText('Distribución horaria de actividad')).not.toBeInTheDocument();
 });
 
 test('groups observed signals by local hour and source without mixing RTT', () => {
@@ -86,6 +86,38 @@ test('makes a truncated activity page explicit', () => {
         />,
     );
 
-    expect(screen.getByText('1 de 250 eventos cargados')).toBeInTheDocument();
-    expect(screen.getByText(/muestra los 1 eventos más recientes de 250/i)).toBeInTheDocument();
+    expect(screen.getByText('1 de 250 actividades cargadas')).toBeInTheDocument();
+    expect(screen.getByText(/muestra las 1 actividades más recientes de 250/i)).toBeInTheDocument();
+});
+
+test('explains that one commercial call groups its protocol signals', () => {
+    render(
+        <ActivityLogPanel
+            events={[{
+                source: 'call',
+                type: 'call_ended_unconfirmed',
+                label: 'Llamada finalizada · respuesta no confirmada',
+                confidence: 'medium',
+                timestamp: '2026-09-01T21:44:05.000Z',
+                timestampUtc: '2026-09-01T21:44:05.000Z',
+                call: {
+                    outcome: 'ended_unconfirmed',
+                    direction: 'incoming',
+                    evidence: 'protocol_observed',
+                    signalCount: 3,
+                    technicalSignalCount: 1,
+                    startedAt: '2026-09-01T21:44:00.000Z',
+                    endedAt: '2026-09-01T21:44:05.000Z',
+                    durationSec: null,
+                    relayLatencyMs: 84,
+                    isVideo: false,
+                },
+            }]}
+            formatDateTime={value => value || '-'}
+        />,
+    );
+
+    expect(screen.getByText('1 actividad observada')).toBeInTheDocument();
+    expect(screen.getByText(/3 señales agrupadas/)).toBeInTheDocument();
+    expect(screen.queryByText('relaylatency')).not.toBeInTheDocument();
 });

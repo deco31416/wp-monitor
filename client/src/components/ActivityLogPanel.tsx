@@ -28,6 +28,14 @@ function confidenceLabel(confidence: ObservedActivityEvent['confidence']): strin
 export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPanelProps) {
     const hourly = useMemo(() => buildHourlyActivity(events), [events]);
     const totalEvents = page?.total ?? events.length;
+    const loadedLabel = page?.truncated
+        ? `${events.length} de ${totalEvents} actividades cargadas`
+        : events.length === 1
+            ? '1 actividad cargada'
+            : `${events.length} actividades cargadas`;
+    const observedLabel = events.length === 1
+        ? '1 actividad observada'
+        : `${events.length} actividades observadas`;
 
     return (
         <div className="space-y-4">
@@ -36,14 +44,14 @@ export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPa
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
                         <div>
                             <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider flex items-center gap-1.5">
-                                <BarChart3 size={13} /> Distribución horaria de señales
+                                <BarChart3 size={13} /> Distribución horaria de actividad
                             </h5>
                             <p className="text-[11px] text-txt-dim mt-1">
-                                Actividad observada por hora local. Cada barra representa eventos reales de esta sesión, no mediciones RTT.
+                                Actividad observada por hora local. Las señales técnicas de una misma llamada se muestran como una sola actividad.
                             </p>
                         </div>
                         <span className="badge-neutral !text-[9px] !py-0 !px-1.5 w-fit">
-                            {page?.truncated ? `${events.length} de ${totalEvents} eventos cargados` : `${events.length} eventos cargados`}
+                            {loadedLabel}
                         </span>
                     </div>
                     <div className="h-[220px]" aria-label="Gráfica de actividad observada por hora">
@@ -81,14 +89,14 @@ export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPa
 
             {page?.truncated && (
                 <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-                    La vista muestra los {page.returned} eventos más recientes de {page.total}. Usa el reporte completo para obtener una exportación ampliada de la sesión.
+                    La vista muestra las {page.returned} actividades más recientes de {page.total}. Usa el reporte completo para obtener una exportación ampliada de la sesión.
                 </div>
             )}
 
             <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
                 <div className="flex items-center justify-between gap-3 mb-4">
                     <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider">Actividad observada</h5>
-                    <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{events.length} eventos observados</span>
+                    <span className="badge-neutral !text-[9px] !py-0 !px-1.5">{observedLabel}</span>
                 </div>
                 {events.length > 0 ? (
                     <div className="max-h-[260px] overflow-y-auto pr-2 space-y-0">
@@ -135,6 +143,9 @@ function ActivityTimelineRow({
         warning: 'bg-warning',
         neutral: 'bg-txt-dim',
     }[tone];
+    const callDetail = entry.call
+        ? `${entry.call.signalCount} señales agrupadas${entry.call.durationSec !== null ? ` · ${entry.call.durationSec}s` : ''}`
+        : null;
 
     return (
         <div className="flex items-start gap-3 py-2 group">
@@ -154,6 +165,7 @@ function ActivityTimelineRow({
                     </span>
                     <span className="text-[10px] text-txt-dim ml-2">
                         {sourceLabel(entry.source)} · confianza {confidenceLabel(entry.confidence)}
+                        {callDetail && ` · ${callDetail}`}
                     </span>
                 </div>
                 <span className="text-[10px] text-txt-muted font-mono">

@@ -1,6 +1,8 @@
 import React from 'react';
 import clsx from 'clsx';
-import { Brain, Briefcase, CalendarDays, Coffee, Moon, Shield, Sun, Target, Timer, Zap } from 'lucide-react';
+import { Activity, Brain, Briefcase, CalendarDays, Clock3, Coffee, Eye, MessageSquare, Moon, Shield, Sun, Target, Timer, Zap } from 'lucide-react';
+import type { ObservedActivityEvent } from '../types';
+import { buildObservedActivityPatterns, OBSERVED_DAY_LABELS } from '../observed-patterns';
 
 interface IntelSession {
     totalSessions: number;
@@ -82,10 +84,20 @@ interface IntelPanelProps {
     intel: IntelData | null;
     intelLoading: boolean;
     anomalies: { type: string; severity: string; description: string; timestamp: number }[];
+    observedEvents?: ObservedActivityEvent[];
+    observedEventTotal?: number;
+    observedEventsTruncated?: boolean;
 }
 
-export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) {
-    if (intelLoading && !intel) {
+export function IntelPanel({
+    intel,
+    intelLoading,
+    anomalies,
+    observedEvents = [],
+    observedEventTotal = observedEvents.length,
+    observedEventsTruncated = false,
+}: IntelPanelProps) {
+    if (intelLoading && !intel && observedEvents.length === 0) {
         return (
             <div className="space-y-4">
                 <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
@@ -95,6 +107,16 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
                     </div>
                 </div>
             </div>
+        );
+    }
+
+    if (!intel && observedEvents.length > 0) {
+        return (
+            <ObservedPatternsPanel
+                events={observedEvents}
+                total={observedEventTotal}
+                truncated={observedEventsTruncated}
+            />
         );
     }
 
@@ -111,6 +133,16 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
     }
 
     if (!intel.coverage.available) {
+        if (observedEvents.length > 0) {
+            return (
+                <ObservedPatternsPanel
+                    events={observedEvents}
+                    total={observedEventTotal}
+                    truncated={observedEventsTruncated}
+                    technicalCoverage={intel.coverage}
+                />
+            );
+        }
         return (
             <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
                 <Brain size={32} className="mx-auto text-txt-dim mb-2" />
@@ -128,6 +160,14 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
 
     return (
         <div className="space-y-4">
+            {observedEvents.length > 0 && (
+                <ObservedPatternsPanel
+                    events={observedEvents}
+                    total={observedEventTotal}
+                    truncated={observedEventsTruncated}
+                    technicalCoverage={intel.coverage}
+                />
+            )}
             <HabitProfileCard habits={intel.habits} />
             <WeeklyHeatmapCard heatmap={intel.heatmap} />
             <SessionStatsCard sessionStats={intel.sessionStats} />
@@ -136,6 +176,203 @@ export function IntelPanel({ intel, intelLoading, anomalies }: IntelPanelProps) 
             {anomalies.length > 0 && <AnomaliesCard anomalies={anomalies} />}
         </div>
     );
+}
+
+function ObservedPatternsPanel({
+    events,
+    total,
+    truncated,
+    technicalCoverage,
+}: {
+    events: ObservedActivityEvent[];
+    total: number;
+    truncated: boolean;
+    technicalCoverage?: IntelData['coverage'];
+}) {
+    const timeZone = resolveBrowserTimeZone();
+    const patterns = buildObservedActivityPatterns(events, timeZone);
+    const maxCell = Math.max(1, ...patterns.weekly.flat());
+    const topSource = patterns.topSource ? observedSourceLabel(patterns.topSource) : 'Sin datos';
+    const sampleText = truncated
+        ? `${patterns.totalActivities.toLocaleString()} de ${total.toLocaleString()} actividades recientes`
+        : `${patterns.totalActivities.toLocaleString()} actividades de la sesión`;
+
+    return (
+        <div className="space-y-4">
+            <section className="bg-surface-overlay rounded-xl border border-success/25 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <h5 className="text-xs font-semibold text-success uppercase tracking-wider flex items-center gap-1.5">
+                            <Activity size={13} /> Patrones de actividad observada
+                        </h5>
+                        <p className="text-xs text-txt-muted mt-2 max-w-2xl">
+                            Distribución descriptiva de mensajes, confirmaciones, llamadas y presencia registrados en esta sesión.
+                        </p>
+                    </div>
+                    <span className="w-fit rounded-full border border-success/30 bg-success-muted px-3 py-1 text-[10px] font-semibold text-success">
+                        Evidencia pasiva · sin inferencias
+                    </span>
+                </div>
+
+                <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 mt-4">
+                    <ObservedMetric icon={<Eye size={14} />} label="Actividades analizadas" value={patterns.totalActivities.toLocaleString()} />
+                    <ObservedMetric icon={<CalendarDays size={14} />} label="Días con registros" value={patterns.activeDays.toLocaleString()} />
+                    <ObservedMetric
+                        icon={<Clock3 size={14} />}
+                        label="Hora con más registros"
+                        value={patterns.peakHour === null ? '—' : `${padHour(patterns.peakHour)}:00`}
+                        detail={patterns.peakHour === null ? undefined : `${patterns.peakHourCount} actividades`}
+                    />
+                    <ObservedMetric
+                        icon={<CalendarDays size={14} />}
+                        label="Día con más registros"
+                        value={patterns.peakDay === null ? '—' : OBSERVED_DAY_LABELS[patterns.peakDay] || '—'}
+                        detail={patterns.peakDay === null ? undefined : `${patterns.peakDayCount} actividades`}
+                    />
+                    <ObservedMetric icon={<MessageSquare size={14} />} label="Señal predominante" value={topSource} />
+                </div>
+                {patterns.firstActivityAt && patterns.lastActivityAt && (
+                    <p className="text-[10px] text-txt-dim mt-3">
+                        Ventana de la muestra: {formatObservedDate(patterns.firstActivityAt, timeZone)} – {formatObservedDate(patterns.lastActivityAt, timeZone)}.
+                    </p>
+                )}
+            </section>
+
+            <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between mb-4">
+                    <div>
+                        <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider flex items-center gap-1.5">
+                            <CalendarDays size={13} /> Distribución semanal de registros
+                        </h5>
+                        <p className="text-[10px] text-txt-dim mt-1">Cada celda representa actividades observadas; no tiempo online.</p>
+                    </div>
+                    <span className="text-[9px] text-txt-dim">{sampleText} · {timeZone}</span>
+                </div>
+                <div className="overflow-x-auto">
+                    <div className="min-w-[600px]">
+                        <div className="flex mb-1">
+                            <div className="w-10 shrink-0" />
+                            {Array.from({ length: 24 }, (_, hour) => (
+                                <div key={hour} className="flex-1 text-center text-[8px] text-txt-dim">
+                                    {hour % 3 === 0 ? `${hour}h` : ''}
+                                </div>
+                            ))}
+                        </div>
+                        {patterns.weekly.map((row, dayIndex) => (
+                            <div key={OBSERVED_DAY_LABELS[dayIndex]} className="flex items-center mb-0.5">
+                                <div className="w-10 shrink-0 text-[9px] text-txt-dim font-medium">
+                                    {OBSERVED_DAY_LABELS[dayIndex]}
+                                </div>
+                                {row.map((count, hour) => {
+                                    const intensity = count / maxCell;
+                                    const isPeak = dayIndex === patterns.peakDay && hour === patterns.peakHour;
+                                    return (
+                                        <div
+                                            key={hour}
+                                            className={clsx('flex-1 h-5 rounded-[2px] mx-[0.5px]', isPeak && 'ring-1 ring-accent')}
+                                            style={{
+                                                backgroundColor: count > 0
+                                                    ? `rgba(37,211,102,${Math.max(0.2, intensity)})`
+                                                    : 'rgba(100,116,139,0.12)',
+                                            }}
+                                            title={`${OBSERVED_DAY_LABELS[dayIndex]} ${padHour(hour)}:00 · ${count} actividades observadas`}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        ))}
+                        <div className="flex items-center justify-between mt-2 px-10 text-[8px] text-txt-dim">
+                            <span>Sin registros</span>
+                            <span>Mayor concentración</span>
+                        </div>
+                        {patterns.peakDay !== null && patterns.peakHour !== null && (
+                            <p className="text-center text-[9px] text-txt-dim mt-1">
+                                Mayor concentración de la muestra: {OBSERVED_DAY_LABELS[patterns.peakDay]} a las {padHour(patterns.peakHour)}:00.
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </section>
+
+            <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
+                <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <Clock3 size={13} /> Actividades por franja horaria
+                </h5>
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                    <ObservedMetric label="Madrugada · 00–05" value={patterns.dayParts.dawn.toLocaleString()} />
+                    <ObservedMetric label="Mañana · 06–11" value={patterns.dayParts.morning.toLocaleString()} />
+                    <ObservedMetric label="Tarde · 12–17" value={patterns.dayParts.afternoon.toLocaleString()} />
+                    <ObservedMetric label="Noche · 18–23" value={patterns.dayParts.evening.toLocaleString()} />
+                </div>
+            </section>
+
+            <section className="rounded-xl border border-warning/25 bg-warning-muted/30 p-4">
+                <p className="text-xs font-semibold text-warning">Alcance de la evidencia</p>
+                <p className="text-[11px] text-white/90 mt-1">
+                    Estos patrones describen cuándo se registraron actividades. No prueban presencia continua, disponibilidad, horarios de sueño ni tiempo de uso.
+                </p>
+                {technicalCoverage && !technicalCoverage.available && (
+                    <p className="text-[10px] text-white/75 mt-2">
+                        Inferencias de presencia no habilitadas: {technicalCoverage.conclusiveMeasurements.toLocaleString()} mediciones RTT concluyentes en {technicalCoverage.activeDays} días.
+                    </p>
+                )}
+                {truncated && (
+                    <p className="text-[10px] text-warning mt-2">
+                        La distribución usa las {patterns.totalActivities.toLocaleString()} actividades más recientes de {total.toLocaleString()}; la muestra no representa el historial completo.
+                    </p>
+                )}
+            </section>
+        </div>
+    );
+}
+
+function ObservedMetric({
+    icon,
+    label,
+    value,
+    detail,
+}: {
+    icon?: React.ReactNode;
+    label: string;
+    value: string;
+    detail?: string | undefined;
+}) {
+    return (
+        <div className="rounded-lg border border-surface-border bg-surface-hover p-3">
+            <div className="flex items-center gap-1.5 text-[10px] text-txt-dim uppercase tracking-wider">
+                {icon} {label}
+            </div>
+            <p className="text-lg font-bold text-txt-primary mt-1">{value}</p>
+            {detail && <p className="text-[10px] text-txt-muted mt-0.5">{detail}</p>}
+        </div>
+    );
+}
+
+function resolveBrowserTimeZone(): string {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+        return 'UTC';
+    }
+}
+
+function observedSourceLabel(source: ObservedActivityEvent['source']): string {
+    if (source === 'message') return 'Mensajes';
+    if (source === 'receipt') return 'Confirmaciones';
+    if (source === 'call') return 'Llamadas';
+    return 'Presencia';
+}
+
+function padHour(hour: number): string {
+    return String(hour).padStart(2, '0');
+}
+
+function formatObservedDate(value: string, timeZone: string): string {
+    return new Intl.DateTimeFormat('es-CO', {
+        timeZone,
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(new Date(value));
 }
 
 function HabitProfileCard({ habits }: { habits: IntelHabits }) {

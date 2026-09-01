@@ -24,7 +24,7 @@ import type { ProbeMethod } from './tracker.js';
 import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
 import { isSyntheticProbeId, isSyntheticProbeMessage } from './probe-messages.js';
 import { MessageReceiptRegistry, fingerprintMessageId, type MessageReceiptTransition } from './message-receipts.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getObservedActivityEvents, countObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getCommercialObservedActivityEvents, countCommercialObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
@@ -1085,6 +1085,9 @@ function formatCallLabel(value: string): string {
     switch (value) {
         case 'offer': return 'Llamada entrante';
         case 'ringing': return 'Llamando';
+        case 'preaccept': return 'Preparando llamada';
+        case 'transport': return 'Estableciendo conexión';
+        case 'relaylatency': return 'Conexión de llamada observada';
         case 'accept': return 'Llamada activa';
         case 'busy': return 'Ocupado en llamada';
         case 'reject': return 'Llamada rechazada';
@@ -1184,6 +1187,7 @@ function publishCallLiveState(call: any, source: 'baileys' | 'raw-node' = 'baile
         chatId: call.chatId || null,
         callerPn: call.callerPn || null,
         status: call.status,
+        label: formatCallLabel(call.status),
         isVideo: call.isVideo || false,
         date: call.date,
         offline: call.offline,
@@ -2607,12 +2611,12 @@ app.get('/api/contact/:jid/activity', async (req, res) => {
 
     const limit = parseLimit(req.query.limit, 50, 200);
     const [events, total] = await Promise.all([
-        getObservedActivityEvents(
+        getCommercialObservedActivityEvents(
             jidResult.value!,
             entry.trackingSession.trackingSessionId,
             limit,
         ),
-        countObservedActivityEvents(
+        countCommercialObservedActivityEvents(
             jidResult.value!,
             entry.trackingSession.caseId,
             entry.trackingSession.trackingSessionId,

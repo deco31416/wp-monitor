@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildObservationWindow } from '../src/db.js';
+import { buildObservationWindow, consolidateObservedActivityTypes } from '../src/db.js';
 
 test('calculates a passive-only observation window without requiring RTT', () => {
     const result = buildObservationWindow(
@@ -36,4 +36,42 @@ test('returns a stable empty observation window', () => {
         durationMs: 0,
         label: '0h 0m',
     });
+});
+
+test('consolidates equal commercial activity types across confidence buckets', () => {
+    const result = consolidateObservedActivityTypes([
+        {
+            source: 'message',
+            type: 'incoming',
+            label: 'Mensaje recibido · imagen',
+            count: 2,
+        },
+        {
+            source: 'message',
+            type: 'incoming',
+            label: 'Mensaje recibido · imagen',
+            count: 4,
+        },
+        {
+            source: 'receipt',
+            type: 'delivered',
+            label: 'Mensaje entregado',
+            count: 3,
+        },
+    ]);
+
+    assert.deepEqual(result, [
+        {
+            source: 'message',
+            type: 'incoming',
+            label: 'Mensaje recibido · imagen',
+            count: 6,
+        },
+        {
+            source: 'receipt',
+            type: 'delivered',
+            label: 'Mensaje entregado',
+            count: 3,
+        },
+    ]);
 });

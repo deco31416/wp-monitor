@@ -33,6 +33,7 @@ interface ObservedActivityEvent {
 interface ObservedActivitySummary {
     totalEvents: number;
     activeEvents: number;
+    firstEvent?: ObservedActivityEvent | null;
     lastEvent: ObservedActivityEvent | null;
     lastPresence: ObservedActivityEvent | null;
     lastCall: ObservedActivityEvent | null;
@@ -40,6 +41,17 @@ interface ObservedActivitySummary {
     bySource: Record<string, number>;
     byType: Array<{ type: string; label: string; count: number; source: string }>;
     confidence: Record<string, number>;
+    callOutcomes?: {
+        incoming: number;
+        ringing: number;
+        active: number;
+        completed: number;
+        busy: number;
+        rejected: number;
+        missed: number;
+        ended_unconfirmed: number;
+    };
+    messageDirections?: { incoming: number; outgoing: number };
     activeDays: number;
     windowDays: number;
 }
@@ -113,10 +125,19 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
                         timeAgo={timeAgo}
                     />
                 )}
-                <div className="bg-surface-overlay rounded-xl border border-surface-border p-5 text-center py-10">
-                    <Database size={32} className="mx-auto text-txt-dim mb-2" />
-                    <p className="text-txt-muted text-sm">Sin mediciones técnicas en esta sesión</p>
-                    <p className="text-txt-dim text-xs mt-1">El seguimiento pasivo conserva la actividad observada sin generar tráfico de prueba.</p>
+                <div className="bg-success-muted/40 rounded-xl border border-success/30 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/30 bg-success-muted text-success">
+                            <Radio size={20} />
+                        </div>
+                        <div>
+                            <p className="text-success text-sm font-semibold">Observación pasiva activa</p>
+                            <p className="text-txt-muted text-xs mt-1">Registrando mensajes, confirmaciones y llamadas sin enviar tráfico de prueba.</p>
+                        </div>
+                    </div>
+                    <div className="inline-flex w-fit items-center gap-2 rounded-full border border-surface-border bg-surface-hover px-3 py-1.5 text-[10px] text-txt-dim">
+                        <Activity size={12} /> Medición de latencia no habilitada en esta sesión
+                    </div>
                 </div>
             </div>
         );
@@ -232,25 +253,35 @@ function ObservedActivityPanel({
     const activityConfidence = observed.totalEvents > 0
         ? Math.round(((observed.confidence.high || 0) / observed.totalEvents) * 100)
         : 0;
+    const highConfidence = observed.confidence.high || 0;
+    const mediumConfidence = observed.confidence.medium || 0;
+    const sentMessages = observed.messageDirections?.outgoing || 0;
+    const receivedMessages = observed.messageDirections?.incoming || 0;
+    const callOutcomes = observed.callOutcomes;
+    const answeredCalls = (callOutcomes?.active || 0) + (callOutcomes?.completed || 0);
+    const unconfirmedCalls = callOutcomes?.ended_unconfirmed || 0;
+    const observedActivityLabel = observed.totalEvents === 1
+        ? '1 actividad observada'
+        : `${observed.totalEvents.toLocaleString()} actividades observadas`;
 
     return (
         <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
                 <div>
                     <h6 className="text-[10px] text-txt-dim uppercase tracking-wider flex items-center gap-1.5">
-                        <Activity size={12} /> Senales observadas
+                        <Activity size={12} /> Actividad observada
                     </h6>
                     <p className="text-xs text-txt-muted mt-1">
-                        Eventos atribuibles a esta sesión: presencia, llamadas, mensajes y confirmaciones de entrega.
+                        Actividades atribuibles a esta sesión: presencia, llamadas, mensajes y confirmaciones de entrega.
                     </p>
                 </div>
                 <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md border border-success/30 bg-success-muted text-success w-fit">
-                    {observed.totalEvents.toLocaleString()} observados
+                    {observedActivityLabel}
                 </span>
             </div>
 
             <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
-                <MetricTile icon={<Radio size={15} />} label="Eventos" value={observed.totalEvents.toLocaleString()} />
+                <MetricTile icon={<Radio size={15} />} label="Actividades" value={observed.totalEvents.toLocaleString()} />
                 <MetricTile icon={<Keyboard size={15} />} label="Presencia" value={sourceCounts.presence.toLocaleString()} />
                 <MetricTile icon={<PhoneCall size={15} />} label="Llamadas" value={sourceCounts.call.toLocaleString()} />
                 <MetricTile icon={<MessageSquare size={15} />} label="Mensajes" value={sourceCounts.message.toLocaleString()} />
@@ -259,10 +290,10 @@ function ObservedActivityPanel({
 
             <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-3 mt-3">
                 <div className="rounded-lg border border-surface-border bg-surface-hover p-3">
-                    <p className="text-[10px] text-txt-muted uppercase tracking-wider mb-2">Ultima senal</p>
+                    <p className="text-[10px] text-txt-muted uppercase tracking-wider mb-2">Última actividad</p>
                     <p className="text-sm font-semibold text-txt-primary">{observed.lastEvent?.label || '-'}</p>
                     <p className="text-[11px] text-txt-muted mt-1">
-                        {observed.lastEvent ? `${sourceLabel(observed.lastEvent.source)} · ${timeAgo(observed.lastEvent.timestamp)}` : 'Sin senales recientes'}
+                        {observed.lastEvent ? `${sourceLabel(observed.lastEvent.source)} · ${timeAgo(observed.lastEvent.timestamp)}` : 'Sin señales recientes'}
                     </p>
                     <p className="text-[10px] text-txt-dim mt-1">
                         {observed.lastEvent ? formatDateTime(observed.lastEvent.timestamp) : '-'}
@@ -275,15 +306,54 @@ function ObservedActivityPanel({
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {observed.byType.slice(0, 4).map(item => (
-                            <div key={`${item.source}:${item.type}`} className="flex items-center justify-between gap-2 rounded-md border border-surface-border bg-surface-overlay px-3 py-2">
+                            <div key={`${item.source}:${item.type}:${item.label}`} className="flex items-center justify-between gap-2 rounded-md border border-surface-border bg-surface-overlay px-3 py-2">
                                 <span className="text-xs text-txt-secondary truncate">{item.label}</span>
                                 <span className="text-xs font-bold text-txt-primary">{item.count.toLocaleString()}</span>
                             </div>
                         ))}
                     </div>
+                    <p className="text-[10px] text-txt-dim mt-3">
+                        Alta: {highConfidence.toLocaleString()} · Media: {mediumConfidence.toLocaleString()}.
+                        {unconfirmedCalls > 0 && ' Las llamadas sin confirmación de respuesta se clasifican con confianza media.'}
+                    </p>
                 </div>
             </div>
+
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3">
+                <MiniFact icon={<MessageSquare size={13} />} label="Mensajes enviados" value={sentMessages.toLocaleString()} accent />
+                <MiniFact icon={<MessageSquare size={13} />} label="Mensajes recibidos" value={receivedMessages.toLocaleString()} />
+                <MiniFact icon={<History size={13} />} label="Días con actividad" value={observed.activeDays.toLocaleString()} />
+                <MiniFact
+                    icon={<Clock size={13} />}
+                    label="Primera actividad"
+                    value={observed.firstEvent ? formatDateTime(observed.firstEvent.timestamp) : '-'}
+                />
+            </div>
+
+            {sourceCounts.call > 0 && (
+                <div className="mt-3 rounded-lg border border-surface-border bg-surface-hover p-3">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <p className="text-[10px] text-txt-muted uppercase tracking-wider">Resumen de llamadas</p>
+                        <span className="text-[10px] text-txt-dim">{sourceCounts.call.toLocaleString()} llamadas únicas</span>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+                        <CallOutcomeFact label="Contestadas" value={answeredCalls} />
+                        <CallOutcomeFact label="Sin respuesta confirmada" value={unconfirmedCalls} />
+                        <CallOutcomeFact label="Rechazadas" value={callOutcomes?.rejected || 0} />
+                        <CallOutcomeFact label="Perdidas" value={callOutcomes?.missed || 0} />
+                    </div>
+                </div>
+            )}
         </section>
+    );
+}
+
+function CallOutcomeFact({ label, value }: { label: string; value: number }) {
+    return (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-surface-border bg-surface-overlay px-3 py-2">
+            <span className="text-txt-muted">{label}</span>
+            <span className="font-bold text-txt-primary">{value.toLocaleString()}</span>
+        </div>
     );
 }
 

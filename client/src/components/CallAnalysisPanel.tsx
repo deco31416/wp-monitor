@@ -123,7 +123,7 @@ export function CallAnalysisPanel({
                 {callEvent && (
                     <div className="mt-3 bg-accent/10 border border-accent/30 rounded-lg px-4 py-2">
                         <p className="text-xs text-accent">
-                            Ultima llamada detectada: <span className="font-bold">{callEvent.status}</span>
+                            Última señal de llamada: <span className="font-bold">{callEvent.label || 'Evento de llamada'}</span>
                             {callEvent.isVideo && ' (Video)'}
                             {callEvent.date && ` · ${new Date(callEvent.date).toLocaleTimeString('es-ES')}`}
                         </p>
