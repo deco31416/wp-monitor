@@ -161,12 +161,13 @@ Reglas:
 | BO-CALL-09 | Una ruta directa confirmada requiere como minimo dos fuentes independientes; volumen, GeoIP o proveedor desconocido no bastan por separado. |
 | BO-CALL-10 | Cada endpoint conserva familia, rol y procedencia; una IP IPv6 valida no se rechaza por limitaciones del contrato IPv4 historico. |
 | BO-CALL-11 | Claves, tokens relay, buffers de señalizacion y contenido de llamada quedan excluidos de API, Socket.IO, persistencia, logs e informes. |
-| BO-CALL-12 | El estado efimero de transporte usa una clave HMAC por llamada, contacto, caso y sesion, tiene TTL y limite atomico, y se consume al cerrar una captura automatica correlacionada. |
+| BO-CALL-12 | El estado efimero de transporte usa una clave HMAC por llamada, contacto, caso y sesion, tiene TTL y limite atomico, y se consume al cerrar una captura automatica o manual correlacionada. |
 | BO-CALL-13 | STUN se reconoce por encabezado, cookie, longitud, clase, metodo y TLV validos; la transaccion se representa mediante una huella opaca y credenciales, integridad y datos quedan excluidos. |
 | BO-CALL-14 | La captura acepta UDP/TCP sobre IPv4/IPv6, omite de forma controlada tramas no soportadas y limita a 50.000 los paquetes conservados en memoria; cualquier descarte se declara en `captureBounds`. |
 | BO-CALL-15 | Una captura manual separa linea base, negociacion y llamada activa; el scoring usa la subventana posterior, una captura automatica declara la ausencia de linea base y eventos duplicados o de otra llamada no alteran el ciclo. |
 | BO-CALL-16 | En modo agente, inicio y transiciones de fase viajan por el contrato HMAC con timestamp y nonce; replay, correlacion u orden invalidos fallan cerrados, mientras una indisponibilidad conserva la actividad comercial ya observada. |
 | BO-CALL-17 | Toda clasificacion local de infraestructura declara version, CIDR, fuente y vigencia; IPv4/IPv6, DNS, relay, CDN, cloud y endpoint publico propio degradan de forma visible cuando la fuente vence, falta o entra en conflicto, y nunca se convierten por ello en identidad del contacto. |
+| BO-CALL-18 | `direct_confirmed` exige coincidencia exacta entre flujo elegible y endpoint peer de Baileys; STUN sin esa fuente independiente permanece probable, y DNS, relay, infraestructura o GeoIP nunca confirman una ruta directa. |
 
 ### Alcance, identidad e idempotencia
 

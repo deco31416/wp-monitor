@@ -44,7 +44,7 @@ Infraestructura: Meta, Google, Cloudflare, CDN o relay
 IP publica candidata: direccion observada, paquetes, flujo y score
 ASN/ISP: propietario aproximado del bloque
 GeoIP: pais/region/ciudad aproximados de la red
-Veredicto: p2p, relay, mixed o insufficient_data
+Ruta v2: directa confirmada, directa probable, relay confirmado, mixta o no resuelta
 ```
 
 ### Resultado que no puede garantizar
@@ -99,6 +99,13 @@ la confianza. Los resultados historicos sin fases se mantienen compatibles y no
 reciben una afirmacion inventada. En servidor, las transiciones viajan al agente
 por el canal HMAC interno; un fallo de ese canal conserva la actividad comercial
 pero puede dejar la evidencia tecnica sin separacion por fases.
+
+Al detener, el backend fusiona paquetes, fases, registro de infraestructura,
+STUN sanitizado, señalizacion Baileys y enriquecimiento. `Directa confirmada`
+requiere que una IP elegible del flujo coincida exactamente con un endpoint peer
+de Baileys. Una coincidencia STUN sin esa segunda fuente se presenta como
+`Directa probable`. Cuando Baileys conserva la negociacion peer como payload
+opaco, el sistema declara esa limitacion y no fabrica una confirmacion.
 
 ### Categorias del resultado
 

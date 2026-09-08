@@ -476,6 +476,31 @@ function parseCaptureBounds(value: unknown): NonNullable<CallAnalysisResult['cap
     return { packetLimit, storedPackets, droppedPackets, truncated };
 }
 
+function parseStunEndpoints(value: unknown): NonNullable<CallAnalysisResult['stunEndpoints']> {
+    return requireArray(value, 'stunEndpoints', 256).map((entry, index) => {
+        const endpoint = requireObject(entry, `stunEndpoints[${index}]`);
+        const ip = requireString(endpoint.ip, `stunEndpoints[${index}].ip`);
+        const addressFamily = isIP(ip);
+        if ((addressFamily !== 4 && addressFamily !== 6) || endpoint.addressFamily !== addressFamily) {
+            throw new CaptureAgentClientError('Capture agent returned an invalid STUN endpoint address', 502, 'invalid_agent_response');
+        }
+        const role = requireEnum(endpoint.role, `stunEndpoints[${index}].role`, [
+            'own_public_endpoint',
+            'peer_candidate',
+            'relay',
+            'stun_turn',
+        ] as const);
+        const minimumPort = role === 'peer_candidate' ? 0 : 1;
+        return {
+            ip,
+            port: requireIntegerInRange(endpoint.port, `stunEndpoints[${index}].port`, minimumPort, 65_535),
+            addressFamily,
+            role,
+            source: requireEnum(endpoint.source, `stunEndpoints[${index}].source`, ['stun'] as const),
+        };
+    });
+}
+
 function parseAnalysis(payload: unknown): CallAnalysisResult {
     const object = requireObject(payload, 'Capture agent');
     if (object.transportEvidence !== undefined || object.routeAssessment !== undefined) {
@@ -508,6 +533,9 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     const captureBounds = object.captureBounds === undefined
         ? undefined
         : parseCaptureBounds(object.captureBounds);
+    const stunEndpoints = object.stunEndpoints === undefined
+        ? undefined
+        : parseStunEndpoints(object.stunEndpoints);
     if (capturePhases) {
         const phaseDates = [
             capturePhases.baselineStartedAt,
@@ -545,6 +573,7 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
         captureInterface,
         ...(schemaVersion === undefined ? {} : { schemaVersion: schemaVersion as 2 }),
         ...(capturePhases === undefined ? {} : { capturePhases }),
+        ...(stunEndpoints === undefined ? {} : { stunEndpoints }),
         ...(captureBounds === undefined ? {} : { captureBounds }),
     };
 }

@@ -459,6 +459,13 @@ test('capture agent client accepts the additive v2 packet contract without requi
             negotiationStartedAt: new Date(NOW + 3_000).toISOString(),
             activeCallStartedAt: new Date(NOW + 5_000).toISOString(),
         },
+        stunEndpoints: [{
+            ip: '198.51.100.20',
+            port: 0,
+            addressFamily: 4,
+            role: 'peer_candidate',
+            source: 'stun',
+        }],
         captureBounds: {
             packetLimit: 50_000,
             storedPackets: 10,
@@ -484,6 +491,7 @@ test('capture agent client accepts the additive v2 packet contract without requi
     assert.deepEqual(result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
     assert.ok(result.capturePhases?.baselineStartedAt instanceof Date);
     assert.equal(result.capturePhases?.baselineAvailable, true);
+    assert.deepEqual(result.stunEndpoints, payload.stunEndpoints);
     assert.deepEqual(result.captureBounds, {
         packetLimit: 50_000,
         storedPackets: 10,
@@ -575,6 +583,26 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
                 evidenceSources: ['packet_flow'],
                 limitations: [],
             },
+        },
+        {
+            ...basePayload,
+            stunEndpoints: [{
+                ip: '8.8.8.8',
+                port: 0,
+                addressFamily: 4,
+                role: 'stun_turn',
+                source: 'stun',
+            }],
+        },
+        {
+            ...basePayload,
+            stunEndpoints: Array.from({ length: 257 }, () => ({
+                ip: '198.51.100.10',
+                port: 3478,
+                addressFamily: 4,
+                role: 'stun_turn',
+                source: 'stun',
+            })),
         },
         {
             ...basePayload,

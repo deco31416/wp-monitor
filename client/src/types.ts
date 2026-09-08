@@ -133,10 +133,22 @@ export interface CallTransportEvidence {
 }
 
 export interface CallRouteAssessment {
+    assessmentVersion: 2;
     classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
     confidenceScore: number;
     evidenceSources: Array<'baileys_transport' | 'packet_flow' | 'stun' | 'baseline' | 'infrastructure_registry' | 'ip_enrichment'>;
+    independentDirectEvidenceCount: number;
+    primaryCandidateIp: string | null;
+    reasonCodes: string[];
     limitations: string[];
+}
+
+export interface SanitizedStunEndpoint {
+    ip: string;
+    port: number;
+    addressFamily: 4 | 6;
+    role: 'own_public_endpoint' | 'peer_candidate' | 'relay' | 'stun_turn';
+    source: 'stun';
 }
 
 export interface CallCapturePhases {
@@ -161,6 +173,7 @@ export interface CallAnalysisResult {
     captureInterface: string;
     schemaVersion?: 2;
     capturePhases?: CallCapturePhases;
+    stunEndpoints?: SanitizedStunEndpoint[];
     transportEvidence?: CallTransportEvidence;
     routeAssessment?: CallRouteAssessment;
     captureBounds?: {

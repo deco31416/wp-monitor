@@ -120,6 +120,13 @@ El submit consume en Redis los limites por IP y token/IP. Devuelve `429` con `Re
 Las rutas de captura responden `403` en `railway-dashboard`.
 `GET /api/call-analysis/:jid` y `GET /api/call-history/:jid` aceptan `caseId` opcional para consultar exclusivamente los analisis del caso seleccionado; sin ese parametro conservan el caso de la sesion activa como alcance por defecto.
 
+Los resultados nuevos conservan `verdict` por compatibilidad y añaden
+`routeAssessment` v2 con clasificacion, score, fuentes, numero de evidencias
+directas independientes, candidata principal, razones y limitaciones. Pueden
+incluir `stunEndpoints` sanitizados y acotados; nunca incluyen credenciales,
+integridad, transacciones crudas ni contenido de llamada. Documentos historicos
+sin estos campos siguen siendo validos.
+
 ## Auditoria y reportes de caso
 
 | Metodo | Ruta |

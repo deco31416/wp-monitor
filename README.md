@@ -305,6 +305,9 @@ The call-analysis view can include:
 - ISP, organization, ASN, mobile/proxy/hosting flags, and approximate network coordinates when available
 - Automatic demotion of CDN, cloud, hosting, or proxy infrastructure after enrichment
 - Persistent analysis history by `callId`
+- Backend-owned route assessment that separates confirmed direct, probable
+  direct, relay, mixed, and unresolved outcomes with explicit evidence sources
+  and limitations
 
 Candidate scoring is deliberately limited by sample size, directionality, infrastructure detection, and other correlation constraints. An observed address must never be presented as a verified person’s IP or exact location.
 

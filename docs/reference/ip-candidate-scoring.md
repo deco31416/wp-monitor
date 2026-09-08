@@ -111,6 +111,28 @@ Cada candidato incluye:
 - `correlation`: lectura operacional con clasificacion, resumen, pais del numero, pais GeoIP observado y topes aplicados.
 - `technicalNote`: limitacion tecnica para evitar sobreinterpretacion.
 
+## Correlacion de ruta v2
+
+El score de una IP y la conclusion de ruta son contratos distintos. El backend
+calcula `routeAssessment` despues del enriquecimiento y antes de persistir:
+
+- `direct_confirmed`: flujo bidireccional elegible con al menos 20 paquetes de
+  llamada y coincidencia exacta con un endpoint `peer_candidate` de Baileys;
+  cuenta dos fuentes independientes (`packet_flow` y `baileys_transport`).
+- `direct_probable`: patron de flujo fuerte sin la coincidencia Baileys exacta.
+  Un endpoint peer obtenido solo por STUN puede corroborar, pero no cuenta como
+  segunda fuente independiente.
+- `relay_confirmed`: trafico relay/Meta activo o negociacion relay observada, sin
+  candidata directa elegible.
+- `mixed`: evidencia directa probable o confirmada junto con relay.
+- `unresolved`: muestra insuficiente o ausencia de evidencia elegible.
+
+`routeAssessment` expone `confidenceScore`, `evidenceSources`,
+`independentDirectEvidenceCount`, `primaryCandidateIp`, `reasonCodes` y
+`limitations`. DNS como `8.8.8.8`, STUN/TURN publico, Meta/relay, CDN, cloud,
+hosting, la salida publica propia y GeoIP nunca se promueven a evidencia directa
+por volumen, bidireccionalidad o coincidencia geografica.
+
 ## Interpretacion recomendada
 
 - 75-100: candidato tecnico fuerte, requiere corroboracion.
@@ -139,7 +161,5 @@ Cada candidato incluye:
   runtime ni omitir revision humana/versionado.
 - Ampliar cloud, VPN/proxy y datacenters solo con fuentes precisas y pruebas de
   no solapamiento.
-- Incorporar el diferencial estadistico linea base/llamada al correlador v2; el
-  transporte remoto firmado de ambas ventanas ya esta disponible.
 - Agregar pruebas unitarias para cada regla de scoring.
 - Incluir pruebas visuales del bloque ASN/ORG en UI y reportes.

@@ -461,7 +461,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     distinguieron; el endpoint publico propio obtuvo score 0 y `isP2P=false`.
     No se tocaron produccion, Docker runtime, volumenes ni datos persistentes.
 
-- [ ] **OBS-20.10 — Correlador y scoring de ruta v2** — `TODO`
+- [x] **OBS-20.10 — Correlador y scoring de ruta v2** — `DONE (E3 LOCAL)`
   - Alcance: fusionar señalizacion, protocolo, fase, bidireccionalidad, volumen,
     infraestructura y enriquecimiento en una conclusion explicable.
   - Aceptacion: una ruta directa confirmada requiere al menos dos fuentes
@@ -469,6 +469,21 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
   - Afecta: Llamada, persistencia, Auditoria e Informes.
   - Evidencia requerida: matriz relay, peer probable, directo confirmado,
     mixto, no concluyente y falsos positivos como `8.8.8.8`.
+  - Evidencia: correlador puro y autoritativo en backend con contrato v2,
+    cierre comun para captura automatica, REST y Socket, y vinculacion segura
+    del `callId` observado en capturas manuales. Conserva endpoints STUN
+    sanitizados y acotados; exige coincidencia exacta entre flujo elegible y
+    endpoint `peer_candidate` de Baileys para `direct_confirmed`. STUN solo
+    corrobora y DNS, Meta/relay, CDN, cloud, endpoint propio, GeoIP o una muestra
+    debil nunca producen confirmacion directa. Persistencia Mongo es aditiva;
+    auditoria y reportes JSON/CSV incluyen clasificacion, score, fuentes,
+    candidato principal, razones y limitaciones. QA completa en verde el
+    2026-09-08: 306 backend, 30 frontend, typechecks, lint y builds; matriz
+    dirigida 55/55. Smoke del artefacto compilado distinguio confirmado con dos
+    fuentes, probable, relay y `8.8.8.8` no concluyente. La negociacion peer
+    opaca que Baileys no expone como endpoint atribuible permanece limitada a
+    probable; no se fabrica una confirmacion. No se tocaron produccion, Docker
+    runtime, volumenes ni datos persistentes.
 
 - [ ] **OBS-20.11 — Experiencia comercial en Llamada y reportes** — `TODO`
   - Alcance: presentar ruta observada, confianza, evidencias, limitaciones y

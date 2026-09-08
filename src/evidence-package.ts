@@ -239,6 +239,7 @@ const REPORT_ACTION_LABELS: Record<string, string> = {
 const REPORT_NETWORK_CATEGORY_LABELS: Record<string, string> = {
     meta: 'Infraestructura de Meta',
     stun_turn: 'Relay o servicio STUN/TURN',
+    dns: 'Servicio DNS',
     cdn: 'Red de distribución de contenido',
     cloud_hosting: 'Infraestructura de nube',
     cloud_or_cdn: 'Infraestructura de nube o CDN',
@@ -408,6 +409,17 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         .sort((a: any, b: any) => b.score - a.score || b.packets - a.packets);
     const candidateIps = observedCallIps.filter((candidate: any) => candidate.isP2P);
     const nonConclusiveIpObservations = observedCallIps.filter((candidate: any) => !candidate.isP2P);
+    const callRoutes = callAnalysis.map((analysis: any) => ({
+        callId: analysis.callId,
+        targetJid: analysis.targetJid,
+        classification: analysis.routeAssessment?.classification || 'unresolved',
+        confidenceScore: analysis.routeAssessment?.confidenceScore || 0,
+        evidenceSources: analysis.routeAssessment?.evidenceSources || [],
+        independentDirectEvidenceCount: analysis.routeAssessment?.independentDirectEvidenceCount || 0,
+        primaryCandidateIp: analysis.routeAssessment?.primaryCandidateIp || null,
+        reasonCodes: analysis.routeAssessment?.reasonCodes || [],
+        limitations: analysis.routeAssessment?.limitations || [],
+    }));
 
     const timeline = auditEvents
         .slice()
@@ -440,6 +452,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         candidateIpCount: candidateIps.length,
         nonConclusiveIpObservationCount: nonConclusiveIpObservations.length,
         highestCandidateScore: candidateIps[0]?.score || 0,
+        routeAssessmentCount: callRoutes.filter((route: any) => route.classification !== 'unresolved').length,
     };
 
     const findings = {
@@ -453,6 +466,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         observedSignals,
         candidateIps,
         nonConclusiveIpObservations,
+        callRoutes,
         limitations: evidencePackage.manifest.limitations,
     };
 
@@ -1364,6 +1378,13 @@ function buildCsvAnnexes(
             candidates.length,
             highestScore,
             Array.isArray(analysis.metaIps) ? analysis.metaIps.length : 0,
+            analysis.routeAssessment?.classification || 'unresolved',
+            analysis.routeAssessment?.confidenceScore || 0,
+            analysis.routeAssessment?.independentDirectEvidenceCount || 0,
+            analysis.routeAssessment?.primaryCandidateIp || '',
+            analysis.routeAssessment?.evidenceSources || [],
+            analysis.routeAssessment?.reasonCodes || [],
+            analysis.routeAssessment?.limitations || [],
         ];
     });
 
@@ -1494,7 +1515,7 @@ function buildCsvAnnexes(
         {
             name: 'annexes/call-analysis.csv',
             data: toCsv(
-                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount'],
+                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount', 'routeClassification', 'routeConfidenceScore', 'independentDirectEvidenceCount', 'primaryCandidateIp', 'routeEvidenceSources', 'routeReasonCodes', 'routeLimitations'],
                 callRows
             ),
         },

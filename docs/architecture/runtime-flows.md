@@ -116,9 +116,22 @@ la salida publica propia en una IP atribuida al contacto.
 En paralelo, el backend interpreta solo metadata permitida de `CB:call` y guarda
 temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla
 llamada, contacto, caso y sesion; una operacion Lua deduplica, limita y renueva
-el TTL. Al terminar una captura automatica con el mismo `callId`, el backend
-consume ese estado de forma atomica y lo agrega como `transportEvidence` v2. Una
-caida de Redis degrada esa evidencia secundaria, no la actividad de llamada.
+el TTL. En captura manual, el `callId` real solo se vincula cuando el ciclo de
+fases acepta la llamada observada; una llamada concurrente no puede reemplazarlo.
+Al terminar cualquier captura, el backend consume el estado correspondiente de
+forma atomica y lo agrega como `transportEvidence` v2. Una caida de Redis
+degrada esa evidencia secundaria, no la actividad de llamada.
+
+El correlador v2 se ejecuta en backend despues del enriquecimiento y antes de
+persistir, auditar o emitir. Fusiona flujo de paquetes, fases, STUN sanitizado,
+señalizacion Baileys, registro de infraestructura y enriquecimiento. Una ruta
+`direct_confirmed` exige coincidencia exacta de IP entre flujo bidireccional
+elegible y endpoint peer de Baileys: dos fuentes independientes. Una coincidencia
+STUN sin peer Baileys permanece `direct_probable`. DNS, relay, CDN/cloud, salida
+publica propia y GeoIP solo clasifican o limitan; nunca prueban una ruta directa.
+El resultado `routeAssessment` conserva score, fuentes, cantidad de evidencias
+directas independientes, candidata principal, razones y limitaciones. Los
+veredictos historicos se mantienen como alias compatibles.
 
 El ciclo de evento de llamada y el ciclo de captura no son el mismo objeto. Una llamada puede no producir captura si falta autorizacion/capacidad; una captura manual puede existir sin evento de llamada.
 

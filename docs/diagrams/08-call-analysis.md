@@ -24,9 +24,12 @@ flowchart TD
     Degraded[Evidencia degradada + tope]
     Flow[Direccion, volumen, puertos y bidireccionalidad]
     Score[Score y reason codes]
+    Stun[Endpoints STUN sanitizados]
+    Transport[Señalizacion Baileys sanitizada en Redis]
     Geo[DB-IP principal e ip-api complementario]
     Consistency[Contexto de prefijo y contradicciones]
-    Result[Resultado con limitaciones]
+    Correlator[Correlador de ruta v2 en backend]
+    Result[Resultado, auditoria y reporte]
 
     Backend -->|start/phase/status/stop firmado| Agent
     Backend --> Local
@@ -39,8 +42,11 @@ flowchart TD
     Private -->|No| Registry --> Fresh
     Fresh -->|No| Degraded --> Known
     Fresh -->|Si| Known
-    Known -->|Si| Result
-    Known -->|No| Flow --> Score --> Geo --> Consistency --> Result
+    Known -->|Si| Correlator
+    Known -->|No| Flow --> Score --> Geo --> Consistency --> Correlator
+    Packets --> Stun --> Correlator
+    Backend --> Transport --> Correlator
+    Correlator --> Result
 ```
 
 ## Decisiones
@@ -52,7 +58,14 @@ flowchart TD
 - Pocos paquetes limitan la confianza aunque exista flujo bidireccional.
 - Prefijo telefonico aporta contexto, no obliga a que GeoIP coincida.
 - Proveedores contradictorios deben producir una advertencia u omision de mapa.
+- `direct_confirmed` exige coincidencia exacta entre flujo elegible y peer
+  Baileys; STUN sin esa segunda fuente solo permite `direct_probable`.
+- DNS, relays, CDN/cloud, salida propia y GeoIP no son evidencia directa aunque
+  tengan alto volumen o una ubicacion aparentemente coherente.
 
 ## Veredictos
 
-`p2p`, `relay`, `mixed` o `insufficient_data` describen la ruta observada. Ninguno confirma por si solo identidad, dispositivo o ubicacion fisica.
+El contrato v2 usa `direct_confirmed`, `direct_probable`, `relay_confirmed`,
+`mixed` o `unresolved`. Los valores historicos `p2p`, `relay`, `mixed` e
+`insufficient_data` se conservan como alias compatibles. Ninguno confirma por
+si solo identidad, dispositivo o ubicacion fisica.

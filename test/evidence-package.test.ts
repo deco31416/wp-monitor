@@ -119,6 +119,16 @@ function sampleEvidencePackage(): any {
                     metaIps: ['192.0.2.50'],
                     verdict: 'mixed',
                     captureInterface: 'unit0',
+                    routeAssessment: {
+                        assessmentVersion: 2,
+                        classification: 'mixed',
+                        confidenceScore: 82,
+                        evidenceSources: ['packet_flow', 'baileys_transport'],
+                        independentDirectEvidenceCount: 2,
+                        primaryCandidateIp: '203.0.113.50',
+                        reasonCodes: ['DIRECT_CONFIRMED_WITH_RELAY'],
+                        limitations: ['synthetic_limitation'],
+                    },
                 },
             ],
             activityStats: [
@@ -231,6 +241,9 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(report.summary.observedActivityTotalAvailable, 2);
     assert.equal(report.summary.observedActivityTruncated, false);
     assert.equal(report.summary.highestCandidateScore, 55);
+    assert.equal(report.summary.routeAssessmentCount, 1);
+    assert.equal(report.findings.callRoutes[0]?.classification, 'mixed');
+    assert.equal(report.findings.callRoutes[0]?.independentDirectEvidenceCount, 2);
     const [activityStats] = report.findings.activityStats;
     const [candidateIp] = report.findings.candidateIps;
     const [nonConclusiveIp] = report.findings.nonConclusiveIpObservations;
@@ -323,4 +336,6 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
     ]) {
         assert.match(zipText, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
+    assert.match(zipText, /routeClassification/);
+    assert.match(zipText, /DIRECT_CONFIRMED_WITH_RELAY/);
 });

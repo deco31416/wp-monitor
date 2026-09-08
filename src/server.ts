@@ -31,6 +31,8 @@ import { BaileysCallObserver, type ObservedBaileysCall } from './baileys-call-ob
 import { BaileysRawNodeHub } from './baileys-raw-node-hub.js';
 import { observeCallTransportNode } from './call-transport-observer.js';
 import { CallTransportStateStore, type CallTransportScope } from './call-transport-state.js';
+import { correlateCallRoute } from './call-route-correlator.js';
+import type { CallAnalysisResult } from './call-analyzer.js';
 import { WhatsAppIdentityResolver } from './whatsapp-identity.js';
 import { RedisObservationCoordinator } from './observation-dedupe.js';
 import { PresenceSubscriptionCoordinator, type PresenceSubscriptionReason } from './presence-subscription.js';
@@ -952,7 +954,13 @@ interface CaptureAuditContext {
 }
 
 let activeNetworkAuditContext: (CaptureAuditContext & { captureSessionId: string }) | null = null;
-let activeCallAuditContext: (CaptureAuditContext & { targetJid: string; callId: string }) | null = null;
+type ActiveCallAuditContext = CaptureAuditContext & {
+    targetJid: string;
+    callId: string;
+    observedCallId?: string;
+};
+
+let activeCallAuditContext: ActiveCallAuditContext | null = null;
 const liveSignalExpiryTimers = new Map<string, NodeJS.Timeout>();
 
 function clearContactObservationState(jid: string): void {
@@ -1150,6 +1158,21 @@ async function takeCallTransportEvidence(callId: string, jid: string) {
     const snapshot = await callTransportStateStore.take(scope);
     if (snapshot.degraded) console.warn('[CALL] Transport evidence unavailable: Redis is degraded');
     return snapshot.evidence;
+}
+
+async function finalizeCallAnalysis(
+    rawResult: CallAnalysisResult,
+    context: ActiveCallAuditContext | null,
+): Promise<CallAnalysisResult> {
+    const transportCallId = context?.observedCallId
+        ?? (context?.callId === rawResult.callId ? rawResult.callId : null);
+    const transportEvidence = transportCallId
+        ? await takeCallTransportEvidence(transportCallId, rawResult.targetJid)
+        : null;
+    const enriched = await enrichCallAnalysis(rawResult);
+    return correlateCallRoute(transportEvidence
+        ? { ...enriched, schemaVersion: 2, transportEvidence }
+        : enriched);
 }
 
 function resolveStoredLidMapping(canonicalLid: string): string | null {
@@ -1502,11 +1525,22 @@ async function publishCallLiveState(
 async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<void> {
     const { call, jid } = event;
     await publishCallLiveState(call, 'baileys', jid);
+    let phaseObserved = false;
     try {
-        await callCaptureService.observeCallEvent(jid, call.id, call.status);
+        phaseObserved = await callCaptureService.observeCallEvent(jid, call.id, call.status);
     } catch (error) {
         const code = error instanceof CaptureAgentClientError ? error.code : 'capture_phase_failed';
         console.warn(`[CALL] Capture phase update failed (${code}); call activity remains available`);
+    }
+    if (
+        phaseObserved
+        && activeCallAuditContext
+        && activeCallAuditContext.targetJid === jid
+        && activeCallAuditContext.callId !== call.id
+        && !activeCallAuditContext.observedCallId
+        && (call.status === 'offer' || call.status === 'accept')
+    ) {
+        activeCallAuditContext.observedCallId = call.id;
     }
 
     // Auto-start only when a default case context is configured and the call
@@ -1573,7 +1607,12 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         && activeCallAuditContext.targetJid === jid,
     );
     if (!callCaptureService.isEnabled() || !isTerminalCallStatus || !matchesActiveCapture) {
-        if (isTerminalCallStatus) await takeCallTransportEvidence(call.id, jid);
+        const belongsToManualCapture = Boolean(
+            activeCallAuditContext
+            && activeCallAuditContext.targetJid === jid
+            && activeCallAuditContext.observedCallId === call.id,
+        );
+        if (isTerminalCallStatus && !belongsToManualCapture) await takeCallTransportEvidence(call.id, jid);
         return;
     }
 
@@ -1587,11 +1626,7 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         return;
     }
     activeCallAuditContext = null;
-    const transportEvidence = await takeCallTransportEvidence(call.id, jid);
-    const enrichedResult = rawResult ? await enrichCallAnalysis(rawResult) : null;
-    const result = enrichedResult && transportEvidence
-        ? { ...enrichedResult, schemaVersion: 2 as const, transportEvidence }
-        : enrichedResult;
+    const result = rawResult ? await finalizeCallAnalysis(rawResult, stoppedCallAuditContext) : null;
     if (!result) return;
 
     console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(candidate => candidate.isP2P).length} direct-path candidates`);
@@ -1606,6 +1641,9 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         candidateCount: result.candidateIps.filter(candidate => candidate.isP2P).length,
         metaIpCount: result.metaIps.length,
         baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
+        routeClassification: result.routeAssessment?.classification ?? 'unresolved',
+        routeConfidenceScore: result.routeAssessment?.confidenceScore ?? 0,
+        routeEvidenceSources: result.routeAssessment?.evidenceSources ?? [],
         trigger: 'auto',
     }, result.targetJid);
 }
@@ -3632,7 +3670,7 @@ app.post('/api/call-capture/stop', async (_req, res) => {
         return;
     }
     activeCallAuditContext = null;
-    const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
+    const result = rawResult ? await finalizeCallAnalysis(rawResult, stoppedCallAuditContext) : null;
     if (result) {
         io.emit('call-analysis', result);
         if (stoppedCallAuditContext) {
@@ -3644,6 +3682,9 @@ app.post('/api/call-capture/stop', async (_req, res) => {
                 candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                 metaIpCount: result.metaIps.length,
                 baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
+                routeClassification: result.routeAssessment?.classification ?? 'unresolved',
+                routeConfidenceScore: result.routeAssessment?.confidenceScore ?? 0,
+                routeEvidenceSources: result.routeAssessment?.evidenceSources ?? [],
                 status: 'completed',
             }, result.targetJid);
             await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
@@ -3655,6 +3696,9 @@ app.post('/api/call-capture/stop', async (_req, res) => {
                 candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                 metaIpCount: result.metaIps.length,
                 baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
+                routeClassification: result.routeAssessment?.classification ?? 'unresolved',
+                routeConfidenceScore: result.routeAssessment?.confidenceScore ?? 0,
+                routeEvidenceSources: result.routeAssessment?.evidenceSources ?? [],
                 trigger: 'manual_rest',
             }, result.targetJid);
         }
@@ -4194,7 +4238,7 @@ io.on('connection', (socket) => {
             return;
         }
         activeCallAuditContext = null;
-        const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
+        const result = rawResult ? await finalizeCallAnalysis(rawResult, stoppedCallAuditContext) : null;
         if (result) {
             io.emit('call-analysis', result);
             if (stoppedCallAuditContext) {
@@ -4206,6 +4250,9 @@ io.on('connection', (socket) => {
                     candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                     metaIpCount: result.metaIps.length,
                     baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
+                    routeClassification: result.routeAssessment?.classification ?? 'unresolved',
+                    routeConfidenceScore: result.routeAssessment?.confidenceScore ?? 0,
+                    routeEvidenceSources: result.routeAssessment?.evidenceSources ?? [],
                     status: 'completed',
                 }, result.targetJid);
                 await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
@@ -4217,6 +4264,9 @@ io.on('connection', (socket) => {
                     candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                     metaIpCount: result.metaIps.length,
                     baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
+                    routeClassification: result.routeAssessment?.classification ?? 'unresolved',
+                    routeConfidenceScore: result.routeAssessment?.confidenceScore ?? 0,
+                    routeEvidenceSources: result.routeAssessment?.evidenceSources ?? [],
                     trigger: 'socket',
                 }, result.targetJid);
             }

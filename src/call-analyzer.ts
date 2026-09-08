@@ -96,6 +96,14 @@ export interface SanitizedCallEndpoint {
     rttMs?: number;
 }
 
+export interface SanitizedStunEndpoint {
+    ip: string;
+    port: number;
+    addressFamily: 4 | 6;
+    role: 'own_public_endpoint' | 'peer_candidate' | 'relay' | 'stun_turn';
+    source: 'stun';
+}
+
 export interface CallTransportEvidence {
     firstObservedAt: Date;
     lastObservedAt: Date;
@@ -108,9 +116,13 @@ export interface CallTransportEvidence {
 }
 
 export interface CallRouteAssessment {
+    assessmentVersion: 2;
     classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
     confidenceScore: number;
     evidenceSources: CallRouteEvidenceSource[];
+    independentDirectEvidenceCount: number;
+    primaryCandidateIp: string | null;
+    reasonCodes: string[];
     limitations: string[];
 }
 
@@ -158,6 +170,7 @@ export interface CallAnalysisResult {
     captureInterface: string;
     schemaVersion?: 2;
     capturePhases?: CallCapturePhases;
+    stunEndpoints?: SanitizedStunEndpoint[];
     transportEvidence?: CallTransportEvidence;
     routeAssessment?: CallRouteAssessment;
     captureBounds?: CallCaptureBounds;
@@ -193,6 +206,7 @@ interface RawCallPacket {
     payloadLength: number;
     protocolEvidence: CallProtocolEvidence[];
     ownPublicEndpoints: string[];
+    stunEndpoints: SanitizedStunEndpoint[];
 }
 
 // ── State ──────────────────────────────────────────────────────
@@ -389,6 +403,13 @@ export function startCallCapture(
                     ownPublicEndpoints: [...new Set(observed.stun?.endpoints
                         .filter(endpoint => endpoint.role === 'own_public_endpoint')
                         .map(endpoint => endpoint.ip) ?? [])].slice(0, 8),
+                    stunEndpoints: (observed.stun?.endpoints ?? []).slice(0, 8).map(endpoint => ({
+                        ip: endpoint.ip,
+                        port: endpoint.port,
+                        addressFamily: endpoint.addressFamily,
+                        role: endpoint.role,
+                        source: 'stun' as const,
+                    })),
                 };
 
                 if (!capturedPacketCollector.add(packet)) return;
@@ -544,6 +565,17 @@ function analyzePackets(
     const metaIpSet = new Set<string>();
     const activeMetaIpSet = new Set<string>();
     const ownPublicEndpoints = new Set(packets.flatMap(packet => packet.ownPublicEndpoints));
+    const stunEndpointMap = new Map<string, SanitizedStunEndpoint>();
+
+    for (const packet of packets) {
+        for (const endpoint of packet.stunEndpoints) {
+            if (stunEndpointMap.size >= 256) break;
+            stunEndpointMap.set(
+                `${endpoint.ip}\0${endpoint.port}\0${endpoint.role}`,
+                endpoint,
+            );
+        }
+    }
 
     for (const pkt of packets) {
         // Determine which IP is "remote" (not local)
@@ -733,6 +765,7 @@ function analyzePackets(
         captureInterface,
         schemaVersion: 2,
         ...(capturePhases ? { capturePhases } : {}),
+        ...(stunEndpointMap.size > 0 ? { stunEndpoints: [...stunEndpointMap.values()] } : {}),
         captureBounds,
     };
 
