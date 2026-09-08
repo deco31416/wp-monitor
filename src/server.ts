@@ -1502,7 +1502,12 @@ async function publishCallLiveState(
 async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<void> {
     const { call, jid } = event;
     await publishCallLiveState(call, 'baileys', jid);
-    callCaptureService.observeCallEvent(jid, call.id, call.status);
+    try {
+        await callCaptureService.observeCallEvent(jid, call.id, call.status);
+    } catch (error) {
+        const code = error instanceof CaptureAgentClientError ? error.code : 'capture_phase_failed';
+        console.warn(`[CALL] Capture phase update failed (${code}); call activity remains available`);
+    }
 
     // Auto-start only when a default case context is configured and the call
     // belongs to an explicitly active tracking session.

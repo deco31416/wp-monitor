@@ -417,7 +417,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     analisis; la repeticion con el limite real confirmo `OOM=false`. El contrato
     remoto de transiciones queda exclusivamente en `OBS-20.8`.
 
-- [ ] **OBS-20.8 — Contrato firmado de fases con capture-agent** — `TODO`
+- [x] **OBS-20.8 — Contrato firmado de fases con capture-agent** — `DONE (E3 LOCAL)`
   - Alcance: comunicar inicio/aceptacion/finalizacion al agente mediante el
     contrato HMAC existente, con timestamp, nonce y limites.
   - Aceptacion: autenticacion, replay, timeout, orden incorrecto y agente no
@@ -425,6 +425,18 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
   - Afecta: capture-agent app/client/service y health operacional.
   - Evidencia requerida: pruebas positivas, firma invalida, replay, timeout y
     respuesta sobredimensionada.
+  - Evidencia: `/v1/call/phase` correlaciona captura, contacto, llamada observada
+    y estado bajo el HMAC existente; readiness exige
+    `capabilities.callCapturePhases=1`. El agente rechaza firma alterada, replay,
+    captura distinta y regresion posterior a `accept`; cliente y servicio
+    contienen timeout, indisponibilidad, acuse inconsistente y respuesta mayor a
+    5 MiB sin eliminar la actividad comercial observada. QA completa en verde el
+    2026-09-08: 291 backend, 29 frontend, typechecks, lint, builds, documentacion,
+    licencias y Preview Compose sintetico. Smoke E3 Docker local con la imagen
+    real del agente, sin puertos ni volumenes: health `healthy`, `OOM=false`, 48
+    paquetes conservados, 12 de linea base y 36 de llamada, fases ordenadas,
+    cero descartes y captura final inactiva. Contenedor, red e imagen temporales
+    fueron retirados; no se tocaron produccion ni recursos persistentes.
 
 - [ ] **OBS-20.9 — Registro versionado de infraestructura** — `TODO`
   - Alcance: clasificar Meta, relays anunciados, Google STUN/TURN, DNS, CDN,

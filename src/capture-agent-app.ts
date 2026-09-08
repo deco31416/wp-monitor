@@ -8,6 +8,11 @@ import express, {
 import { isIP } from 'node:net';
 import { CaptureAgentRequestVerifier } from './capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus } from './call-analyzer.js';
+import {
+    isCallCapturePhaseStatus,
+    type CallCapturePhaseStatus,
+    type CallCaptureTrigger,
+} from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
 import { cleanText, validateJid } from './validation.js';
 import { SOFTWARE_VERSION } from './version.js';
@@ -16,7 +21,18 @@ export interface CaptureAgentAdapter {
     capturePrivilegesAvailable(): boolean;
     listInterfaces(): NetworkInterface[];
     getCallCaptureStatus(): CallCaptureStatus;
-    startCallCapture(interfaceAddr: string, targetJid: string, callId: string, isVideo: boolean): boolean;
+    startCallCapture(
+        interfaceAddr: string,
+        targetJid: string,
+        callId: string,
+        isVideo: boolean,
+        context: {
+            trigger: CallCaptureTrigger;
+            observedCallId?: string;
+            initialCallStatus?: CallCapturePhaseStatus;
+        },
+    ): boolean;
+    observeCallCapturePhase(targetJid: string, observedCallId: string, status: CallCapturePhaseStatus): boolean;
     stopCallCapture(): CallAnalysisResult | null;
 }
 
@@ -95,6 +111,7 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             version: SOFTWARE_VERSION,
             status: ready ? 'ready' : 'unavailable',
             capturePrivileges: ready,
+            capabilities: { callCapturePhases: 1 },
         });
     });
 
@@ -129,6 +146,13 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
         const target = validateJid(body.targetJid, 'targetJid');
         const callId = cleanText(body.callId, 120);
         const isVideo = body.isVideo === true;
+        const trigger = body.trigger === undefined ? 'manual' : cleanText(body.trigger, 16);
+        const observedCallId = body.observedCallId === undefined
+            ? undefined
+            : cleanText(body.observedCallId, 120);
+        const initialCallStatus = body.initialCallStatus === undefined
+            ? undefined
+            : cleanText(body.initialCallStatus, 32).toLowerCase();
         const validationErrors = [
             isIP(interfaceAddr) !== 4 ? 'interfaceAddr must be an IPv4 address returned by the agent' : null,
             options.adapter.listInterfaces().some(item => item.address === interfaceAddr)
@@ -137,6 +161,19 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             target.ok ? null : target.errors?.[0] || 'targetJid is invalid',
             CALL_ID_PATTERN.test(callId) ? null : 'callId must be 3-120 safe characters',
             typeof body.isVideo === 'boolean' ? null : 'isVideo must be a boolean',
+            trigger === 'manual' || trigger === 'auto' ? null : 'trigger must be manual or auto',
+            observedCallId === undefined || CALL_ID_PATTERN.test(observedCallId)
+                ? null
+                : 'observedCallId must be 3-120 safe characters',
+            initialCallStatus === undefined || isCallCapturePhaseStatus(initialCallStatus)
+                ? null
+                : 'initialCallStatus is not a supported call phase status',
+            initialCallStatus === undefined || observedCallId !== undefined
+                ? null
+                : 'observedCallId is required with initialCallStatus',
+            trigger !== 'auto' || (observedCallId !== undefined && initialCallStatus !== undefined)
+                ? null
+                : 'automatic capture requires observedCallId and initialCallStatus',
         ].filter((error): error is string => Boolean(error));
 
         if (validationErrors.length > 0) {
@@ -144,12 +181,61 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             return;
         }
 
-        const started = options.adapter.startCallCapture(interfaceAddr, target.value!, callId, isVideo);
+        const started = options.adapter.startCallCapture(interfaceAddr, target.value!, callId, isVideo, {
+            trigger: trigger as CallCaptureTrigger,
+            ...(observedCallId === undefined ? {} : { observedCallId }),
+            ...(initialCallStatus === undefined ? {} : {
+                initialCallStatus: initialCallStatus as CallCapturePhaseStatus,
+            }),
+        });
         if (!started) {
             res.status(500).json({ error: 'Capture agent could not start packet capture', code: 'capture_start_failed' });
             return;
         }
         res.status(201).json({ ok: true, callId, targetJid: target.value });
+    });
+
+    app.post('/v1/call/phase', (request, res) => {
+        const body = parseJsonObject(request as RawBodyRequest, res);
+        if (!body) return;
+
+        const captureCallId = cleanText(body.captureCallId, 120);
+        const target = validateJid(body.targetJid, 'targetJid');
+        const observedCallId = cleanText(body.observedCallId, 120);
+        const status = cleanText(body.status, 32).toLowerCase();
+        const validationErrors = [
+            CALL_ID_PATTERN.test(captureCallId) ? null : 'captureCallId must be 3-120 safe characters',
+            target.ok ? null : target.errors?.[0] || 'targetJid is invalid',
+            CALL_ID_PATTERN.test(observedCallId) ? null : 'observedCallId must be 3-120 safe characters',
+            isCallCapturePhaseStatus(status) ? null : 'status is not a supported call phase status',
+        ].filter((error): error is string => Boolean(error));
+        if (validationErrors.length > 0) {
+            res.status(400).json({ error: 'Call phase request validation failed', details: validationErrors });
+            return;
+        }
+
+        const active = options.adapter.getCallCaptureStatus();
+        if (!active.isCapturing || active.callId !== captureCallId || active.targetJid !== target.value) {
+            res.status(409).json({
+                error: 'Call phase does not match the active capture',
+                code: 'capture_phase_mismatch',
+            });
+            return;
+        }
+
+        const accepted = options.adapter.observeCallCapturePhase(
+            target.value!,
+            observedCallId,
+            status as CallCapturePhaseStatus,
+        );
+        if (!accepted) {
+            res.status(409).json({
+                error: 'Call phase transition was rejected',
+                code: 'capture_phase_rejected',
+            });
+            return;
+        }
+        res.json({ ok: true, captureCallId, observedCallId, status });
     });
 
     app.post('/v1/call/stop', (_req, res) => {

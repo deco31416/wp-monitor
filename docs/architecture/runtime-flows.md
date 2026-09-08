@@ -92,15 +92,19 @@ Puede iniciarse manualmente o por evento cuando existe metadata por defecto auto
 
 En modo agente, el sidecar valida privilegios, interfaz enumerada, JID, `callId`, tipo y captura unica. La captura observa UDP/TCP sobre IPv4/IPv6, descarta de forma controlada protocolos, fragmentos o tramas que no puede interpretar y conserva como maximo 50.000 registros de metadata. `stop` devuelve el total observado y `captureBounds`, de modo que una muestra truncada nunca se presenta como completa. El cliente vuelve a validar este resultado antes de enriquecer, persistir, auditar y emitir `call-analysis`.
 
-En proveedor `local`, una captura manual comienza en fase de linea base. El
+En proveedores `local` y `agent`, una captura manual comienza en fase de linea base. El
 primer evento correlacionado de oferta/negociacion cierra esa fase y `accept`
 marca el inicio activo. Los paquetes se conservan completos, pero el scoring usa
 los conteos posteriores a la linea base; cada candidata declara
 `baselinePackets` y `activeCallPackets`. Una captura automatica comienza sin
 linea base y lo declara mediante `capturePhases.baselineAvailable=false`. Los
 duplicados son idempotentes y otra llamada no puede mover la captura activa. El
-proveedor `agent` mantiene el contrato start/status/stop anterior hasta que
-`OBS-20.8` añada transiciones firmadas; por ello no inventa fases remotas.
+proveedor `agent` recibe cada transicion en `/v1/call/phase`: el cuerpo firmado
+incluye captura, contacto, llamada observada y estado. El agente rechaza firma o
+nonce invalidos, replay, correlacion incorrecta y regresiones de fase. Un timeout
+o agente no disponible degrada la evidencia tecnica sin eliminar la actividad
+de llamada ya publicada. Readiness exige `callCapturePhases: 1`, por lo que una
+mezcla de versiones falla cerrada durante un despliegue gradual.
 
 En paralelo, el backend interpreta solo metadata permitida de `CB:call` y guarda
 temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla

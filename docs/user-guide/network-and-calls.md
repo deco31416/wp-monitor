@@ -92,12 +92,13 @@ En Docker/VPS enlaza WhatsApp Web mediante Selkies detras del acceso/tunel prote
 6. detiene desde WP MONITOR;
 7. espera el resultado en tiempo real y revisa la disponibilidad de linea base.
 
-Con proveedor local, el resultado separa paquetes previos y posteriores al
+Con proveedor local o agente, el resultado separa paquetes previos y posteriores al
 inicio correlacionado de la llamada. Si la captura comienza automaticamente, la
 interfaz advierte que no hubo linea base previa y que el trafico de fondo limita
 la confianza. Los resultados historicos sin fases se mantienen compatibles y no
-reciben una afirmacion inventada. El transporte de estas transiciones hacia el
-proveedor `agent` queda pendiente del contrato firmado de `OBS-20.8`.
+reciben una afirmacion inventada. En servidor, las transiciones viajan al agente
+por el canal HMAC interno; un fallo de ese canal conserva la actividad comercial
+pero puede dejar la evidencia tecnica sin separacion por fases.
 
 ### Categorias del resultado
 

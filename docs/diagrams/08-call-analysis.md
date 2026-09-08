@@ -25,12 +25,13 @@ flowchart TD
     Consistency[Contexto de prefijo y contradicciones]
     Result[Resultado con limitaciones]
 
-    Backend -->|start/stop firmado| Agent
+    Backend -->|start/phase/status/stop firmado| Agent
     Backend --> Local
     Browser --> Agent
     Local --> Baseline --> Negotiation --> Active --> Packets --> Private
     Local --> Auto --> Negotiation
-    Agent --> Packets
+    Agent --> Baseline
+    Agent --> Auto
     Private -->|Si| Result
     Private -->|No| Known
     Known -->|Si| Result

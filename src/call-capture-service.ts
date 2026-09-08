@@ -11,6 +11,10 @@ import { hasPacketCapturePrivileges } from './capture-permissions.js';
 import { listInterfaces } from './packet-capture.js';
 import type { NetworkInterface } from './packet-capture.js';
 import type { CallCaptureMode } from './runtime.js';
+import {
+    isCallCapturePhaseStatus,
+    type CallCapturePhaseStatus,
+} from './call-capture-phases.js';
 
 export interface CallCaptureServiceOptions {
     mode: CallCaptureMode;
@@ -22,7 +26,7 @@ export type CallPacketCallback = (packet: unknown) => void;
 export interface CallCaptureStartContext {
     trigger: 'manual' | 'auto';
     observedCallId?: string;
-    initialCallStatus?: string;
+    initialCallStatus?: CallCapturePhaseStatus;
 }
 
 const EMPTY_STATUS: CallCaptureStatus = {
@@ -38,6 +42,7 @@ export class CallCaptureService {
     private readonly mode: CallCaptureMode;
     private readonly agent: CaptureAgentClient | null;
     private agentAvailable = false;
+    private activeAgentCapture: { callId: string; targetJid: string } | null = null;
 
     constructor(options: CallCaptureServiceOptions) {
         if (options.mode === 'agent' && !options.agent) {
@@ -86,7 +91,13 @@ export class CallCaptureService {
 
     async getStatus(): Promise<CallCaptureStatus> {
         if (this.mode === 'local') return getCallCaptureStatus();
-        if (this.mode === 'agent') return this.agent!.getCallCaptureStatus();
+        if (this.mode === 'agent') {
+            const status = await this.agent!.getCallCaptureStatus();
+            this.activeAgentCapture = status.isCapturing && status.callId && status.targetJid
+                ? { callId: status.callId, targetJid: status.targetJid }
+                : null;
+            return status;
+        }
         return { ...EMPTY_STATUS };
     }
 
@@ -102,23 +113,37 @@ export class CallCaptureService {
             return startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback, context);
         }
         if (this.mode === 'agent') {
-            return this.agent!.startCallCapture({ interfaceAddr, targetJid, callId, isVideo });
+            const started = await this.agent!.startCallCapture({ interfaceAddr, targetJid, callId, isVideo, ...context });
+            if (started) this.activeAgentCapture = { callId, targetJid };
+            return started;
         }
         return false;
     }
 
-    observeCallEvent(targetJid: string, observedCallId: string, status: string): boolean {
-        if (this.mode !== 'local') return false;
-        return observeCallCapturePhase(targetJid, observedCallId, status);
+    async observeCallEvent(targetJid: string, observedCallId: string, status: string): Promise<boolean> {
+        if (!isCallCapturePhaseStatus(status)) return false;
+        if (this.mode === 'local') return observeCallCapturePhase(targetJid, observedCallId, status);
+        if (this.mode !== 'agent' || !this.activeAgentCapture) return false;
+        return this.agent!.observeCallCapturePhase({
+            captureCallId: this.activeAgentCapture.callId,
+            targetJid,
+            observedCallId,
+            status,
+        });
     }
 
     async stop(): Promise<CallAnalysisResult | null> {
         if (this.mode === 'local') return stopCallCapture();
         if (this.mode === 'agent') {
             try {
-                return await this.agent!.stopCallCapture();
+                const result = await this.agent!.stopCallCapture();
+                this.activeAgentCapture = null;
+                return result;
             } catch (error) {
-                if (error instanceof CaptureAgentClientError && error.code === 'capture_not_active') return null;
+                if (error instanceof CaptureAgentClientError && error.code === 'capture_not_active') {
+                    this.activeAgentCapture = null;
+                    return null;
+                }
                 throw error;
             }
         }

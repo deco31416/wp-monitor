@@ -8,6 +8,7 @@ import {
 } from '../src/capture-agent-app.js';
 import { signCaptureAgentRequest } from '../src/capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus } from '../src/call-analyzer.js';
+import { CallCapturePhaseLifecycle } from '../src/call-capture-phases.js';
 import { SOFTWARE_VERSION } from '../src/version.js';
 
 const SECRET = 'capture-agent-app-secret-000000000000000000000000';
@@ -31,6 +32,7 @@ async function withServer(
 }
 
 function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boolean } {
+    const phaseLifecycle = new CallCapturePhaseLifecycle(() => new Date(NOW));
     const state: CallCaptureStatus = {
         isCapturing: false,
         targetJid: null,
@@ -44,14 +46,18 @@ function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boole
         capturePrivilegesAvailable: () => privileges,
         listInterfaces: () => [{ name: 'eth-test', address: '192.0.2.10', description: 'Synthetic interface' }],
         getCallCaptureStatus: () => ({ ...state }),
-        startCallCapture: (_interfaceAddr, targetJid, callId) => {
+        startCallCapture: (_interfaceAddr, targetJid, callId, _isVideo, context) => {
             adapter.started = true;
             state.isCapturing = true;
             state.targetJid = targetJid;
             state.callId = callId;
             state.startTime = new Date(NOW);
+            phaseLifecycle.start({ captureCallId: callId, targetJid, ...context });
             return true;
         },
+        observeCallCapturePhase: (targetJid, observedCallId, status) => (
+            phaseLifecycle.observe(targetJid, observedCallId, status)
+        ),
         stopCallCapture: () => {
             if (!state.isCapturing) return null;
             const result: CallAnalysisResult = {
@@ -103,6 +109,7 @@ test('exposes public liveness and readiness without interface details', async ()
             version: SOFTWARE_VERSION,
             status: 'ready',
             capturePrivileges: true,
+            capabilities: { callCapturePhases: 1 },
         });
     });
 });
@@ -153,6 +160,90 @@ test('starts and stops one authenticated capture while rejecting replay', async 
         assert.equal(stop.status, 200);
         assert.equal(result.callId, 'CALL-001');
         assert.equal(result.verdict, 'insufficient_data');
+    });
+});
+
+test('accepts signed call phases and rejects replay, tampering, mismatch, and phase regression', async () => {
+    const adapter = buildAdapter();
+    await withServer(adapter, async baseUrl => {
+        const startPath = '/v1/call/start';
+        const startBody = JSON.stringify({
+            interfaceAddr: '192.0.2.10',
+            targetJid: '573001112233@s.whatsapp.net',
+            callId: 'CAPTURE-PHASE-001',
+            isVideo: false,
+            trigger: 'manual',
+        });
+        const start = await fetch(`${baseUrl}${startPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', startPath, startBody, 'nonce_phase_start_0001'),
+            body: startBody,
+        });
+        assert.equal(start.status, 201);
+
+        const phasePath = '/v1/call/phase';
+        const offerBody = JSON.stringify({
+            captureCallId: 'CAPTURE-PHASE-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            observedCallId: 'OBSERVED-PHASE-001',
+            status: 'offer',
+        });
+        const offerHeaders = signedHeaders('POST', phasePath, offerBody, 'nonce_phase_offer_0001');
+        const offer = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: offerHeaders,
+            body: offerBody,
+        });
+        assert.equal(offer.status, 200);
+        assert.equal((await offer.json()).ok, true);
+
+        const replay = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: offerHeaders,
+            body: offerBody,
+        });
+        assert.equal(replay.status, 401);
+        assert.equal((await replay.json()).code, 'replayed_request');
+
+        const tamperedBody = offerBody.replace('offer', 'accept');
+        const tampered = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', phasePath, offerBody, 'nonce_phase_tamper_001'),
+            body: tamperedBody,
+        });
+        assert.equal(tampered.status, 401);
+        assert.equal((await tampered.json()).code, 'invalid_request_auth');
+
+        const mismatchBody = JSON.stringify({
+            captureCallId: 'CAPTURE-OTHER-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            observedCallId: 'OBSERVED-PHASE-001',
+            status: 'accept',
+        });
+        const mismatch = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', phasePath, mismatchBody, 'nonce_phase_mismatch_01'),
+            body: mismatchBody,
+        });
+        assert.equal(mismatch.status, 409);
+        assert.equal((await mismatch.json()).code, 'capture_phase_mismatch');
+
+        const acceptBody = offerBody.replace('offer', 'accept');
+        const accept = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', phasePath, acceptBody, 'nonce_phase_accept_0001'),
+            body: acceptBody,
+        });
+        assert.equal(accept.status, 200);
+
+        const regressedBody = offerBody.replace('offer', 'ringing');
+        const regressed = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', phasePath, regressedBody, 'nonce_phase_regress_001'),
+            body: regressedBody,
+        });
+        assert.equal(regressed.status, 409);
+        assert.equal((await regressed.json()).code, 'capture_phase_rejected');
     });
 });
 

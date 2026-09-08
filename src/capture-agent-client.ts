@@ -2,6 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { signCaptureAgentRequest, validateCaptureAgentSecret } from './capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus, CandidateIP } from './call-analyzer.js';
+import {
+    CALL_CAPTURE_PHASE_STATUSES,
+    type CallCapturePhaseStatus,
+    type CallCaptureTrigger,
+} from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
 import { validateJid } from './validation.js';
 
@@ -545,7 +550,10 @@ export class CaptureAgentClient {
             });
             if (!response.ok) return false;
             const payload = requireObject(await parseResponseJson(response, 'Capture agent readiness'), 'Capture agent readiness');
-            return payload.status === 'ready' && payload.capturePrivileges === true;
+            const capabilities = requireObject(payload.capabilities, 'Capture agent readiness capabilities');
+            return payload.status === 'ready'
+                && payload.capturePrivileges === true
+                && capabilities.callCapturePhases === 1;
         } catch {
             return false;
         }
@@ -564,9 +572,34 @@ export class CaptureAgentClient {
         targetJid: string;
         callId: string;
         isVideo: boolean;
+        trigger: CallCaptureTrigger;
+        observedCallId?: string;
+        initialCallStatus?: CallCapturePhaseStatus;
     }): Promise<boolean> {
         const payload = requireObject(await this.request('POST', '/v1/call/start', input), 'Capture agent');
         return payload.ok === true;
+    }
+
+    async observeCallCapturePhase(input: {
+        captureCallId: string;
+        targetJid: string;
+        observedCallId: string;
+        status: CallCapturePhaseStatus;
+    }): Promise<boolean> {
+        const payload = requireObject(await this.request('POST', '/v1/call/phase', input), 'Capture agent');
+        if (
+            payload.ok !== true
+            || requireCallId(payload.captureCallId, 'captureCallId') !== input.captureCallId
+            || requireCallId(payload.observedCallId, 'observedCallId') !== input.observedCallId
+            || requireEnum(payload.status, 'status', CALL_CAPTURE_PHASE_STATUSES) !== input.status
+        ) {
+            throw new CaptureAgentClientError(
+                'Capture agent returned an inconsistent call phase acknowledgement',
+                502,
+                'invalid_agent_response',
+            );
+        }
+        return true;
     }
 
     async stopCallCapture(): Promise<CallAnalysisResult> {

@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createCaptureAgentApp } from './capture-agent-app.js';
 import {
     getCallCaptureStatus,
+    observeCallCapturePhase,
     startCallCapture,
     stopCallCapture,
 } from './call-analyzer.js';
@@ -26,9 +27,10 @@ const app = createCaptureAgentApp({
         capturePrivilegesAvailable: hasDedicatedCapturePrivileges,
         listInterfaces,
         getCallCaptureStatus,
-        startCallCapture: (interfaceAddr, targetJid, callId, isVideo) => (
-            startCallCapture(interfaceAddr, targetJid, callId, isVideo)
+        startCallCapture: (interfaceAddr, targetJid, callId, isVideo, context) => (
+            startCallCapture(interfaceAddr, targetJid, callId, isVideo, undefined, context)
         ),
+        observeCallCapturePhase,
         stopCallCapture,
     },
 });

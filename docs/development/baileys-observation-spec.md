@@ -165,6 +165,7 @@ Reglas:
 | BO-CALL-13 | STUN se reconoce por encabezado, cookie, longitud, clase, metodo y TLV validos; la transaccion se representa mediante una huella opaca y credenciales, integridad y datos quedan excluidos. |
 | BO-CALL-14 | La captura acepta UDP/TCP sobre IPv4/IPv6, omite de forma controlada tramas no soportadas y limita a 50.000 los paquetes conservados en memoria; cualquier descarte se declara en `captureBounds`. |
 | BO-CALL-15 | Una captura manual separa linea base, negociacion y llamada activa; el scoring usa la subventana posterior, una captura automatica declara la ausencia de linea base y eventos duplicados o de otra llamada no alteran el ciclo. |
+| BO-CALL-16 | En modo agente, inicio y transiciones de fase viajan por el contrato HMAC con timestamp y nonce; replay, correlacion u orden invalidos fallan cerrados, mientras una indisponibilidad conserva la actividad comercial ya observada. |
 
 ### Alcance, identidad e idempotencia
 

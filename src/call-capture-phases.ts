@@ -8,6 +8,24 @@ export interface CallCapturePhases {
 
 export type CallCaptureTrigger = 'manual' | 'auto';
 
+export const CALL_CAPTURE_PHASE_STATUSES = [
+    'offer',
+    'ringing',
+    'preaccept',
+    'transport',
+    'relaylatency',
+    'accept',
+    'reject',
+    'timeout',
+    'terminate',
+] as const;
+
+export type CallCapturePhaseStatus = typeof CALL_CAPTURE_PHASE_STATUSES[number];
+
+export function isCallCapturePhaseStatus(value: string): value is CallCapturePhaseStatus {
+    return (CALL_CAPTURE_PHASE_STATUSES as readonly string[]).includes(normalizeStatus(value));
+}
+
 export interface CallCapturePhaseStart {
     captureCallId: string;
     targetJid: string;
@@ -103,6 +121,12 @@ export class CallCapturePhaseLifecycle {
 
         active.observedCallId ??= observedCallId;
         if (TERMINAL_STATUSES.has(normalizedStatus)) return true;
+
+        // Once the active media phase has been observed, a late negotiation
+        // signal is not allowed to move the remote lifecycle backwards.
+        if (active.phases.activeCallStartedAt && NEGOTIATION_STATUSES.has(normalizedStatus)) {
+            return false;
+        }
 
         const transitionAt = this.now();
         if (!isAtOrAfter(transitionAt, active.phases.negotiationStartedAt)) return false;

@@ -97,6 +97,26 @@ test('duplicates are idempotent and a different call cannot mutate the active li
     assert.equal(snapshot?.activeCallStartedAt, null);
 });
 
+test('a late negotiation event cannot regress an active call phase', () => {
+    const time = clock(1_000);
+    const lifecycle = new CallCapturePhaseLifecycle(time.now);
+    lifecycle.start({ captureCallId: CAPTURE_ID, targetJid: JID, trigger: 'manual' });
+    time.set(2_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'offer'), true);
+    time.set(3_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'accept'), true);
+    time.set(4_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'ringing'), false);
+
+    assert.deepEqual(lifecycle.snapshot(), {
+        baselineAvailable: true,
+        baselineStartedAt: new Date(1_000),
+        baselineEndedAt: new Date(2_000),
+        negotiationStartedAt: new Date(2_000),
+        activeCallStartedAt: new Date(3_000),
+    });
+});
+
 test('a clock regression cannot create an invalid phase order', () => {
     const time = clock(1_000);
     const lifecycle = new CallCapturePhaseLifecycle(time.now);

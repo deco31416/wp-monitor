@@ -6,11 +6,13 @@ import { createCaptureAgentApp, type CaptureAgentAdapter } from '../src/capture-
 import { CaptureAgentClient, CaptureAgentClientError } from '../src/capture-agent-client.js';
 import { CallCaptureService } from '../src/call-capture-service.js';
 import type { CallAnalysisResult, CallCaptureStatus } from '../src/call-analyzer.js';
+import { CallCapturePhaseLifecycle } from '../src/call-capture-phases.js';
 
 const SECRET = 'capture-agent-client-secret-0000000000000000000000';
 const NOW = 1_787_593_200_000;
 
 function createAdapter(): CaptureAgentAdapter {
+    const phaseLifecycle = new CallCapturePhaseLifecycle(() => new Date(NOW));
     const status: CallCaptureStatus = {
         isCapturing: false,
         targetJid: null,
@@ -23,15 +25,24 @@ function createAdapter(): CaptureAgentAdapter {
         capturePrivilegesAvailable: () => true,
         listInterfaces: () => [{ name: 'browser-net', address: '172.31.0.10', description: 'Browser namespace' }],
         getCallCaptureStatus: () => ({ ...status }),
-        startCallCapture: (_interfaceAddr, targetJid, callId) => {
+        startCallCapture: (_interfaceAddr, targetJid, callId, _isVideo, context) => {
             status.isCapturing = true;
             status.targetJid = targetJid;
             status.callId = callId;
             status.startTime = new Date(NOW);
+            phaseLifecycle.start({ captureCallId: callId, targetJid, ...context });
             return true;
         },
+        observeCallCapturePhase: (targetJid, observedCallId, phaseStatus) => (
+            phaseLifecycle.observe(targetJid, observedCallId, phaseStatus)
+        ),
         stopCallCapture: () => {
             if (!status.isCapturing) return null;
+            const capturePhases = phaseLifecycle.finish(
+                status.callId!,
+                status.targetJid!,
+                new Date(NOW + 10_000),
+            );
             const result: CallAnalysisResult = {
                 callId: status.callId!,
                 targetJid: status.targetJid!,
@@ -77,6 +88,7 @@ function createAdapter(): CaptureAgentAdapter {
                 metaIps: ['157.240.1.1'],
                 verdict: 'relay',
                 captureInterface: '172.31.0.10',
+                ...(capturePhases ? { schemaVersion: 2, capturePhases } : {}),
             };
             status.isCapturing = false;
             return result;
@@ -118,11 +130,18 @@ test('capture agent client completes the authenticated lifecycle and restores Da
             targetJid: '573001112233@s.whatsapp.net',
             callId: 'CALL-REMOTE-001',
             isVideo: false,
+            trigger: 'manual',
         }), true);
 
         const active = await client.getCallCaptureStatus();
         assert.equal(active.isCapturing, true);
         assert.ok(active.startTime instanceof Date);
+        assert.equal(await client.observeCallCapturePhase({
+            captureCallId: 'CALL-REMOTE-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            observedCallId: 'OBSERVED-CALL-001',
+            status: 'offer',
+        }), true);
 
         const result = await client.stopCallCapture();
         assert.equal(result.callId, 'CALL-REMOTE-001');
@@ -137,6 +156,38 @@ test('capture agent client completes the authenticated lifecycle and restores Da
     });
 });
 
+test('call capture service forwards the signed remote phase lifecycle', async () => {
+    await withAgent(async baseUrl => {
+        let nonce = 0;
+        const client = new CaptureAgentClient({
+            baseUrl,
+            sharedSecret: SECRET,
+            now: () => NOW,
+            nonce: () => `service_nonce_${String(++nonce).padStart(16, '0')}`,
+        });
+        const service = new CallCaptureService({ mode: 'agent', agent: client });
+        const targetJid = '573001112233@s.whatsapp.net';
+
+        assert.equal(await service.start(
+            '172.31.0.10',
+            targetJid,
+            'CAPTURE-SERVICE-001',
+            false,
+            undefined,
+            { trigger: 'manual' },
+        ), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-SERVICE-001', 'offer'), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-SERVICE-001', 'accept'), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-SERVICE-001', 'terminate'), true);
+
+        const result = await service.stop();
+        assert.equal(result?.capturePhases?.negotiationStartedAt?.getTime(), NOW);
+        assert.equal(result?.capturePhases?.activeCallStartedAt?.getTime(), NOW);
+        assert.equal(result?.capturePhases?.baselineAvailable, false);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-SERVICE-001', 'accept'), false);
+    });
+});
+
 test('capture agent client rejects unsafe origins and weak secrets', () => {
     assert.throws(() => new CaptureAgentClient({
         baseUrl: 'http://user:password@capture-agent:4100/path',
@@ -146,6 +197,19 @@ test('capture agent client rejects unsafe origins and weak secrets', () => {
         baseUrl: 'http://capture-agent:4100',
         sharedSecret: 'weak',
     }), /at least 32 bytes/);
+});
+
+test('readiness requires the remote phase capability', async () => {
+    const client = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        fetchImpl: (async () => new Response(JSON.stringify({
+            status: 'ready',
+            capturePrivileges: true,
+        }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
+    });
+
+    assert.equal(await client.ready(), false);
 });
 
 test('capture agent client maps transport failures to a controlled unavailable error', async () => {
@@ -160,6 +224,69 @@ test('capture agent client maps transport failures to a controlled unavailable e
         (error: unknown) => error instanceof CaptureAgentClientError
             && error.status === 503
             && error.code === 'capture_agent_unavailable',
+    );
+});
+
+test('call phase requests fail closed on timeout, unavailable agent, and oversized response', async () => {
+    const phase = {
+        captureCallId: 'CAPTURE-FAILURE-001',
+        targetJid: '573001112233@s.whatsapp.net',
+        observedCallId: 'OBSERVED-FAILURE-001',
+        status: 'offer' as const,
+    };
+    const unavailable = new CaptureAgentClient({
+        baseUrl: 'http://127.0.0.1:9',
+        sharedSecret: SECRET,
+        timeoutMs: 500,
+    });
+    await assert.rejects(
+        unavailable.observeCallCapturePhase(phase),
+        (error: unknown) => error instanceof CaptureAgentClientError
+            && error.code === 'capture_agent_unavailable',
+    );
+
+    const timedOut = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        timeoutMs: 500,
+        fetchImpl: ((_input, init) => new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        })) as typeof fetch,
+    });
+    await assert.rejects(
+        timedOut.observeCallCapturePhase(phase),
+        (error: unknown) => error instanceof CaptureAgentClientError
+            && error.code === 'capture_agent_unavailable',
+    );
+
+    const oversized = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        fetchImpl: (async () => new Response('{}', {
+            status: 200,
+            headers: { 'content-length': String(5 * 1024 * 1024 + 1) },
+        })) as typeof fetch,
+    });
+    await assert.rejects(
+        oversized.observeCallCapturePhase(phase),
+        (error: unknown) => error instanceof CaptureAgentClientError
+            && error.code === 'agent_response_too_large',
+    );
+
+    const inconsistent = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        fetchImpl: (async () => new Response(JSON.stringify({
+            ok: true,
+            captureCallId: phase.captureCallId,
+            observedCallId: 'OBSERVED-OTHER-001',
+            status: phase.status,
+        }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
+    });
+    await assert.rejects(
+        inconsistent.observeCallCapturePhase(phase),
+        (error: unknown) => error instanceof CaptureAgentClientError
+            && error.code === 'invalid_agent_response',
     );
 });
 

@@ -127,7 +127,7 @@ Cada candidato incluye:
 
 - Integrar fuente ASN/ORG actualizada y cacheada para verificacion formal.
 - Ampliar base local de hosting, cloud, VPN/proxy y datacenters.
-- Incorporar las fases remotas firmadas del capture-agent y la linea base
-  posterior al cierre dentro del correlador v2.
+- Incorporar el diferencial estadistico linea base/llamada al correlador v2; el
+  transporte remoto firmado de ambas ventanas ya esta disponible.
 - Agregar pruebas unitarias para cada regla de scoring.
 - Incluir pruebas visuales del bloque ASN/ORG en UI y reportes.

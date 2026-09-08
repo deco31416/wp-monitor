@@ -38,16 +38,16 @@ Frontera unica para captura de llamada. En modo `local` delega al analizador nat
 Maquina de fases determinista para una unica captura. Correlaciona contacto y
 llamada observada, separa linea base, negociacion y llamada activa, rechaza
 retrocesos de reloj y eventos de otra llamada, y clasifica cada paquete sin
-retener contenido. El proveedor local ya usa estas fases; su transporte firmado
-al sidecar corresponde a `OBS-20.8`.
+retener contenido. Los proveedores local y agente usan la misma maquina; el
+backend transmite al sidecar cada transicion correlacionada mediante HMAC.
 
 ### `src/capture-agent-auth.ts`, `src/capture-agent-client.ts` y `src/capture-agent-app.ts`
 
-Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. El cliente aplica timeout, bloquea redirects y valida el resultado antes de entregarlo al backend.
+Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. Ademas de start/status/stop, `/v1/call/phase` correlaciona captura, contacto y llamada observada. El cliente aplica timeout, bloquea redirects, exige la capability `callCapturePhases: 1` y valida cada acuse antes de entregarlo al backend.
 
 ### `src/capture-agent.ts`
 
-Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
+Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/phase/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
 
 ### `src/stun-parser.ts`
 

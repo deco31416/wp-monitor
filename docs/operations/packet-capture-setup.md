@@ -125,7 +125,9 @@ No instales Chromium/libpcap directamente en el host ni otorgues capabilities al
 - `wa-browser` crea display/audio virtual y perfil persistente;
 - `capture-agent` comparte su namespace de red;
 - el entrypoint baja a UID/GID 1000 y conserva solo `NET_RAW/NET_ADMIN`;
-- backend controla start/status/stop mediante HMAC privado;
+- backend controla start/phase/status/stop mediante HMAC privado;
+- readiness exige `capabilities.callCapturePhases=1`; versiones mezcladas se
+  muestran como agente no disponible hasta completar la actualizacion;
 - `LOCAL_CAPTURE_ENABLED=false` mantiene deshabilitada la captura general del host;
 - `CALL_CAPTURE_MODE=agent` habilita solo la ventana del navegador.
 
