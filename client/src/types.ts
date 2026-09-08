@@ -79,6 +79,46 @@ export interface CandidateIP {
         cacheTtlSec: number;
         accuracyNote: string;
     };
+    addressFamily?: 4 | 6;
+    endpointRole?: 'direct_candidate' | 'relay' | 'stun_turn' | 'dns' | 'background' | 'own_public_endpoint' | 'unknown';
+    baselinePackets?: number;
+    activeCallPackets?: number;
+    protocolEvidence?: Array<'stun_binding_request' | 'stun_binding_response' | 'stun_other' | 'transport_flow' | 'frame_length_86'>;
+    scoreVersion?: 2;
+}
+
+export interface SanitizedCallEndpoint {
+    ip: string;
+    port: number;
+    addressFamily: 4 | 6;
+    role: 'peer_candidate' | 'relay' | 'unknown';
+    source: 'baileys_transport';
+    relayName?: string;
+    rttMs?: number;
+}
+
+export interface CallTransportEvidence {
+    peerNegotiationObserved: boolean;
+    relayNegotiationObserved: boolean;
+    keepaliveObserved: boolean;
+    candidateRounds: number[];
+    endpoints: SanitizedCallEndpoint[];
+    limitations: string[];
+}
+
+export interface CallRouteAssessment {
+    classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
+    confidenceScore: number;
+    evidenceSources: Array<'baileys_transport' | 'packet_flow' | 'stun' | 'baseline' | 'infrastructure_registry' | 'ip_enrichment'>;
+    limitations: string[];
+}
+
+export interface CallCapturePhases {
+    baselineAvailable: boolean;
+    baselineStartedAt: string | null;
+    baselineEndedAt: string | null;
+    negotiationStartedAt: string | null;
+    activeCallStartedAt: string | null;
 }
 
 export interface CallAnalysisResult {
@@ -93,6 +133,10 @@ export interface CallAnalysisResult {
     metaIps: string[];
     verdict: 'p2p' | 'relay' | 'mixed' | 'insufficient_data';
     captureInterface: string;
+    schemaVersion?: 2;
+    capturePhases?: CallCapturePhases;
+    transportEvidence?: CallTransportEvidence;
+    routeAssessment?: CallRouteAssessment;
 }
 
 export interface CallEvent {

@@ -255,3 +255,128 @@ test('capture agent client rejects oversized and semantically invalid responses'
             && error.code === 'invalid_agent_response',
     );
 });
+
+test('capture agent client accepts the additive v2 packet contract without requiring it from legacy results', async () => {
+    const payload = {
+        callId: 'CALL-V2-001',
+        targetJid: '573001112233@s.whatsapp.net',
+        startTime: new Date(NOW).toISOString(),
+        endTime: new Date(NOW + 10_000).toISOString(),
+        durationSec: 10,
+        isVideo: false,
+        totalPackets: 12,
+        candidateIps: [{
+            ip: '2001:db8::20',
+            packets: 8,
+            bytesTotal: 960,
+            firstSeen: new Date(NOW + 5_000).toISOString(),
+            lastSeen: new Date(NOW + 9_000).toISOString(),
+            avgSize: 120,
+            ports: [40_000, 40_001],
+            direction: 'bidirectional',
+            provider: 'unknown',
+            networkCategory: 'consumer_isp_or_unknown',
+            networkIntelligence: {
+                asn: 64_512,
+                org: 'Synthetic ISP',
+                category: 'consumer_isp_or_unknown',
+                source: 'local_rules',
+                isDatacenterLikely: false,
+                caution: 'Synthetic test fixture.',
+            },
+            geo: null,
+            confidence: 'low',
+            confidenceScore: 15,
+            reasonCodes: [],
+            technicalNote: 'Synthetic v2 candidate.',
+            isP2P: false,
+            addressFamily: 6,
+            endpointRole: 'unknown',
+            baselinePackets: 2,
+            activeCallPackets: 6,
+            protocolEvidence: ['stun_binding_request', 'transport_flow'],
+            scoreVersion: 2,
+        }],
+        metaIps: ['2a03:2880::1'],
+        verdict: 'insufficient_data',
+        captureInterface: '172.31.0.10',
+        schemaVersion: 2,
+        capturePhases: {
+            baselineAvailable: true,
+            baselineStartedAt: new Date(NOW).toISOString(),
+            baselineEndedAt: new Date(NOW + 2_000).toISOString(),
+            negotiationStartedAt: new Date(NOW + 3_000).toISOString(),
+            activeCallStartedAt: new Date(NOW + 5_000).toISOString(),
+        },
+    };
+    const client = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        fetchImpl: (async () => new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })) as typeof fetch,
+    });
+
+    const result = await client.stopCallCapture();
+    assert.equal(result.schemaVersion, 2);
+    assert.equal(result.candidateIps[0]?.addressFamily, 6);
+    assert.equal(result.candidateIps[0]?.endpointRole, 'unknown');
+    assert.deepEqual(result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
+    assert.ok(result.capturePhases?.baselineStartedAt instanceof Date);
+    assert.equal(result.capturePhases?.baselineAvailable, true);
+});
+
+test('capture agent client rejects inconsistent v2 evidence and backend-owned conclusions', async () => {
+    const basePayload = {
+        callId: 'CALL-V2-002',
+        targetJid: '573001112233@s.whatsapp.net',
+        startTime: new Date(NOW).toISOString(),
+        endTime: new Date(NOW + 10_000).toISOString(),
+        durationSec: 10,
+        isVideo: false,
+        totalPackets: 0,
+        candidateIps: [],
+        metaIps: [],
+        verdict: 'insufficient_data',
+        captureInterface: '172.31.0.10',
+        schemaVersion: 2,
+    };
+    const payloads = [
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: true,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: null,
+                activeCallStartedAt: null,
+            },
+        },
+        {
+            ...basePayload,
+            routeAssessment: {
+                classification: 'direct_confirmed',
+                confidenceScore: 100,
+                evidenceSources: ['packet_flow'],
+                limitations: [],
+            },
+        },
+    ];
+
+    for (const payload of payloads) {
+        const client = new CaptureAgentClient({
+            baseUrl: 'http://capture-agent.test:4100',
+            sharedSecret: SECRET,
+            fetchImpl: (async () => new Response(JSON.stringify(payload), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })) as typeof fetch,
+        });
+        await assert.rejects(
+            client.stopCallCapture(),
+            (error: unknown) => error instanceof CaptureAgentClientError
+                && error.code === 'invalid_agent_response',
+        );
+    }
+});

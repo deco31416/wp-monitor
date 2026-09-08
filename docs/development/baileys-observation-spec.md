@@ -156,6 +156,11 @@ Reglas:
 | BO-CALL-04 | Estados parciales usan `respuesta no confirmada` o `resultado no concluyente`. |
 | BO-CALL-05 | La captura local se correlaciona por llamada y ventana temporal sin identificar una IP de relay como dispositivo remoto confirmado. |
 | BO-CALL-06 | Fallar o no habilitar captura no elimina la actividad de llamada observada por Baileys. |
+| BO-CALL-07 | `CallAnalysisResult` conserva el contrato historico y añade `schemaVersion: 2`, fases, transporte y evaluacion de ruta solo como campos opcionales. |
+| BO-CALL-08 | El capture-agent puede aportar metadata de paquete y fases validada, pero no puede afirmar por si solo una evaluacion final de ruta propiedad del backend. |
+| BO-CALL-09 | Una ruta directa confirmada requiere como minimo dos fuentes independientes; volumen, GeoIP o proveedor desconocido no bastan por separado. |
+| BO-CALL-10 | Cada endpoint conserva familia, rol y procedencia; una IP IPv6 valida no se rechaza por limitaciones del contrato IPv4 historico. |
+| BO-CALL-11 | Claves, tokens relay, buffers de señalizacion y contenido de llamada quedan excluidos de API, Socket.IO, persistencia, logs e informes. |
 
 ### Alcance, identidad e idempotencia
 
@@ -212,6 +217,9 @@ Reglas:
   decision explicita. Las ventanas de cobertura siguen la politica explicita de
   las sesiones de tracking y no tienen TTL automatico.
 - Redis solo contiene coordinacion y estado efimero con TTL.
+- `call_analyses` conserva los campos historicos `verdict`, `candidateIps`,
+  `metaIps` e `isP2P`. El subcontrato de ruta v2 es aditivo, opcional y no exige
+  backfill de documentos anteriores.
 - Un historial opcional de perfil debe usar una coleccion e indices dedicados si
   guardar solo el ultimo valor no satisface `BO-PROF-01`.
 - No se ejecutara backfill especulativo para atribuir alcance o dispositivo a
@@ -229,7 +237,7 @@ Reglas:
 | Recibos | accepted, delivered, read, played, retroceso | unitaria |
 | Dispositivo | ios, web, android, desktop, unknown, fromMe | unitaria y UI |
 | Perfil | cambio, igualdad, privacidad, error parcial | unitaria e integracion |
-| Llamada | contestada, rechazada, perdida, parcial, replay | unitaria y contrato |
+| Llamada | contestada, rechazada, perdida, parcial, replay, contrato de ruta v1/v2, IPv4/IPv6 y rechazo de conclusiones producidas por el agente | unitaria y contrato |
 | Scope | dos contactos, dos casos, sesion cerrada, grupo | negativa de aislamiento |
 | UI | loading, vacio, parcial, desconectado, error, exito | componentes y accesibilidad |
 | Informes | datos 1.1, 1.2, truncados y sin RTT | contrato, snapshot e integridad |

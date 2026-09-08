@@ -195,7 +195,8 @@ function parseStatus(payload: unknown): CallCaptureStatus {
 function parseCandidate(value: unknown): CandidateIP {
     const object = requireObject(value, 'Capture candidate');
     const ip = requireString(object.ip, 'candidate ip');
-    if (isIP(ip) !== 4) {
+    const detectedAddressFamily = isIP(ip);
+    if (detectedAddressFamily !== 4 && detectedAddressFamily !== 6) {
         throw new CaptureAgentClientError('Capture agent returned an invalid candidate ip', 502, 'invalid_agent_response');
     }
     const firstSeen = requireDate(object.firstSeen, 'candidate firstSeen');
@@ -222,6 +223,15 @@ function parseCandidate(value: unknown): CandidateIP {
         : requireObject(object.correlation, 'candidate correlation');
     if (object.ipEnrichment !== undefined) {
         throw new CaptureAgentClientError('Capture agent returned unexpected candidate enrichment', 502, 'invalid_agent_response');
+    }
+    const addressFamily = object.addressFamily === undefined
+        ? undefined
+        : requireIntegerInRange(object.addressFamily, 'candidate addressFamily', 4, 6);
+    if (addressFamily !== undefined && addressFamily !== 4 && addressFamily !== 6) {
+        throw new CaptureAgentClientError('Capture agent returned an invalid candidate addressFamily', 502, 'invalid_agent_response');
+    }
+    if (addressFamily !== undefined && addressFamily !== detectedAddressFamily) {
+        throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate addressFamily', 502, 'invalid_agent_response');
     }
 
     return {
@@ -282,6 +292,38 @@ function parseCandidate(value: unknown): CandidateIP {
         reasonCodes,
         technicalNote: requireBoundedString(object.technicalNote, 'candidate technicalNote', 4_096),
         isP2P: requireBoolean(object.isP2P, 'candidate isP2P'),
+        ...(addressFamily === undefined ? {} : { addressFamily: addressFamily as 4 | 6 }),
+        ...(object.endpointRole === undefined ? {} : {
+            endpointRole: requireEnum(object.endpointRole, 'candidate endpointRole', [
+                'direct_candidate',
+                'relay',
+                'stun_turn',
+                'dns',
+                'background',
+                'own_public_endpoint',
+                'unknown',
+            ]),
+        }),
+        ...(object.baselinePackets === undefined ? {} : {
+            baselinePackets: requireNonNegativeInteger(object.baselinePackets, 'candidate baselinePackets'),
+        }),
+        ...(object.activeCallPackets === undefined ? {} : {
+            activeCallPackets: requireNonNegativeInteger(object.activeCallPackets, 'candidate activeCallPackets'),
+        }),
+        ...(object.protocolEvidence === undefined ? {} : {
+            protocolEvidence: requireArray(object.protocolEvidence, 'candidate protocolEvidence', 16).map((entry, index) => (
+                requireEnum(entry, `candidate protocolEvidence[${index}]`, [
+                    'stun_binding_request',
+                    'stun_binding_response',
+                    'stun_other',
+                    'transport_flow',
+                    'frame_length_86',
+                ])
+            )),
+        }),
+        ...(object.scoreVersion === undefined ? {} : {
+            scoreVersion: requireIntegerInRange(object.scoreVersion, 'candidate scoreVersion', 2, 2) as 2,
+        }),
         ...(correlationObject ? {
             correlation: {
                 classification: requireEnum(correlationObject.classification, 'candidate correlation.classification', [
@@ -319,8 +361,41 @@ function parseCandidate(value: unknown): CandidateIP {
     };
 }
 
+function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['capturePhases']> {
+    const object = requireObject(value, 'capturePhases');
+    const baselineAvailable = requireBoolean(object.baselineAvailable, 'capturePhases.baselineAvailable');
+    const baselineStartedAt = optionalDate(object.baselineStartedAt, 'capturePhases.baselineStartedAt');
+    const baselineEndedAt = optionalDate(object.baselineEndedAt, 'capturePhases.baselineEndedAt');
+    const negotiationStartedAt = optionalDate(object.negotiationStartedAt, 'capturePhases.negotiationStartedAt');
+    const activeCallStartedAt = optionalDate(object.activeCallStartedAt, 'capturePhases.activeCallStartedAt');
+
+    if (baselineAvailable !== Boolean(baselineStartedAt && baselineEndedAt)) {
+        throw new CaptureAgentClientError('Capture agent returned inconsistent baseline phases', 502, 'invalid_agent_response');
+    }
+    if (baselineStartedAt && baselineEndedAt && baselineEndedAt.getTime() < baselineStartedAt.getTime()) {
+        throw new CaptureAgentClientError('Capture agent returned an invalid baseline time range', 502, 'invalid_agent_response');
+    }
+    if (baselineEndedAt && negotiationStartedAt && negotiationStartedAt.getTime() < baselineEndedAt.getTime()) {
+        throw new CaptureAgentClientError('Capture agent returned overlapping baseline and negotiation phases', 502, 'invalid_agent_response');
+    }
+    if (negotiationStartedAt && activeCallStartedAt && activeCallStartedAt.getTime() < negotiationStartedAt.getTime()) {
+        throw new CaptureAgentClientError('Capture agent returned an invalid active call phase', 502, 'invalid_agent_response');
+    }
+
+    return {
+        baselineAvailable,
+        baselineStartedAt,
+        baselineEndedAt,
+        negotiationStartedAt,
+        activeCallStartedAt,
+    };
+}
+
 function parseAnalysis(payload: unknown): CallAnalysisResult {
     const object = requireObject(payload, 'Capture agent');
+    if (object.transportEvidence !== undefined || object.routeAssessment !== undefined) {
+        throw new CaptureAgentClientError('Capture agent returned backend-owned route evidence', 502, 'invalid_agent_response');
+    }
     const verdict = requireString(object.verdict, 'verdict');
     if (!['p2p', 'relay', 'mixed', 'insufficient_data'].includes(verdict)) {
         throw new CaptureAgentClientError('Capture agent returned an invalid verdict', 502, 'invalid_agent_response');
@@ -339,6 +414,12 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     if (isIP(captureInterface) !== 4) {
         throw new CaptureAgentClientError('Capture agent returned an invalid captureInterface', 502, 'invalid_agent_response');
     }
+    const schemaVersion = object.schemaVersion === undefined
+        ? undefined
+        : requireIntegerInRange(object.schemaVersion, 'schemaVersion', 2, 2);
+    const capturePhases = object.capturePhases === undefined
+        ? undefined
+        : parseCapturePhases(object.capturePhases);
     return {
         callId: requireCallId(object.callId, 'callId'),
         targetJid: requireJid(object.targetJid, 'targetJid'),
@@ -350,13 +431,15 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
         candidateIps,
         metaIps: requireArray(object.metaIps, 'metaIps', 4_096).map(value => {
             const ip = requireString(value, 'metaIps entry');
-            if (isIP(ip) !== 4) {
+            if (isIP(ip) === 0) {
                 throw new CaptureAgentClientError('Capture agent returned an invalid metaIps entry', 502, 'invalid_agent_response');
             }
             return ip;
         }),
         verdict: verdict as CallAnalysisResult['verdict'],
         captureInterface,
+        ...(schemaVersion === undefined ? {} : { schemaVersion: schemaVersion as 2 }),
+        ...(capturePhases === undefined ? {} : { capturePhases }),
     };
 }
 

@@ -53,6 +53,64 @@ export interface CallGeoInfo {
     timezone: string;
 }
 
+export type CallEndpointRole =
+    | 'direct_candidate'
+    | 'relay'
+    | 'stun_turn'
+    | 'dns'
+    | 'background'
+    | 'own_public_endpoint'
+    | 'unknown';
+
+export type CallProtocolEvidence =
+    | 'stun_binding_request'
+    | 'stun_binding_response'
+    | 'stun_other'
+    | 'transport_flow'
+    | 'frame_length_86';
+
+export type CallRouteEvidenceSource =
+    | 'baileys_transport'
+    | 'packet_flow'
+    | 'stun'
+    | 'baseline'
+    | 'infrastructure_registry'
+    | 'ip_enrichment';
+
+export interface SanitizedCallEndpoint {
+    ip: string;
+    port: number;
+    addressFamily: 4 | 6;
+    role: 'peer_candidate' | 'relay' | 'unknown';
+    source: 'baileys_transport';
+    relayName?: string;
+    rttMs?: number;
+}
+
+export interface CallTransportEvidence {
+    peerNegotiationObserved: boolean;
+    relayNegotiationObserved: boolean;
+    keepaliveObserved: boolean;
+    candidateRounds: number[];
+    endpoints: SanitizedCallEndpoint[];
+    limitations: string[];
+}
+
+export interface CallRouteAssessment {
+    classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
+    confidenceScore: number;
+    evidenceSources: CallRouteEvidenceSource[];
+    limitations: string[];
+}
+
+export interface CallCapturePhases {
+    baselineAvailable: boolean;
+    baselineStartedAt: Date | null;
+    baselineEndedAt: Date | null;
+    negotiationStartedAt: Date | null;
+    activeCallStartedAt: Date | null;
+}
+
 export interface CandidateIP {
     ip: string;
     packets: number;
@@ -73,6 +131,12 @@ export interface CandidateIP {
     isP2P: boolean;
     correlation?: CandidateCorrelation;
     ipEnrichment?: IpEnrichment;
+    addressFamily?: 4 | 6;
+    endpointRole?: CallEndpointRole;
+    baselinePackets?: number;
+    activeCallPackets?: number;
+    protocolEvidence?: CallProtocolEvidence[];
+    scoreVersion?: 2;
 }
 
 export interface CallAnalysisResult {
@@ -87,6 +151,10 @@ export interface CallAnalysisResult {
     metaIps: string[];
     verdict: 'p2p' | 'relay' | 'mixed' | 'insufficient_data';
     captureInterface: string;
+    schemaVersion?: 2;
+    capturePhases?: CallCapturePhases;
+    transportEvidence?: CallTransportEvidence;
+    routeAssessment?: CallRouteAssessment;
 }
 
 export interface CallCaptureStatus {

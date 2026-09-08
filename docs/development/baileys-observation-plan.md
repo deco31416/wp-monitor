@@ -4,7 +4,7 @@ Estado del plan: `EN EJECUCION`
 
 Rama de trabajo: `develop`
 
-Ultima revision: `2026-09-02`
+Ultima revision: `2026-09-07`
 
 Este archivo es un tablero de ingenieria, no una declaracion de funcionalidad
 publicada. Una tarea solo cambia a `DONE` cuando su criterio de aceptacion tiene
@@ -274,6 +274,134 @@ de comportamiento y proceso de release autorizado.
   - Aceptacion: IDs y ventanas relacionan eventos sin presentar IP de relay como
     IP confirmada del contacto.
   - Afecta: Llamada, Informes y Auditoria.
+
+#### Desglose controlado de OBS-20
+
+Estas subtareas constituyen el unico tablero de ejecucion para la correlacion de
+ruta. Los contratos detallados viven en la especificacion y las decisiones
+arquitectonicas en ADR; ninguno de esos documentos sustituye los estados de esta
+matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
+
+- [x] **OBS-20.1 — Baseline ejecutable previo al cambio** — `DONE (E2 LOCAL)`
+  - Alcance: registrar el estado reproducible de captura, señalizacion, API,
+    Socket.IO, persistencia, interfaz e informes antes de modificar contratos.
+  - Aceptacion: pruebas dirigidas actuales y `pnpm run qa` pasan, o cada fallo
+    preexistente queda identificado sin atribuirlo al cambio.
+  - Afecta: verificacion, sin cambio funcional.
+  - Evidencia: `pnpm run qa` en verde el 2026-09-07: typecheck backend/frontend,
+    typecheck de pruebas, lint, 249 pruebas backend, 25 pruebas frontend y builds
+    backend/frontend. La primera ejecucion no alcanzo las pruebas por `EPERM` al
+    abrir el socket IPC de `tsx` dentro del sandbox; la repeticion autorizada
+    fuera del aislamiento completo la matriz sin fallos.
+
+- [x] **OBS-20.2 — Contrato aditivo de evidencia de ruta v2** — `DONE (E2 LOCAL)`
+  - Alcance: definir version, roles de endpoint, evaluacion de ruta, fuentes,
+    limitaciones y compatibilidad con documentos v1.
+  - Aceptacion: consumidores antiguos conservan `verdict`, `candidateIps`,
+    `metaIps` e `isP2P`; los campos v2 son opcionales y validados.
+  - Afecta: tipos backend/frontend, agente, API, Socket.IO e informes.
+  - Evidencia: tipos backend/frontend aditivos para version, fases, roles,
+    transporte y evaluacion; el cliente del agente acepta resultados v1 y valida
+    estrictamente metadata v2, IPv4/IPv6 y orden temporal. Rechaza evidencia
+    inconsistente y conclusiones finales de ruta producidas por el agente porque
+    pertenecen al backend. Prueba dirigida 6/6 y QA completa en verde: 251
+    backend, 25 frontend, typechecks, lint y builds.
+
+- [x] **OBS-20.3 — Parser seguro de señalizacion `CB:call`** — `DONE (E2 LOCAL)`
+  - Alcance: interpretar de forma acotada relay, peer, keepalive, ronda P2P,
+    endpoints y RTT observables.
+  - Aceptacion: rechaza estructuras o longitudes invalidas y nunca serializa
+    claves, tokens, contenido binario completo ni contenido de llamada.
+  - Afecta: backend y Auditoria; no crea actividad comercial adicional.
+  - Evidencia: `call-transport-observer` puro y acotado reconoce transporte
+    relay/peer/keepalive, ronda, RTT y endpoints empaquetados IPv4/IPv6. Omite
+    tags sensibles, no decodifica el payload peer opaco, limita profundidad,
+    nodos y endpoints, y falla cerrado ante IDs o estructuras invalidas. Cuatro
+    pruebas dirigidas y QA completa en verde: 255 backend, 25 frontend,
+    typechecks, lint y builds.
+
+- [ ] **OBS-20.4 — Estado temporal distribuido por llamada** — `TODO`
+  - Alcance: conservar evidencia sanitizada por `callId` en Redis con TTL,
+    limites de tamaño, idempotencia y limpieza al cerrar.
+  - Aceptacion: reconexion, duplicados, expiracion y Redis degradado producen un
+    resultado controlado sin mezclar llamadas, casos o contactos.
+  - Afecta: Redis, backend y observabilidad.
+  - Evidencia requerida: pruebas de concurrencia, aislamiento, TTL y degradacion.
+
+- [ ] **OBS-20.5 — Parser estructural de STUN** — `TODO`
+  - Alcance: reconocer encabezado, tipo, transaccion y atributos de red
+    permitidos sin depender exclusivamente de puerto o longitud de trama.
+  - Aceptacion: diferencia endpoint propio, servidor STUN/TURN, relay y dato no
+    interpretable; `frame.len == 86` solo puede ser una señal secundaria.
+  - Afecta: capture-agent y clasificacion tecnica.
+  - Evidencia requerida: fixtures binarias sinteticas validas, truncadas,
+    desconocidas y malformadas.
+
+- [ ] **OBS-20.6 — Captura UDP/TCP con IPv4 e IPv6** — `TODO`
+  - Alcance: ampliar el filtro y decodificacion conservando limites de memoria,
+    metadata minima y captura unica.
+  - Aceptacion: UDP y TCP alcanzan sus ramas reales; IPv6 no se descarta; una
+    trama no soportada se omite sin detener la captura.
+  - Afecta: call-analyzer y capture-agent; no modifica capabilities ni puertos.
+  - Evidencia requerida: pruebas de paquetes por protocolo/familia y captura
+    sintetica local.
+
+- [ ] **OBS-20.7 — Fases y linea base real de captura** — `TODO`
+  - Alcance: separar prellamada, negociacion, llamada activa y cierre; marcar si
+    una captura automatica carece de linea base previa.
+  - Aceptacion: trafico existente antes de la llamada pierde peso y una captura
+    sin baseline tiene un limite explicito de confianza.
+  - Afecta: agente, backend, Llamada y documentacion de operacion.
+  - Evidencia requerida: reloj determinista, transiciones validas/invalidas y
+    smoke manual con trafico de fondo sintetico.
+
+- [ ] **OBS-20.8 — Contrato firmado de fases con capture-agent** — `TODO`
+  - Alcance: comunicar inicio/aceptacion/finalizacion al agente mediante el
+    contrato HMAC existente, con timestamp, nonce y limites.
+  - Aceptacion: autenticacion, replay, timeout, orden incorrecto y agente no
+    disponible fallan de forma controlada y compatible.
+  - Afecta: capture-agent app/client/service y health operacional.
+  - Evidencia requerida: pruebas positivas, firma invalida, replay, timeout y
+    respuesta sobredimensionada.
+
+- [ ] **OBS-20.9 — Registro versionado de infraestructura** — `TODO`
+  - Alcance: clasificar Meta, relays anunciados, Google STUN/TURN, DNS, CDN,
+    cloud, endpoint propio y redes no atribuibles, con procedencia y fecha.
+  - Aceptacion: una lista obsoleta o un proveedor desconocido no convierte una
+    IP en contacto; existe ultimo dato valido y degradacion visible.
+  - Afecta: clasificacion de red y enriquecimiento; sin proveedor nuevo hasta
+    justificar contrato, privacidad, timeout y fallback.
+  - Evidencia requerida: rangos sinteticos, solapamientos, expiracion y fuente
+    ausente.
+
+- [ ] **OBS-20.10 — Correlador y scoring de ruta v2** — `TODO`
+  - Alcance: fusionar señalizacion, protocolo, fase, bidireccionalidad, volumen,
+    infraestructura y enriquecimiento en una conclusion explicable.
+  - Aceptacion: una ruta directa confirmada requiere al menos dos fuentes
+    independientes; DNS, STUN publico o relay nunca bastan por si solos.
+  - Afecta: Llamada, persistencia, Auditoria e Informes.
+  - Evidencia requerida: matriz relay, peer probable, directo confirmado,
+    mixto, no concluyente y falsos positivos como `8.8.8.8`.
+
+- [ ] **OBS-20.11 — Experiencia comercial en Llamada y reportes** — `TODO`
+  - Alcance: presentar ruta observada, confianza, evidencias, limitaciones y
+    procedencia dentro de la pestaña actual, sin añadir vistas principales.
+  - Aceptacion: loading, calibrando, capturando, parcial, error, relay, probable
+    y confirmado son accesibles y tienen paridad JSON/HTML/PDF/ZIP.
+  - Afecta: `OBS-23` y `OBS-24`; no altera Medicion, Actividad, Resumen,
+    Patrones ni Perfil.
+  - Evidencia requerida: pruebas de componente, accesibilidad, snapshots y
+    paridad de exportaciones.
+
+- [ ] **OBS-20.12 — Regresion, runtime y cierre operacional** — `TODO`
+  - Alcance: completar documentacion, matriz automatizada, smoke local, staging,
+    rollback y una validacion VPS autorizada.
+  - Aceptacion: sin regresiones en sesiones Baileys, captura manual/automatica,
+    historicos v1, casos, auditoria, reportes o persistencia; riesgos residuales
+    quedan declarados antes de promocion.
+  - Afecta: `OBS-25`, `OBS-26`, `OBS-27` y `OBS-28`.
+  - Evidencia requerida: E2 completa, E3 local/staging y E4 solo con autorizacion
+    explicita.
 
 ### F. Experiencia comercial unificada
 
