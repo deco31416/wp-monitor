@@ -19,6 +19,7 @@ import {
     type CandidateProvider,
     type NetworkIntelligenceCategory,
 } from './call-scoring.js';
+import type { InfrastructureRegistryEvidence } from './network-infrastructure-registry.js';
 import { closeCaptureSessionIfOpened } from './capture-lifecycle.js';
 import { hasPacketCapturePrivileges } from './capture-permissions.js';
 
@@ -83,6 +84,7 @@ export interface NetworkIpInsight {
     verdict: 'Descartada' | 'Infraestructura' | 'Candidata preliminar' | 'Revisar';
     tone: 'success' | 'warning' | 'accent' | 'neutral';
     reason: string;
+    registryEvidence?: InfrastructureRegistryEvidence;
 }
 
 export interface NetworkInterface {
@@ -272,18 +274,22 @@ function classifyNetworkIp(
 
     const provider = classifyIP(ip);
     const intelligence = lookupNetworkIntelligence(ip, provider);
+    const endpointRole = intelligence.registryEvidence?.endpointRole;
 
-    if (provider === 'meta') {
+    if (endpointRole === 'relay') {
         return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, 'Meta / WhatsApp relay', 'Infraestructura', 'warning', 'Rango asociado a Meta/Facebook. Normalmente corresponde a relay, mensajeria o infraestructura WhatsApp.');
     }
-    if (provider === 'google') {
+    if (endpointRole === 'dns') {
+        return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, `${intelligence.org} / DNS`, 'Infraestructura', 'warning', 'Resolvedor DNS publico catalogado. Es infraestructura auxiliar y no representa al contacto.');
+    }
+    if (endpointRole === 'stun_turn') {
         return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, 'Google / STUN-TURN probable', 'Infraestructura', 'warning', 'Rango Google observado frecuentemente en servicios, resolucion, STUN/TURN o infraestructura auxiliar.');
     }
-    if (provider === 'cloudflare') {
-        return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, 'Cloudflare / CDN', 'Infraestructura', 'warning', 'Rango Cloudflare. Suele ser CDN, proxy o proteccion de aplicaciones; no debe tratarse como IP del objetivo.');
+    if (endpointRole === 'cdn') {
+        return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, `${intelligence.org} / CDN`, 'Infraestructura', 'warning', 'Rango de CDN o proxy catalogado. Describe infraestructura de ruta y no debe tratarse como IP del objetivo.');
     }
 
-    if (intelligence.isDatacenterLikely || intelligence.category === 'cloud_hosting' || intelligence.category === 'cdn') {
+    if (endpointRole === 'cloud_hosting' || intelligence.isDatacenterLikely) {
         return baseInsight(ip, count, sourceCount, destinationCount, direction, geo, provider, intelligence, intelligence.org, 'Infraestructura', 'warning', `${intelligence.org}. Puede ser infraestructura de aplicaciones, CDN, proxy, VPN o servicios auxiliares.`);
     }
 
@@ -323,6 +329,7 @@ function baseInsight(
         verdict,
         tone,
         reason,
+        ...(intelligence.registryEvidence ? { registryEvidence: intelligence.registryEvidence } : {}),
     };
 }
 

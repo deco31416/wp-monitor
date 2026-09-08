@@ -20,8 +20,18 @@ test('classifies known Meta, Google STUN, and Cloudflare ranges', () => {
 });
 
 test('keeps unknown public IPs outside relay classification', () => {
-    assert.equal(classifyIP('8.8.8.8'), 'unknown');
+    assert.equal(classifyIP('9.9.9.9'), 'unknown');
+    assert.equal(isKnownRelayIP('9.9.9.9'), false);
+});
+
+test('distinguishes public DNS and IPv6 infrastructure from relay traffic', () => {
+    assert.equal(classifyIP('8.8.8.8'), 'google');
     assert.equal(isKnownRelayIP('8.8.8.8'), false);
+    assert.equal(classifyIP('2a03:2880:f001::1'), 'meta');
+    assert.equal(isKnownRelayIP('2a03:2880:f001::1'), true);
+    assert.equal(isPrivateIP('2a03:2880:f001::1'), false);
+    assert.equal(isPrivateIP('2001:db8::1'), true);
+    assert.equal(isPrivateIP('fd00::1'), true);
 });
 
 test('detects private IPv4 ranges without overmatching 172.0.0.0/8', () => {

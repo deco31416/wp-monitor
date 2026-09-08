@@ -1,7 +1,12 @@
+import {
+    lookupInfrastructure,
+    type InfrastructureRegistryEvidence,
+} from './network-infrastructure-registry.js';
+
 export type CandidateProvider = 'meta' | 'google' | 'cloudflare' | 'unknown';
 export type CandidateDirection = 'incoming' | 'outgoing' | 'bidirectional';
-export type NetworkCategory = 'meta' | 'stun_turn' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown_public';
-export type NetworkIntelligenceCategory = 'meta' | 'stun_turn' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown';
+export type NetworkCategory = 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown_public';
+export type NetworkIntelligenceCategory = 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown';
 export type CandidateConfidence = 'high' | 'medium' | 'low';
 
 export interface NetworkIntelligence {
@@ -11,6 +16,7 @@ export interface NetworkIntelligence {
     source: 'local_rules' | 'enrichment';
     isDatacenterLikely: boolean;
     caution: string;
+    registryEvidence?: InfrastructureRegistryEvidence;
 }
 
 export interface CandidateReasonCode {
@@ -51,73 +57,6 @@ export interface CandidateScoreResult {
     correlation: CandidateCorrelation;
 }
 
-interface LocalNetworkRule {
-    cidrs: string[];
-    asn: number | null;
-    org: string;
-    category: NetworkIntelligenceCategory;
-    isDatacenterLikely: boolean;
-}
-
-const LOCAL_NETWORK_RULES: LocalNetworkRule[] = [
-    {
-        cidrs: ['31.13.24.0/21', '31.13.64.0/18', '45.64.40.0/22', '57.141.0.0/16', '57.142.0.0/15', '57.144.0.0/14', '57.148.0.0/15', '66.220.144.0/20', '69.63.176.0/20', '69.171.224.0/19', '74.119.76.0/22', '102.132.96.0/20', '129.134.0.0/17', '147.75.208.0/20', '157.240.0.0/17', '163.70.128.0/17', '173.252.64.0/18', '179.60.192.0/22', '185.60.216.0/22', '204.15.20.0/22'],
-        asn: 32934,
-        org: 'Meta Platforms / Facebook',
-        category: 'meta',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['142.250.0.0/15', '172.217.0.0/16', '216.58.192.0/19', '216.239.32.0/19', '74.125.0.0/16', '64.233.160.0/19', '108.177.0.0/17', '34.0.0.0/8', '35.0.0.0/8'],
-        asn: 15169,
-        org: 'Google / Google Cloud',
-        category: 'stun_turn',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22', '141.101.64.0/18', '162.158.0.0/15', '188.114.96.0/20', '190.93.240.0/20', '197.234.240.0/22', '198.41.128.0/17'],
-        asn: 13335,
-        org: 'Cloudflare',
-        category: 'cdn',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['140.82.112.0/20', '185.199.108.0/22'],
-        asn: 36459,
-        org: 'GitHub',
-        category: 'cloud_hosting',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['2.16.0.0/13', '2.22.0.0/15', '23.0.0.0/12', '23.32.0.0/11', '23.64.0.0/14'],
-        asn: 20940,
-        org: 'Akamai CDN',
-        category: 'cdn',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['3.0.0.0/8', '13.32.0.0/15', '18.0.0.0/8', '52.0.0.0/8', '54.0.0.0/8'],
-        asn: null,
-        org: 'Amazon/AWS range heuristic',
-        category: 'cloud_hosting',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['20.0.0.0/8', '40.0.0.0/8', '51.104.0.0/15'],
-        asn: null,
-        org: 'Microsoft/Azure range heuristic',
-        category: 'cloud_hosting',
-        isDatacenterLikely: true,
-    },
-    {
-        cidrs: ['104.131.0.0/16', '138.68.0.0/16', '143.198.0.0/16', '159.65.0.0/16', '167.71.0.0/16'],
-        asn: 14061,
-        org: 'DigitalOcean',
-        category: 'cloud_hosting',
-        isDatacenterLikely: true,
-    },
-];
-
 export function classifyNetworkCategory(provider: CandidateProvider): NetworkCategory {
     if (provider === 'meta') return 'meta';
     if (provider === 'google') return 'stun_turn';
@@ -125,16 +64,21 @@ export function classifyNetworkCategory(provider: CandidateProvider): NetworkCat
     return 'unknown_public';
 }
 
-export function lookupNetworkIntelligence(ip: string, provider: CandidateProvider): NetworkIntelligence {
-    const matched = LOCAL_NETWORK_RULES.find(rule => rule.cidrs.some(cidr => matchesCidr(ip, cidr)));
-    if (matched) {
+export function lookupNetworkIntelligence(
+    ip: string,
+    provider: CandidateProvider,
+    options?: { now?: Date; ownPublicEndpoints?: ReadonlySet<string> },
+): NetworkIntelligence {
+    const registryEvidence = lookupInfrastructure(ip, options);
+    if (registryEvidence.entryId) {
         return {
-            asn: matched.asn,
-            org: matched.org,
-            category: matched.category,
+            asn: registryEvidence.asn,
+            org: registryEvidence.org,
+            category: registryEvidence.category ?? 'unknown',
             source: 'local_rules',
-            isDatacenterLikely: matched.isDatacenterLikely,
-            caution: 'Clasificacion local heuristica. Requiere corroboracion con fuente ASN/WHOIS actualizada si se usa en informe formal.',
+            isDatacenterLikely: registryEvidence.endpointRole !== 'own_public_endpoint',
+            caution: registryEvidence.caution,
+            registryEvidence,
         };
     }
 
@@ -146,7 +90,8 @@ export function lookupNetworkIntelligence(ip: string, provider: CandidateProvide
             category: category === 'unknown_public' ? 'unknown' : category,
             source: 'local_rules',
             isDatacenterLikely: true,
-            caution: 'Proveedor clasificado por reglas locales. No identifica usuario final.',
+            caution: 'Proveedor indicado sin una coincidencia vigente del registro. Se conserva como infraestructura y no identifica usuario final.',
+            registryEvidence,
         };
     }
 
@@ -156,7 +101,8 @@ export function lookupNetworkIntelligence(ip: string, provider: CandidateProvide
         category: 'consumer_isp_or_unknown',
         source: 'local_rules',
         isDatacenterLikely: false,
-        caution: 'Sin ASN/ORG verificado localmente. Puede ser ISP, CGNAT, VPN, proxy, relay o infraestructura no catalogada.',
+        caution: registryEvidence.caution,
+        registryEvidence,
     };
 }
 
@@ -287,7 +233,21 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         }
     }
 
-    if (input.addressFamily === 6) {
+    if (input.networkIntelligence.registryEvidence?.degraded) {
+        const before = score;
+        score = Math.min(score, 20);
+        caps.push('Registro de infraestructura degradado');
+        reasonCodes.push({
+            code: 'INFRASTRUCTURE_REGISTRY_DEGRADED',
+            label: 'Registro de infraestructura vencido, ambiguo o sin fuente valida',
+            delta: Math.min(0, score - before),
+        });
+    }
+
+    if (
+        input.addressFamily === 6
+        && ['unknown', 'invalid'].includes(input.networkIntelligence.registryEvidence?.status ?? 'unknown')
+    ) {
         const before = score;
         score = Math.min(score, 30);
         caps.push('Registro IPv6 pendiente');
@@ -298,9 +258,23 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         });
     }
 
+    const isOwnPublicEndpoint = input.networkIntelligence.registryEvidence?.endpointRole === 'own_public_endpoint';
+    if (isOwnPublicEndpoint) {
+        const before = score;
+        score = 0;
+        caps.push('Endpoint publico propio');
+        reasonCodes.push({
+            code: 'OWN_PUBLIC_ENDPOINT',
+            label: 'Direccion publica propia observada mediante STUN; no pertenece al contacto',
+            delta: -before,
+        });
+    }
+
     const confidenceScore = clampScore(score);
     const confidence = confidenceFromScore(confidenceScore);
-    const baseP2P = input.provider === 'unknown' && !input.networkIntelligence.isDatacenterLikely;
+    const baseP2P = input.provider === 'unknown'
+        && !input.networkIntelligence.isDatacenterLikely
+        && !isOwnPublicEndpoint;
     const scoredCorrelation = buildCorrelation({
         baseP2P,
         confidenceScore,
@@ -311,7 +285,9 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         networkCategory,
         caps,
     });
-    const correlation: CandidateCorrelation = input.addressFamily === 6
+    const unresolvedIpv6 = input.addressFamily === 6
+        && ['unknown', 'invalid'].includes(input.networkIntelligence.registryEvidence?.status ?? 'unknown');
+    const correlation: CandidateCorrelation = unresolvedIpv6
         ? {
             ...scoredCorrelation,
             classification: 'insufficient',
@@ -328,6 +304,7 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
 function networkCategoryFromIntelligence(category: NetworkIntelligenceCategory, provider: CandidateProvider): NetworkCategory {
     if (category === 'meta') return 'meta';
     if (category === 'stun_turn') return 'stun_turn';
+    if (category === 'dns') return 'dns';
     if (category === 'cdn') return 'cdn';
     if (category === 'cloud_hosting') return 'cloud_hosting';
     if (category === 'consumer_isp_or_unknown') return 'consumer_isp_or_unknown';
@@ -469,22 +446,6 @@ function normalizeCountryCode(value?: string | null): string | null {
         ESPANA: 'ES',
     };
     return names[normalized] || null;
-}
-
-function ipToInt(ip: string): number {
-    const parts = ip.split('.').map(Number);
-    if (parts.length !== 4 || parts.some(part => Number.isNaN(part) || part < 0 || part > 255)) return 0;
-    const [a = 0, b = 0, c = 0, d = 0] = parts;
-    return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
-}
-
-function matchesCidr(ip: string, cidr: string): boolean {
-    const [base, prefixStr] = cidr.split('/');
-    if (!base || !prefixStr) return false;
-    const prefix = parseInt(prefixStr, 10);
-    if (!Number.isFinite(prefix) || prefix < 0 || prefix > 32) return false;
-    const mask = prefix === 0 ? 0 : ((0xFFFFFFFF << (32 - prefix)) >>> 0);
-    return ((ipToInt(ip) & mask) >>> 0) === ((ipToInt(base) & mask) >>> 0);
 }
 
 function clampScore(score: number): number {

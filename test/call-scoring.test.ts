@@ -163,3 +163,43 @@ test('keeps IPv6 visible but non-conclusive until its infrastructure registry is
     assert.equal(score.correlation.classification, 'insufficient');
     assert.ok(score.reasonCodes.some(reason => reason.code === 'IPV6_REGISTRY_PENDING'));
 });
+
+test('classifies registered Meta IPv6 as infrastructure without the pending-registry cap', () => {
+    const networkIntelligence = lookupNetworkIntelligence('2a03:2880:f001::1', 'meta');
+    const score = scoreCandidate({
+        provider: 'meta',
+        networkIntelligence,
+        packets: 500,
+        bytesTotal: 500_000,
+        direction: 'bidirectional',
+        ports: [443],
+        durationSec: 60,
+        addressFamily: 6,
+    });
+
+    assert.equal(networkIntelligence.registryEvidence?.status, 'fresh');
+    assert.equal(networkIntelligence.registryEvidence?.endpointRole, 'relay');
+    assert.equal(score.isP2P, false);
+    assert.ok(!score.reasonCodes.some(reason => reason.code === 'IPV6_REGISTRY_PENDING'));
+});
+
+test('never promotes the local STUN mapped address as a contact candidate', () => {
+    const ip = '181.50.10.20';
+    const networkIntelligence = lookupNetworkIntelligence(ip, 'unknown', {
+        ownPublicEndpoints: new Set([ip]),
+    });
+    const score = scoreCandidate({
+        provider: 'unknown',
+        networkIntelligence,
+        packets: 500,
+        bytesTotal: 500_000,
+        direction: 'bidirectional',
+        ports: [443],
+        durationSec: 60,
+    });
+
+    assert.equal(networkIntelligence.registryEvidence?.endpointRole, 'own_public_endpoint');
+    assert.equal(score.isP2P, false);
+    assert.equal(score.confidenceScore, 0);
+    assert.ok(score.reasonCodes.some(reason => reason.code === 'OWN_PUBLIC_ENDPOINT'));
+});

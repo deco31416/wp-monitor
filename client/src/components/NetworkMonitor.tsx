@@ -221,12 +221,13 @@ export function NetworkMonitor() {
         value,
         fill: PROTOCOL_COLORS[name] || PROTOCOL_COLORS.OTHER || '#64748b',
     })) : [];
+    const canonicalInsights = new Map((stats?.ipInsights ?? []).map(entry => [entry.ip, entry]));
     const investigativePackets = packets.filter(packet => {
         if (udpOnlyView && packet.protocol !== 'UDP') return false;
-        if (hideKnownInfrastructure && isKnownInfrastructurePacket(packet)) return false;
+        if (hideKnownInfrastructure && isKnownInfrastructurePacket(packet, canonicalInsights)) return false;
         return true;
     });
-    const investigationSummary = summarizeInvestigation(packets);
+    const investigationSummary = summarizeInvestigation(packets, canonicalInsights);
 
     const formatBytes = (bytes: number) => {
         if (bytes < 1024) return `${bytes} B`;
@@ -614,7 +615,7 @@ function RequirementCard({ title, text, href, linkText }: { title: string; text:
     );
 }
 
-function summarizeInvestigation(packets: PacketMeta[]) {
+function summarizeInvestigation(packets: PacketMeta[], insights: ReadonlyMap<string, IpInsight>) {
     const candidateIps = new Set<string>();
     const infrastructureIps = new Set<string>();
     let udpPackets = 0;
@@ -622,7 +623,7 @@ function summarizeInvestigation(packets: PacketMeta[]) {
     packets.forEach(packet => {
         if (packet.protocol === 'UDP') udpPackets++;
         [packet.srcIp, packet.dstIp].forEach(ip => {
-            if (isKnownInfrastructureIp(ip)) infrastructureIps.add(ip);
+            if (isKnownInfrastructureIp(ip, insights)) infrastructureIps.add(ip);
             else if (!isLocalOrPrivateIp(ip)) candidateIps.add(ip);
         });
     });
@@ -634,18 +635,14 @@ function summarizeInvestigation(packets: PacketMeta[]) {
     };
 }
 
-function isKnownInfrastructurePacket(packet: PacketMeta): boolean {
-    return isKnownInfrastructureIp(packet.srcIp) || isKnownInfrastructureIp(packet.dstIp);
+function isKnownInfrastructurePacket(packet: PacketMeta, insights: ReadonlyMap<string, IpInsight>): boolean {
+    return isKnownInfrastructureIp(packet.srcIp, insights) || isKnownInfrastructureIp(packet.dstIp, insights);
 }
 
-function isKnownInfrastructureIp(ip: string): boolean {
+function isKnownInfrastructureIp(ip: string, insights: ReadonlyMap<string, IpInsight>): boolean {
     if (isLocalOrPrivateIp(ip)) return true;
-    return isMetaIp(ip)
-        || isGoogleIp(ip)
-        || isCloudflareIp(ip)
-        || isGithubIp(ip)
-        || isAkamaiIp(ip)
-        || isCloudHostingIp(ip);
+    const insight = insights.get(ip);
+    return insight?.verdict === 'Infraestructura' || insight?.verdict === 'Descartada';
 }
 
 type IPv4Parts = [number, number, number, number];
@@ -660,7 +657,17 @@ function parseIPv4Parts(ip: string): IPv4Parts | null {
 
 function isLocalOrPrivateIp(ip: string): boolean {
     const parts = parseIPv4Parts(ip);
-    if (!parts) return true;
+    if (!parts) {
+        const normalized = ip.toLowerCase();
+        if (!normalized.includes(':')) return true;
+        return normalized === '::'
+            || normalized === '::1'
+            || normalized.startsWith('fc')
+            || normalized.startsWith('fd')
+            || /^fe[89ab]/.test(normalized)
+            || normalized.startsWith('ff')
+            || normalized.startsWith('2001:db8:');
+    }
     const [a, b, c] = parts;
     const isPrivate172 = a === 172 && b >= 16 && b <= 31;
     const isCarrierNat = a === 100 && b >= 64 && b <= 127;
@@ -678,38 +685,6 @@ function isLocalOrPrivateIp(ip: string): boolean {
         || isBenchmark
         || isDocumentation
         || isPrivate172;
-}
-
-function isMetaIp(ip: string): boolean {
-    return ip.startsWith('31.13.')
-        || ip.startsWith('57.144.')
-        || ip.startsWith('157.240.')
-        || ip.startsWith('163.70.')
-        || ip.startsWith('173.252.')
-        || ip.startsWith('179.60.')
-        || ip.startsWith('185.60.')
-        || ip.startsWith('204.15.');
-}
-
-function isGoogleIp(ip: string): boolean {
-    return ip.startsWith('142.250.')
-        || ip.startsWith('142.251.')
-        || ip.startsWith('172.217.')
-        || ip.startsWith('172.253.')
-        || ip.startsWith('216.58.')
-        || ip.startsWith('216.239.')
-        || ip.startsWith('74.125.')
-        || ip.startsWith('64.233.');
-}
-
-function isCloudflareIp(ip: string): boolean {
-    const parts = parseIPv4Parts(ip);
-    if (!parts) return false;
-    const [a, b] = parts;
-    return (a === 104 && b >= 16 && b <= 31)
-        || (a === 172 && b >= 64 && b <= 71)
-        || ip.startsWith('162.159.')
-        || ip.startsWith('188.114.');
 }
 
 function getMonitorStatus(isCapturing: boolean, interfaceCount: number, ready: boolean, stats: CaptureStats | null): {
@@ -1025,6 +1000,15 @@ interface IpInsight {
     verdict: string;
     tone: 'success' | 'warning' | 'accent' | 'neutral';
     reason: string;
+    registryEvidence?: {
+        registryVersion: string;
+        status: 'fresh' | 'stale' | 'source_unavailable' | 'unknown' | 'invalid';
+        degraded: boolean;
+        entryId: string | null;
+        matchedCidr: string | null;
+        source: { label: string } | null;
+        caution: string;
+    };
 }
 
 function IpIntelligencePanel({ stats }: { stats: CaptureStats }) {
@@ -1122,6 +1106,12 @@ function IpInsightCard({ entry }: { entry: IpInsight }) {
                     </div>
                     <p className="text-xs font-semibold mt-2">{entry.role}</p>
                     <p className="text-xs text-txt-muted mt-1">{entry.reason}</p>
+                    {entry.registryEvidence && (
+                        <p className={`text-[11px] mt-2 ${entry.registryEvidence.degraded ? 'text-warning' : 'text-success'}`}>
+                            Registro {entry.registryEvidence.registryVersion} · {formatRegistryStatus(entry.registryEvidence.status)}
+                            {entry.registryEvidence.source?.label ? ` · ${entry.registryEvidence.source.label}` : ''}
+                        </p>
+                    )}
                 </div>
                 <div className="text-left sm:text-right shrink-0">
                     <p className="text-2xl font-bold text-txt-primary">{entry.count.toLocaleString()}</p>
@@ -1199,107 +1189,28 @@ function classifyIpInsight(ip: string, direction: IpInsight['direction'], count:
             reason: 'IP privada o local del entorno de captura. No representa ubicacion publica del contacto.',
         };
     }
-    if (isMetaIp(ip)) {
-        return {
-            role: 'Meta / WhatsApp relay',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango asociado a Meta/Facebook. Normalmente corresponde a relay, mensajeria o infraestructura WhatsApp.',
-        };
-    }
-    if (isGoogleIp(ip)) {
-        return {
-            role: 'Google / STUN-TURN probable',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango Google observado frecuentemente en servicios, resolucion, STUN/TURN o infraestructura auxiliar.',
-        };
-    }
-    if (isCloudflareIp(ip)) {
-        return {
-            role: 'Cloudflare / CDN',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango Cloudflare. Suele ser CDN, proxy o proteccion de aplicaciones; no debe tratarse como IP del objetivo.',
-        };
-    }
-    if (isGithubIp(ip)) {
-        return {
-            role: 'GitHub / infraestructura',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango conocido de GitHub. Probablemente trafico del navegador, actualizaciones o herramientas del equipo.',
-        };
-    }
-    if (isAkamaiIp(ip)) {
-        return {
-            role: 'Akamai / CDN',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango Akamai. Suele corresponder a CDN o distribucion de contenido.',
-        };
-    }
-    if (isCloudHostingIp(ip)) {
-        return {
-            role: 'Cloud / hosting probable',
-            verdict: 'Infraestructura',
-            tone: 'warning',
-            reason: 'Rango asociado a nube/hosting. Puede ser infraestructura de aplicaciones, actualizaciones, proxy, VPN o servicios auxiliares.',
-        };
-    }
     if (direction === 'bidirectional' && count >= 20) {
         return {
             role: 'IP publica no clasificada',
             verdict: 'Candidata preliminar',
             tone: 'success',
-            reason: 'Flujo bidireccional y volumen suficiente para revision manual. Requiere corroboracion con llamada, hora y fuentes externas.',
+            reason: 'Clasificacion versionada no disponible en esta respuesta. Flujo bidireccional visible solo para revision manual; requiere corroboracion con llamada, hora y fuentes externas.',
         };
     }
     return {
         role: 'IP publica observada',
         verdict: 'Revisar',
         tone: 'accent',
-        reason: 'No coincide con infraestructura catalogada localmente. Muestra preliminar; revisar volumen, direccion y contexto antes de reportar.',
+        reason: 'Clasificacion versionada no disponible en esta respuesta. Muestra preliminar; revisar el resultado del backend antes de reportar.',
     };
 }
 
-function isGithubIp(ip: string): boolean {
-    return ip.startsWith('140.82.')
-        || ip.startsWith('185.199.108.')
-        || ip.startsWith('185.199.109.')
-        || ip.startsWith('185.199.110.')
-        || ip.startsWith('185.199.111.');
-}
-
-function isAkamaiIp(ip: string): boolean {
-    const parts = parseIPv4Parts(ip);
-    if (!parts) return false;
-    const [a, b] = parts;
-    return (a === 2 && b >= 16 && b <= 23)
-        || (a === 23 && b >= 0 && b <= 15)
-        || (a === 23 && b >= 32 && b <= 67)
-        || ip.startsWith('23.32.')
-        || ip.startsWith('23.33.')
-        || ip.startsWith('23.64.')
-        || ip.startsWith('23.65.');
-}
-
-function isCloudHostingIp(ip: string): boolean {
-    return ip.startsWith('3.')
-        || ip.startsWith('13.32.')
-        || ip.startsWith('13.33.')
-        || ip.startsWith('18.')
-        || ip.startsWith('20.')
-        || ip.startsWith('34.')
-        || ip.startsWith('35.')
-        || ip.startsWith('40.')
-        || ip.startsWith('52.')
-        || ip.startsWith('54.')
-        || ip.startsWith('104.131.')
-        || ip.startsWith('138.68.')
-        || ip.startsWith('143.198.')
-        || ip.startsWith('159.65.')
-        || ip.startsWith('167.71.');
+function formatRegistryStatus(status: NonNullable<IpInsight['registryEvidence']>['status']): string {
+    if (status === 'fresh') return 'vigente';
+    if (status === 'stale') return 'vencido';
+    if (status === 'source_unavailable') return 'fuente no disponible';
+    if (status === 'invalid') return 'direccion invalida';
+    return 'sin coincidencia';
 }
 
 function formatDirection(direction: IpInsight['direction']): string {

@@ -106,13 +106,19 @@ pero puede dejar la evidencia tecnica sin separacion por fases.
 | --- | --- |
 | Red local | Direcciones privadas o del host |
 | Meta/relay | Infraestructura reconocida de WhatsApp/Meta |
-| Cloud/hosting | Google, Cloudflare, CDN, STUN/TURN u otro proveedor |
+| DNS/STUN/CDN/cloud | Infraestructura auxiliar catalogada; no identifica al contacto |
+| Endpoint propio | Salida publica de esta sesion aprendida por STUN; se descarta como contacto |
 | Candidata | IP publica no clasificada como infraestructura que obtuvo score |
 | Sin verificar | No existe corroboracion suficiente para atribucion |
 
 ## Score de candidata
 
 El score pondera tipo de IP, proveedor, flujo bidireccional, volumen y penalizaciones por muestra pequena. Consulta la [metodologia completa](../reference/ip-candidate-scoring.md).
+
+Cada coincidencia de infraestructura muestra version y vigencia del registro.
+`Vencido` o `fuente no disponible` significa que se conserva el ultimo dato de
+forma cautelosa y se limita la conclusion; no significa que la IP pase a ser
+candidata. Consulta el [registro versionado](../reference/network-infrastructure-registry.md).
 
 Reglas de redaccion:
 

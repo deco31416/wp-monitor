@@ -3,6 +3,7 @@
 Documentos especializados que complementan arquitectura y guias operativas.
 
 - [Scoring de IP candidata](ip-candidate-scoring.md)
+- [Registro versionado de infraestructura](network-infrastructure-registry.md)
 - [Constructor de informe final](final-report-builder.md)
 - [Configuracion y variables](configuration.md)
 - [Referencia API y eventos](../development/api-reference.md)

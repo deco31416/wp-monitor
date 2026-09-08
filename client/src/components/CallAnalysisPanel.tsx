@@ -279,10 +279,24 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                     </summary>
                     <div className="bg-surface-hover rounded-lg p-3 border border-surface-border space-y-1">
                         {infrastructureCandidates.map((candidate, index) => (
-                            <div key={index} className="flex items-center justify-between text-[10px]">
+                            <div key={index} className="flex flex-col gap-1 text-[10px] sm:flex-row sm:items-center sm:justify-between">
                                 <span className="font-mono text-txt-dim">{candidate.ip}</span>
-                                <span className="text-txt-muted">
+                                <span className="text-txt-muted sm:text-right">
                                     {candidate.networkIntelligence?.org || candidate.provider} · {formatNetworkCategory(candidate.networkCategory)} · score {getCandidateScore(candidate)}/100 · {candidate.packets} pkts
+                                    {candidate.networkIntelligence?.registryEvidence && (
+                                        <span className={clsx(
+                                            'block',
+                                            candidate.networkIntelligence.registryEvidence.degraded
+                                                ? 'text-amber-300/80'
+                                                : 'text-emerald-300/80',
+                                        )}>
+                                            Registro {candidate.networkIntelligence.registryEvidence.registryVersion} ·{' '}
+                                            {formatRegistryStatus(candidate.networkIntelligence.registryEvidence.status)}
+                                            {candidate.networkIntelligence.registryEvidence.source?.label
+                                                ? ` · ${candidate.networkIntelligence.registryEvidence.source.label}`
+                                                : ''}
+                                        </span>
+                                    )}
                                 </span>
                             </div>
                         ))}
@@ -377,6 +391,20 @@ function CandidateCard({ candidate }: { candidate: CandidateIP }) {
                                 {candidate.networkIntelligence.asn ? `AS${candidate.networkIntelligence.asn} · ` : ''}
                                 {candidate.networkIntelligence.org}
                             </span>
+                        </p>
+                    )}
+                    {candidate.networkIntelligence?.registryEvidence && (
+                        <p className={clsx(
+                            "mt-1 text-[10px]",
+                            candidate.networkIntelligence.registryEvidence.degraded
+                                ? "text-amber-300/80"
+                                : "text-emerald-300/80"
+                        )}>
+                            Registro {candidate.networkIntelligence.registryEvidence.registryVersion} ·{' '}
+                            {formatRegistryStatus(candidate.networkIntelligence.registryEvidence.status)}
+                            {candidate.networkIntelligence.registryEvidence.source?.label
+                                ? ` · ${candidate.networkIntelligence.registryEvidence.source.label}`
+                                : ''}
                         </p>
                     )}
                 </div>
@@ -659,12 +687,24 @@ function formatNetworkCategory(category?: CandidateIP['networkCategory']): strin
     const labels: Record<NonNullable<CandidateIP['networkCategory']>, string> = {
         meta: 'Meta/relay',
         stun_turn: 'STUN/TURN probable',
+        dns: 'DNS publico',
         cdn: 'CDN',
         cloud_hosting: 'Cloud/hosting probable',
         consumer_isp_or_unknown: 'ISP/unknown no verificado',
         unknown_public: 'Publica desconocida',
     };
     return category ? labels[category] : 'Publica desconocida';
+}
+
+function formatRegistryStatus(status: NonNullable<NonNullable<CandidateIP['networkIntelligence']>['registryEvidence']>['status']): string {
+    const labels = {
+        fresh: 'vigente',
+        stale: 'vencido',
+        source_unavailable: 'fuente no disponible',
+        unknown: 'sin coincidencia',
+        invalid: 'dato invalido',
+    } as const;
+    return labels[status];
 }
 
 function formatDirection(direction: CandidateIP['direction']): string {

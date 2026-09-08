@@ -410,6 +410,30 @@ test('capture agent client accepts the additive v2 packet contract without requi
                 source: 'local_rules',
                 isDatacenterLikely: false,
                 caution: 'Synthetic test fixture.',
+                registryEvidence: {
+                    schemaVersion: 1,
+                    registryVersion: 'test.1',
+                    registryPublishedAt: new Date(NOW).toISOString(),
+                    status: 'fresh',
+                    entryId: 'synthetic-ipv6',
+                    matchedCidr: '2001:db8::/32',
+                    provider: 'unknown',
+                    category: 'cloud_hosting',
+                    endpointRole: 'cloud_hosting',
+                    asn: 64_512,
+                    org: 'Synthetic ISP',
+                    source: {
+                        id: 'synthetic-source',
+                        label: 'Synthetic registry source',
+                        uri: null,
+                        kind: 'observed_heuristic',
+                        retrievedAt: new Date(NOW).toISOString(),
+                        validUntil: new Date(NOW + 86_400_000).toISOString(),
+                    },
+                    competingEntryIds: [],
+                    degraded: false,
+                    caution: 'Synthetic test fixture; no identity claim.',
+                },
             },
             geo: null,
             confidence: 'low',
@@ -455,6 +479,8 @@ test('capture agent client accepts the additive v2 packet contract without requi
     assert.equal(result.schemaVersion, 2);
     assert.equal(result.candidateIps[0]?.addressFamily, 6);
     assert.equal(result.candidateIps[0]?.endpointRole, 'unknown');
+    assert.equal(result.candidateIps[0]?.networkIntelligence?.registryEvidence?.registryVersion, 'test.1');
+    assert.equal(result.candidateIps[0]?.networkIntelligence?.registryEvidence?.source?.label, 'Synthetic registry source');
     assert.deepEqual(result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
     assert.ok(result.capturePhases?.baselineStartedAt instanceof Date);
     assert.equal(result.capturePhases?.baselineAvailable, true);

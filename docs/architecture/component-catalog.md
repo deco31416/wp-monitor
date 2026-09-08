@@ -68,9 +68,16 @@ no puede atribuir sin reensamblado, y omite tramas truncadas o no soportadas sin
 detener la captura. `call-analyzer` usa el filtro
 `(udp or tcp) and (ip or ip6)`, conserva solo metadata y limita la memoria a
 50.000 paquetes. `captureBounds` revela cuantas observaciones fueron descartadas
-al alcanzar ese limite; el contenido bruto nunca entra al resultado. Hasta que
-`OBS-20.9` incorpore rangos IPv6 versionados, una direccion IPv6 se conserva
-como observacion tecnica pero no se promueve por si sola a candidata directa.
+al alcanzar ese limite; el contenido bruto nunca entra al resultado.
+
+### `src/network-infrastructure-registry.ts` y `src/meta-ip-ranges.ts`
+
+Registro canonico e inmutable por instancia para infraestructura IPv4/IPv6.
+Cada match conserva version, CIDR, rol, fuente, vigencia, solapamientos y estado
+de degradacion. `meta-ip-ranges` mantiene compatibilidad para consumidores
+historicos sin duplicar listas. STUN puede marcar la direccion publica propia;
+esa evidencia nunca se promueve como contacto. La UI consume la clasificacion
+del backend y no mantiene una segunda tabla de rangos.
 
 ### `src/redis.ts` y `src/rate-limit.ts`
 

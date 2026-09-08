@@ -17,14 +17,38 @@ export interface CandidateIP {
     ports: number[];
     direction: 'incoming' | 'outgoing' | 'bidirectional';
     provider: 'meta' | 'google' | 'cloudflare' | 'unknown';
-    networkCategory?: 'meta' | 'stun_turn' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown_public';
+    networkCategory?: 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown_public';
     networkIntelligence?: {
         asn: number | null;
         org: string;
-        category: 'meta' | 'stun_turn' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown';
-        source: 'local_rules';
+        category: 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown';
+        source: 'local_rules' | 'enrichment';
         isDatacenterLikely: boolean;
         caution: string;
+        registryEvidence?: {
+            schemaVersion: 1;
+            registryVersion: string;
+            registryPublishedAt: string;
+            status: 'fresh' | 'stale' | 'source_unavailable' | 'unknown' | 'invalid';
+            entryId: string | null;
+            matchedCidr: string | null;
+            provider: 'meta' | 'google' | 'cloudflare' | 'unknown';
+            category: 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | null;
+            endpointRole: 'relay' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'own_public_endpoint' | 'unknown';
+            asn: number | null;
+            org: string;
+            source: {
+                id: string;
+                label: string;
+                uri: string | null;
+                kind: 'authoritative' | 'community_snapshot' | 'observed_heuristic' | 'runtime_observation';
+                retrievedAt: string;
+                validUntil: string;
+            } | null;
+            competingEntryIds: string[];
+            degraded: boolean;
+            caution: string;
+        };
     };
     geo: CallGeoInfo | null;
     confidence: 'high' | 'medium' | 'low';

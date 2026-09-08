@@ -106,6 +106,13 @@ o agente no disponible degrada la evidencia tecnica sin eliminar la actividad
 de llamada ya publicada. Readiness exige `callCapturePhases: 1`, por lo que una
 mezcla de versiones falla cerrada durante un despliegue gradual.
 
+Antes del scoring, el backend consulta el registro versionado de infraestructura.
+La coincidencia mas especifica distingue relay, STUN/TURN, DNS, CDN, cloud y
+endpoint publico propio para IPv4/IPv6. El resultado transporta version, fuente
+y vigencia hasta la UI. Una fuente vencida, ausente o ambigua se conserva como
+evidencia degradada y limita la confianza; nunca transforma infraestructura o
+la salida publica propia en una IP atribuida al contacto.
+
 En paralelo, el backend interpreta solo metadata permitida de `CB:call` y guarda
 temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla
 llamada, contacto, caso y sesion; una operacion Lua deduplica, limita y renueva

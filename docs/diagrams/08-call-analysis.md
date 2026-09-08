@@ -18,7 +18,10 @@ flowchart TD
     Auto[Captura automatica sin linea base]
     Packets[Metadata de paquetes]
     Private{IP privada/local?}
-    Known{Meta, Google, Cloudflare, CDN o cloud?}
+    Registry[Registro versionado IPv4/IPv6]
+    Fresh{Fuente vigente y sin conflicto?}
+    Known{Relay, STUN/TURN, DNS, CDN, cloud o endpoint propio?}
+    Degraded[Evidencia degradada + tope]
     Flow[Direccion, volumen, puertos y bidireccionalidad]
     Score[Score y reason codes]
     Geo[DB-IP principal e ip-api complementario]
@@ -33,7 +36,9 @@ flowchart TD
     Agent --> Baseline
     Agent --> Auto
     Private -->|Si| Result
-    Private -->|No| Known
+    Private -->|No| Registry --> Fresh
+    Fresh -->|No| Degraded --> Known
+    Fresh -->|Si| Known
     Known -->|Si| Result
     Known -->|No| Flow --> Score --> Geo --> Consistency --> Result
 ```
@@ -42,6 +47,8 @@ flowchart TD
 
 - La linea base ayuda a separar conexiones permanentes del trafico nuevo.
 - Infraestructura se conserva en el resultado; no se borra para fabricar una candidata.
+- Version, CIDR, fuente y vigencia acompañan cada coincidencia del registro.
+- Una salida publica propia aprendida por STUN nunca se atribuye al contacto.
 - Pocos paquetes limitan la confianza aunque exista flujo bidireccional.
 - Prefijo telefonico aporta contexto, no obliga a que GeoIP coincida.
 - Proveedores contradictorios deben producir una advertencia u omision de mapa.

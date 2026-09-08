@@ -438,7 +438,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     cero descartes y captura final inactiva. Contenedor, red e imagen temporales
     fueron retirados; no se tocaron produccion ni recursos persistentes.
 
-- [ ] **OBS-20.9 — Registro versionado de infraestructura** — `TODO`
+- [x] **OBS-20.9 — Registro versionado de infraestructura** — `DONE (E3 LOCAL)`
   - Alcance: clasificar Meta, relays anunciados, Google STUN/TURN, DNS, CDN,
     cloud, endpoint propio y redes no atribuibles, con procedencia y fecha.
   - Aceptacion: una lista obsoleta o un proveedor desconocido no convierte una
@@ -447,6 +447,19 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     justificar contrato, privacidad, timeout y fallback.
   - Evidencia requerida: rangos sinteticos, solapamientos, expiracion y fuente
     ausente.
+  - Evidencia: registro canonico `2026.09.08.1` con resolucion por prefijo y
+    prioridad, procedencia, vigencia, conflictos y degradacion segura. Cubre
+    IPv4/IPv6, Meta/relay, Google STUN/TURN, DNS exacto, Cloudflare/CDN,
+    cloud curado, desconocidos y salida publica propia observada por STUN. Se
+    eliminaron rangos historicos de terceros atribuidos incorrectamente a Meta,
+    heuristicas `/8` demasiado amplias y la segunda tabla hardcodeada del
+    frontend. El contrato remoto conserva la evidencia del registro y la UI
+    presenta version/fuente/vigencia sin nuevas pestanas. QA completa en verde
+    el 2026-09-08: 300 backend, 30 frontend, typechecks, lint, builds,
+    documentacion, contenedores, licencias y Preview Compose sintetico. Smoke E3
+    sobre artefactos compilados: relay Meta, DNS IPv4/IPv6 y desconocido se
+    distinguieron; el endpoint publico propio obtuvo score 0 y `isP2P=false`.
+    No se tocaron produccion, Docker runtime, volumenes ni datos persistentes.
 
 - [ ] **OBS-20.10 — Correlador y scoring de ruta v2** — `TODO`
   - Alcance: fusionar señalizacion, protocolo, fase, bidireccionalidad, volumen,

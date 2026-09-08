@@ -192,6 +192,7 @@ interface RawCallPacket {
     length: number;
     payloadLength: number;
     protocolEvidence: CallProtocolEvidence[];
+    ownPublicEndpoints: string[];
 }
 
 // ── State ──────────────────────────────────────────────────────
@@ -385,6 +386,9 @@ export function startCallCapture(
                     length: observed.length,
                     payloadLength: observed.payloadLength,
                     protocolEvidence: observed.protocolEvidence,
+                    ownPublicEndpoints: [...new Set(observed.stun?.endpoints
+                        .filter(endpoint => endpoint.role === 'own_public_endpoint')
+                        .map(endpoint => endpoint.ip) ?? [])].slice(0, 8),
                 };
 
                 if (!capturedPacketCollector.add(packet)) return;
@@ -539,6 +543,7 @@ function analyzePackets(
 
     const metaIpSet = new Set<string>();
     const activeMetaIpSet = new Set<string>();
+    const ownPublicEndpoints = new Set(packets.flatMap(packet => packet.ownPublicEndpoints));
 
     for (const pkt of packets) {
         // Determine which IP is "remote" (not local)
@@ -620,7 +625,16 @@ function analyzePackets(
     for (const [ip, stats] of ipStats) {
         const provider = classifyIP(ip);
         const geo = lookupGeo(ip);
-        const networkIntelligence = lookupNetworkIntelligence(ip, provider);
+        const networkIntelligence = lookupNetworkIntelligence(ip, provider, { ownPublicEndpoints });
+        const registryRole = networkIntelligence.registryEvidence?.endpointRole;
+        const endpointRole: CallEndpointRole = registryRole === 'relay'
+            || registryRole === 'stun_turn'
+            || registryRole === 'dns'
+            || registryRole === 'own_public_endpoint'
+            ? registryRole
+            : registryRole === 'cdn' || registryRole === 'cloud_hosting'
+                ? 'background'
+                : 'unknown';
 
         // Determine direction
         let direction: 'incoming' | 'outgoing' | 'bidirectional';
@@ -674,7 +688,7 @@ function analyzePackets(
             isP2P: score.isP2P,
             correlation: score.correlation,
             addressFamily: stats.addressFamily,
-            endpointRole: provider === 'meta' ? 'relay' : 'unknown',
+            endpointRole,
             protocolEvidence: [...stats.protocolEvidence].sort(),
             baselinePackets: stats.baselinePackets,
             activeCallPackets: stats.activeCallPackets,

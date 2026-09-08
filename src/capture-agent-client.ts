@@ -8,6 +8,7 @@ import {
     type CallCaptureTrigger,
 } from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
+import type { NetworkIntelligence } from './call-scoring.js';
 import { validateJid } from './validation.js';
 
 export interface CaptureAgentClientOptions {
@@ -197,6 +198,56 @@ function parseStatus(payload: unknown): CallCaptureStatus {
     };
 }
 
+function parseRegistryEvidence(value: unknown): NonNullable<NetworkIntelligence['registryEvidence']> {
+    const object = requireObject(value, 'candidate networkIntelligence.registryEvidence');
+    const sourceObject = object.source === null
+        ? null
+        : requireObject(object.source, 'candidate networkIntelligence.registryEvidence.source');
+    const source = sourceObject === null ? null : {
+        id: requireBoundedString(sourceObject.id, 'registry source.id', 128),
+        label: requireBoundedString(sourceObject.label, 'registry source.label', 512),
+        uri: sourceObject.uri === null ? null : requireBoundedString(sourceObject.uri, 'registry source.uri', 2_048),
+        kind: requireEnum(sourceObject.kind, 'registry source.kind', [
+            'authoritative',
+            'community_snapshot',
+            'observed_heuristic',
+            'runtime_observation',
+        ]),
+        retrievedAt: requireDate(sourceObject.retrievedAt, 'registry source.retrievedAt').toISOString(),
+        validUntil: requireDate(sourceObject.validUntil, 'registry source.validUntil').toISOString(),
+    };
+    return {
+        schemaVersion: requireIntegerInRange(object.schemaVersion, 'registry schemaVersion', 1, 1) as 1,
+        registryVersion: requireBoundedString(object.registryVersion, 'registry registryVersion', 128),
+        registryPublishedAt: requireDate(object.registryPublishedAt, 'registry registryPublishedAt').toISOString(),
+        status: requireEnum(object.status, 'registry status', [
+            'fresh', 'stale', 'source_unavailable', 'unknown', 'invalid',
+        ]),
+        entryId: object.entryId === null ? null : requireBoundedString(object.entryId, 'registry entryId', 128),
+        matchedCidr: object.matchedCidr === null
+            ? null
+            : requireBoundedString(object.matchedCidr, 'registry matchedCidr', 128),
+        provider: requireEnum(object.provider, 'registry provider', ['meta', 'google', 'cloudflare', 'unknown']),
+        category: object.category === null
+            ? null
+            : requireEnum<NonNullable<NonNullable<NetworkIntelligence['registryEvidence']>['category']>>(
+                object.category,
+                'registry category',
+                ['meta', 'stun_turn', 'dns', 'cdn', 'cloud_hosting'],
+            ),
+        endpointRole: requireEnum(object.endpointRole, 'registry endpointRole', [
+            'relay', 'stun_turn', 'dns', 'cdn', 'cloud_hosting', 'own_public_endpoint', 'unknown',
+        ]),
+        asn: object.asn === null ? null : requireIntegerInRange(object.asn, 'registry asn', 0, 4_294_967_295),
+        org: requireBoundedString(object.org, 'registry org', 512),
+        source,
+        competingEntryIds: requireArray(object.competingEntryIds, 'registry competingEntryIds', 64)
+            .map((entry, index) => requireBoundedString(entry, `registry competingEntryIds[${index}]`, 128)),
+        degraded: requireBoolean(object.degraded, 'registry degraded'),
+        caution: requireBoundedString(object.caution, 'registry caution', 2_048),
+    };
+}
+
 function parseCandidate(value: unknown): CandidateIP {
     const object = requireObject(value, 'Capture candidate');
     const ip = requireString(object.ip, 'candidate ip');
@@ -267,6 +318,7 @@ function parseCandidate(value: unknown): CandidateIP {
         networkCategory: requireEnum(object.networkCategory, 'candidate networkCategory', [
             'meta',
             'stun_turn',
+            'dns',
             'cdn',
             'cloud_hosting',
             'consumer_isp_or_unknown',
@@ -278,6 +330,7 @@ function parseCandidate(value: unknown): CandidateIP {
             category: requireEnum(networkIntelligenceObject.category, 'candidate networkIntelligence.category', [
                 'meta',
                 'stun_turn',
+                'dns',
                 'cdn',
                 'cloud_hosting',
                 'consumer_isp_or_unknown',
@@ -296,6 +349,9 @@ function parseCandidate(value: unknown): CandidateIP {
                 'candidate networkIntelligence.caution',
                 4_096,
             ),
+            ...(networkIntelligenceObject.registryEvidence === undefined ? {} : {
+                registryEvidence: parseRegistryEvidence(networkIntelligenceObject.registryEvidence),
+            }),
         },
         geo: geoObject === null ? null : {
             country: requireBoundedString(geoObject.country, 'candidate geo.country', 128),

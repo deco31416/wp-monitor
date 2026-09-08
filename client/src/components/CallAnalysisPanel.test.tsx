@@ -88,3 +88,62 @@ test('distinguishes a standalone baseline from a correlated call', () => {
     expect(screen.getByText('Solo se registró la línea base')).toBeInTheDocument();
     expect(screen.getByText(/no se observó el inicio de una llamada correlacionada/)).toBeInTheDocument();
 });
+
+test('shows the registry version and freshness that support an infrastructure classification', () => {
+    const result = analysis();
+    result.totalPackets = 20;
+    result.candidateIps = [{
+        ip: '8.8.8.8',
+        packets: 20,
+        bytesTotal: 2_400,
+        firstSeen: '2026-09-08T12:00:00.000Z',
+        lastSeen: '2026-09-08T12:00:09.000Z',
+        avgSize: 120,
+        ports: [53],
+        direction: 'bidirectional',
+        provider: 'google',
+        networkCategory: 'dns',
+        networkIntelligence: {
+            asn: 15169,
+            org: 'Google Public DNS',
+            category: 'dns',
+            source: 'local_rules',
+            isDatacenterLikely: true,
+            caution: 'Infrastructure only.',
+            registryEvidence: {
+                schemaVersion: 1,
+                registryVersion: '2026.09.08.1',
+                registryPublishedAt: '2026-09-08T00:00:00.000Z',
+                status: 'fresh',
+                entryId: 'google-public-dns',
+                matchedCidr: '8.8.8.8/32',
+                provider: 'google',
+                category: 'dns',
+                endpointRole: 'dns',
+                asn: 15169,
+                org: 'Google Public DNS',
+                source: {
+                    id: 'google-public-dns',
+                    label: 'Google Public DNS endpoints',
+                    uri: 'https://developers.google.com/speed/public-dns/docs/using',
+                    kind: 'authoritative',
+                    retrievedAt: '2026-09-08T00:00:00.000Z',
+                    validUntil: '2026-12-07T00:00:00.000Z',
+                },
+                competingEntryIds: [],
+                degraded: false,
+                caution: 'Infrastructure only.',
+            },
+        },
+        geo: null,
+        confidence: 'low',
+        confidenceScore: 0,
+        reasonCodes: [],
+        technicalNote: 'Infrastructure only.',
+        isP2P: false,
+    }];
+
+    render(panel(result));
+
+    expect(screen.getByText(/Registro 2026\.09\.08\.1 · vigente · Google Public DNS endpoints/)).toBeInTheDocument();
+});
