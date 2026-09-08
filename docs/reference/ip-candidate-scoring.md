@@ -1,6 +1,6 @@
 # Scoring Tecnico de IP Candidata
 
-Ultima actualizacion: 2026-06-28
+Ultima actualizacion: 2026-09-08
 
 ## Objetivo
 
@@ -19,6 +19,8 @@ El resultado debe leerse como **IP observada candidata**, no como identificacion
 - Bytes totales y tamano promedio.
 - Puertos observados.
 - Duracion de la ventana de captura.
+- Fase del paquete: linea base previa o subventana correlacionada con la llamada,
+  cuando el proveedor dispone de fases validas.
 - Pais inferido por prefijo E.164/JID del numero observado, usado solo como contexto.
 - Geolocalizacion offline cuando exista en la base local.
 - Enriquecimiento externo opcional, con DB-IP como fuente primaria por defecto e `ip-api.com` como complemento/fallback para ciudad, region, codigo postal, coordenadas, zona horaria, ISP, organizacion, ASN y senales mobile/proxy/hosting.
@@ -51,6 +53,14 @@ Veredictos:
 Esta capa no reemplaza el scoring de llamada. Solo prepara la lectura de la captura general. El scoring de llamada agrega ventana temporal, volumen, puertos, direccion, enriquecimiento IP, prefijo telefonico, topes por muestra pequena y limitaciones formales.
 
 ## Reglas v1
+
+Cuando existe una linea base valida, `packets`, bytes, direccion, puertos y
+densidad entregados al score proceden solo de la subventana de llamada. El
+resultado conserva por separado `baselinePackets` y `activeCallPackets`, de
+modo que el trafico previo sigue auditable sin elevar la confianza. Si no hay
+fases por compatibilidad historica, se mantiene la ventana completa. Una
+captura automatica sin linea base se marca explicitamente y no simula una
+comparacion inexistente.
 
 - IP publica desconocida inicia con score positivo porque no coincide con relays conocidos.
 - Infraestructura conocida inicia penalizada y queda limitada a score bajo.
@@ -117,6 +127,7 @@ Cada candidato incluye:
 
 - Integrar fuente ASN/ORG actualizada y cacheada para verificacion formal.
 - Ampliar base local de hosting, cloud, VPN/proxy y datacenters.
-- Correlacionar con subventanas exactas de evento de llamada y linea base previa/posterior.
+- Incorporar las fases remotas firmadas del capture-agent y la linea base
+  posterior al cierre dentro del correlador v2.
 - Agregar pruebas unitarias para cada regla de scoring.
 - Incluir pruebas visuales del bloque ASN/ORG en UI y reportes.

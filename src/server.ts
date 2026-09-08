@@ -1502,6 +1502,7 @@ async function publishCallLiveState(
 async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<void> {
     const { call, jid } = event;
     await publishCallLiveState(call, 'baileys', jid);
+    callCaptureService.observeCallEvent(jid, call.id, call.status);
 
     // Auto-start only when a default case context is configured and the call
     // belongs to an explicitly active tracking session.
@@ -1537,6 +1538,11 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
                 call.id,
                 call.isVideo || false,
                 packet => { io.emit('call-packet', packet); },
+                {
+                    trigger: 'auto',
+                    observedCallId: call.id,
+                    initialCallStatus: call.status,
+                },
             );
             if (started) {
                 activeCallAuditContext = { ...defaultContext, targetJid: jid, callId: call.id };
@@ -1594,6 +1600,7 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         durationSec: result.durationSec,
         candidateCount: result.candidateIps.filter(candidate => candidate.isP2P).length,
         metaIpCount: result.metaIps.length,
+        baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
         trigger: 'auto',
     }, result.targetJid);
 }
@@ -3631,6 +3638,7 @@ app.post('/api/call-capture/stop', async (_req, res) => {
                 durationSec: result.durationSec,
                 candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                 metaIpCount: result.metaIps.length,
+                baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
                 status: 'completed',
             }, result.targetJid);
             await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
@@ -3641,6 +3649,7 @@ app.post('/api/call-capture/stop', async (_req, res) => {
                 durationSec: result.durationSec,
                 candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                 metaIpCount: result.metaIps.length,
+                baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
                 trigger: 'manual_rest',
             }, result.targetJid);
         }
@@ -4191,6 +4200,7 @@ io.on('connection', (socket) => {
                     durationSec: result.durationSec,
                     candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                     metaIpCount: result.metaIps.length,
+                    baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
                     status: 'completed',
                 }, result.targetJid);
                 await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
@@ -4201,6 +4211,7 @@ io.on('connection', (socket) => {
                     durationSec: result.durationSec,
                     candidateCount: result.candidateIps.filter(c => c.isP2P).length,
                     metaIpCount: result.metaIps.length,
+                    baselineAvailable: result.capturePhases?.baselineAvailable ?? null,
                     trigger: 'socket',
                 }, result.targetJid);
             }

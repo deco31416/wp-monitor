@@ -337,6 +337,25 @@ test('capture agent client accepts the additive v2 packet contract without requi
         droppedPackets: 2,
         truncated: true,
     });
+
+    for (const candidateIps of [
+        [{ ...payload.candidateIps[0], activeCallPackets: undefined }],
+        [{ ...payload.candidateIps[0], baselinePackets: 3, activeCallPackets: 6 }],
+    ]) {
+        const invalidClient = new CaptureAgentClient({
+            baseUrl: 'http://capture-agent.test:4100',
+            sharedSecret: SECRET,
+            fetchImpl: (async () => new Response(JSON.stringify({ ...payload, candidateIps }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })) as typeof fetch,
+        });
+        await assert.rejects(
+            invalidClient.stopCallCapture(),
+            (error: unknown) => error instanceof CaptureAgentClientError
+                && error.code === 'invalid_agent_response',
+        );
+    }
 });
 
 test('capture agent client rejects inconsistent v2 evidence and backend-owned conclusions', async () => {
@@ -362,6 +381,36 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
                 baselineStartedAt: null,
                 baselineEndedAt: null,
                 negotiationStartedAt: null,
+                activeCallStartedAt: null,
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: null,
+                activeCallStartedAt: new Date(NOW + 5_000).toISOString(),
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: true,
+                baselineStartedAt: new Date(NOW - 1_000).toISOString(),
+                baselineEndedAt: new Date(NOW + 1_000).toISOString(),
+                negotiationStartedAt: new Date(NOW + 1_000).toISOString(),
+                activeCallStartedAt: null,
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: new Date(NOW + 11_000).toISOString(),
                 activeCallStartedAt: null,
             },
         },

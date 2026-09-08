@@ -26,6 +26,11 @@ import { isMetaIP, isKnownRelayIP, isPrivateIP, classifyIP } from './meta-ip-ran
 import { decodeCallPacketFrame } from './call-packet-decoder.js';
 import { BoundedPacketCollector } from './bounded-packet-collector.js';
 import {
+    CallCapturePhaseLifecycle,
+    classifyCapturePacketPhase,
+} from './call-capture-phases.js';
+import type { CallCapturePhases, CallCaptureTrigger } from './call-capture-phases.js';
+import {
     lookupNetworkIntelligence,
     scoreCandidate,
 } from './call-scoring.js';
@@ -109,13 +114,7 @@ export interface CallRouteAssessment {
     limitations: string[];
 }
 
-export interface CallCapturePhases {
-    baselineAvailable: boolean;
-    baselineStartedAt: Date | null;
-    baselineEndedAt: Date | null;
-    negotiationStartedAt: Date | null;
-    activeCallStartedAt: Date | null;
-}
+export type { CallCapturePhases } from './call-capture-phases.js';
 
 export interface CandidateIP {
     ip: string;
@@ -204,6 +203,7 @@ let currentTargetJid: string | null = null;
 let currentIsVideo: boolean = false;
 let captureStartTime: Date | null = null;
 const capturedPacketCollector = new BoundedPacketCollector<RawCallPacket>(MAX_CAPTURED_CALL_PACKETS);
+const capturePhaseLifecycle = new CallCapturePhaseLifecycle();
 let captureInterfaceAddr: string = '';
 let localIPs: Set<string> = new Set();
 let localIpBlockList = new BlockList();
@@ -232,6 +232,7 @@ function resetCaptureState() {
     localIPs = new Set();
     localIpBlockList = new BlockList();
     onCallPacket = null;
+    capturePhaseLifecycle.reset();
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -308,7 +309,12 @@ export function startCallCapture(
     targetJid: string,
     callId: string,
     isVideo: boolean = false,
-    packetCallback?: (packet: RawCallPacket & { isMetaIP: boolean }) => void
+    packetCallback?: (packet: RawCallPacket & { isMetaIP: boolean }) => void,
+    phaseContext?: {
+        trigger: CallCaptureTrigger;
+        observedCallId?: string;
+        initialCallStatus?: string;
+    },
 ): boolean {
     if (isCapturing) {
         console.log('[CALL-ANALYZER] Already capturing, stop first');
@@ -331,6 +337,13 @@ export function startCallCapture(
         localIPs = getLocalIPs();
         localIpBlockList = buildLocalIpBlockList(localIPs);
         onCallPacket = packetCallback || null;
+        if (phaseContext) {
+            capturePhaseLifecycle.start({
+                captureCallId: callId,
+                targetJid,
+                ...phaseContext,
+            });
+        }
 
         // Calls primarily use UDP, but signaling and relay fallback can use TCP.
         const bpfFilter = '(udp or tcp) and (ip or ip6)';
@@ -400,6 +413,10 @@ export function startCallCapture(
     }
 }
 
+export function observeCallCapturePhase(targetJid: string, observedCallId: string, status: string): boolean {
+    return capturePhaseLifecycle.observe(targetJid, observedCallId, status);
+}
+
 /**
  * Stop capture and analyze collected packets.
  * Returns the analysis result with observed candidate IPs.
@@ -427,6 +444,11 @@ export function stopCallCapture(): CallAnalysisResult | null {
     const collectionStats = capturedPacketCollector.stats();
     console.log(`[CALL-ANALYZER] Capture stopped. ${collectionStats.storedPackets} packets stored, ${collectionStats.droppedPackets} dropped by bound in ${durationSec}s`);
 
+    const capturePhases = capturePhaseLifecycle.finish(
+        currentCallId || 'unknown',
+        currentTargetJid || 'unknown',
+        endTime,
+    );
     const result = analyzePackets(
         [...capturedPacketCollector.packets()],
         currentCallId || 'unknown',
@@ -437,6 +459,7 @@ export function stopCallCapture(): CallAnalysisResult | null {
         currentIsVideo,
         captureInterfaceAddr,
         collectionStats.droppedPackets,
+        capturePhases ?? undefined,
     );
 
     // Store in history
@@ -467,6 +490,7 @@ function analyzePackets(
     isVideo: boolean,
     captureInterface: string,
     droppedPacketCount: number = 0,
+    capturePhases?: CallCapturePhases,
 ): CallAnalysisResult {
     const totalObservedPackets = packets.length + droppedPacketCount;
     const captureBounds: CallCaptureBounds = {
@@ -489,6 +513,7 @@ function analyzePackets(
             verdict: 'insufficient_data',
             captureInterface,
             schemaVersion: 2,
+            ...(capturePhases ? { capturePhases } : {}),
             captureBounds,
         };
     }
@@ -504,9 +529,16 @@ function analyzePackets(
         outbound: number;
         addressFamily: 4 | 6;
         protocolEvidence: Set<CallProtocolEvidence>;
+        baselinePackets: number;
+        activeCallPackets: number;
+        activeBytesTotal: number;
+        activeInbound: number;
+        activeOutbound: number;
+        activePorts: Set<number>;
     }>();
 
     const metaIpSet = new Set<string>();
+    const activeMetaIpSet = new Set<string>();
 
     for (const pkt of packets) {
         // Determine which IP is "remote" (not local)
@@ -535,8 +567,10 @@ function analyzePackets(
         if (isLocalOrPrivateIP(remoteIp)) continue;
 
         // Track Meta IPs separately
+        const packetPhase = classifyCapturePacketPhase(pkt.timestamp, capturePhases);
         if (isMetaIP(remoteIp)) {
             metaIpSet.add(remoteIp);
+            if (packetPhase === 'call') activeMetaIpSet.add(remoteIp);
         }
 
         if (!ipStats.has(remoteIp)) {
@@ -550,6 +584,12 @@ function analyzePackets(
                 outbound: 0,
                 addressFamily: pkt.addressFamily,
                 protocolEvidence: new Set(),
+                baselinePackets: 0,
+                activeCallPackets: 0,
+                activeBytesTotal: 0,
+                activeInbound: 0,
+                activeOutbound: 0,
+                activePorts: new Set(),
             });
         }
 
@@ -562,6 +602,16 @@ function analyzePackets(
         if (isInbound) stats.inbound++;
         else stats.outbound++;
         for (const evidence of pkt.protocolEvidence) stats.protocolEvidence.add(evidence);
+        if (packetPhase === 'baseline') {
+            stats.baselinePackets++;
+        } else {
+            stats.activeCallPackets++;
+            stats.activeBytesTotal += pkt.length;
+            if (isInbound) stats.activeInbound++;
+            else stats.activeOutbound++;
+            if (pkt.srcPort) stats.activePorts.add(pkt.srcPort);
+            if (pkt.dstPort) stats.activePorts.add(pkt.dstPort);
+        }
     }
 
     // Build candidate list
@@ -583,14 +633,22 @@ function analyzePackets(
         }
 
         const ports = Array.from(stats.ports).sort((a, b) => a - b).slice(0, 10);
+        const scoringPorts = Array.from(stats.activePorts).sort((a, b) => a - b).slice(0, 10);
+        let scoringDirection: 'incoming' | 'outgoing' | 'bidirectional';
+        if (stats.activeInbound > 0 && stats.activeOutbound > 0) scoringDirection = 'bidirectional';
+        else if (stats.activeInbound > 0) scoringDirection = 'incoming';
+        else scoringDirection = 'outgoing';
+        const scoringDurationSec = capturePhases?.baselineAvailable && capturePhases.baselineEndedAt
+            ? Math.max(0, Math.round((endTime.getTime() - capturePhases.baselineEndedAt.getTime()) / 1000))
+            : durationSec;
         const score = scoreCandidate({
             provider,
             networkIntelligence,
-            packets: stats.packets,
-            bytesTotal: stats.bytesTotal,
-            direction,
-            ports,
-            durationSec,
+            packets: stats.activeCallPackets,
+            bytesTotal: stats.activeBytesTotal,
+            direction: scoringDirection,
+            ports: scoringPorts,
+            durationSec: scoringDurationSec,
             targetJid,
             observedCountryCode: geo?.country ?? null,
             addressFamily: stats.addressFamily,
@@ -618,6 +676,8 @@ function analyzePackets(
             addressFamily: stats.addressFamily,
             endpointRole: provider === 'meta' ? 'relay' : 'unknown',
             protocolEvidence: [...stats.protocolEvidence].sort(),
+            baselinePackets: stats.baselinePackets,
+            activeCallPackets: stats.activeCallPackets,
             scoreVersion: 2,
         });
     }
@@ -630,10 +690,12 @@ function analyzePackets(
 
     // Determine verdict
     const p2pCandidates = candidates.filter(c => c.isP2P && c.confidence !== 'low');
-    const hasRelay = metaIpSet.size > 0;
+    const hasRelay = activeMetaIpSet.size > 0;
+    const activeObservedPackets = [...ipStats.values()]
+        .reduce((total, stats) => total + stats.activeCallPackets, 0);
 
     let verdict: 'p2p' | 'relay' | 'mixed' | 'insufficient_data';
-    if (totalObservedPackets < 10) {
+    if (activeObservedPackets < 10) {
         verdict = 'insufficient_data';
     } else if (p2pCandidates.length > 0 && hasRelay) {
         verdict = 'mixed';
@@ -656,6 +718,7 @@ function analyzePackets(
         verdict,
         captureInterface,
         schemaVersion: 2,
+        ...(capturePhases ? { capturePhases } : {}),
         captureBounds,
     };
 

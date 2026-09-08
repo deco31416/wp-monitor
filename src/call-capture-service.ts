@@ -1,6 +1,7 @@
 import {
     autoDetectInterface,
     getCallCaptureStatus,
+    observeCallCapturePhase,
     startCallCapture,
     stopCallCapture,
 } from './call-analyzer.js';
@@ -17,6 +18,12 @@ export interface CallCaptureServiceOptions {
 }
 
 export type CallPacketCallback = (packet: unknown) => void;
+
+export interface CallCaptureStartContext {
+    trigger: 'manual' | 'auto';
+    observedCallId?: string;
+    initialCallStatus?: string;
+}
 
 const EMPTY_STATUS: CallCaptureStatus = {
     isCapturing: false,
@@ -89,14 +96,20 @@ export class CallCaptureService {
         callId: string,
         isVideo: boolean,
         packetCallback?: CallPacketCallback,
+        context: CallCaptureStartContext = { trigger: 'manual' },
     ): Promise<boolean> {
         if (this.mode === 'local') {
-            return startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback);
+            return startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback, context);
         }
         if (this.mode === 'agent') {
             return this.agent!.startCallCapture({ interfaceAddr, targetJid, callId, isVideo });
         }
         return false;
+    }
+
+    observeCallEvent(targetJid: string, observedCallId: string, status: string): boolean {
+        if (this.mode !== 'local') return false;
+        return observeCallCapturePhase(targetJid, observedCallId, status);
     }
 
     async stop(): Promise<CallAnalysisResult | null> {

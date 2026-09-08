@@ -33,6 +33,14 @@ Invariantes:
 
 Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Mantiene disponibilidad observable sin conceder capabilities al backend.
 
+### `src/call-capture-phases.ts`
+
+Maquina de fases determinista para una unica captura. Correlaciona contacto y
+llamada observada, separa linea base, negociacion y llamada activa, rechaza
+retrocesos de reloj y eventos de otra llamada, y clasifica cada paquete sin
+retener contenido. El proveedor local ya usa estas fases; su transporte firmado
+al sidecar corresponde a `OBS-20.8`.
+
 ### `src/capture-agent-auth.ts`, `src/capture-agent-client.ts` y `src/capture-agent-app.ts`
 
 Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. El cliente aplica timeout, bloquea redirects y valida el resultado antes de entregarlo al backend.

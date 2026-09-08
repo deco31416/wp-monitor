@@ -10,9 +10,12 @@ El numero/JID identifica el contacto operativo y permite relacionar el analisis 
 flowchart TD
     Browser[WhatsApp Web en host/namespace observado]
     Backend[Backend sin capabilities]
+    Local[Analizador local]
     Agent[Capture agent HMAC]
     Baseline[Linea base sin llamada]
-    Window[Ventana de llamada 60-90 s]
+    Negotiation[Negociacion correlacionada]
+    Active[Llamada activa]
+    Auto[Captura automatica sin linea base]
     Packets[Metadata de paquetes]
     Private{IP privada/local?}
     Known{Meta, Google, Cloudflare, CDN o cloud?}
@@ -23,8 +26,11 @@ flowchart TD
     Result[Resultado con limitaciones]
 
     Backend -->|start/stop firmado| Agent
+    Backend --> Local
     Browser --> Agent
-    Agent --> Baseline --> Window --> Packets --> Private
+    Local --> Baseline --> Negotiation --> Active --> Packets --> Private
+    Local --> Auto --> Negotiation
+    Agent --> Packets
     Private -->|Si| Result
     Private -->|No| Known
     Known -->|Si| Result

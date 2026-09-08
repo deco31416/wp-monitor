@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 import { ExternalLink, Globe, History, Monitor, Phone, Shield, Square, Target, Wifi } from 'lucide-react';
-import { CallAnalysisResult, CallEvent, CandidateIP, type CaseRecord } from '../types';
+import { CallAnalysisResult, CallEvent, CandidateIP, type CallCapturePhases, type CaseRecord } from '../types';
 
 interface CallAnalysisPanelProps {
     callAnalysis: CallAnalysisResult | null;
@@ -48,7 +48,7 @@ export function CallAnalysisPanel({
                 </h5>
                 <p className="text-[11px] text-txt-dim mb-4">
                     Captura trafico local durante llamadas WhatsApp para clasificar IPs observadas, relays e infraestructura.
-                    La captura se inicia automaticamente al detectar una llamada, o puede iniciarse manualmente.
+                    Iníciala manualmente antes de llamar para separar una línea base. Si comienza automáticamente, el resultado indicará que no existió esa comparación previa.
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
@@ -123,7 +123,7 @@ export function CallAnalysisPanel({
                                 {callStopping ? 'Cerrando y analizando captura' : 'Captura en curso'}
                             </p>
                             <p className="text-[10px] text-txt-dim">
-                                {callPacketCount} paquetes UDP capturados · {callStopping ? 'Procesando resultado, GeoIP y auditoria' : 'Haz la llamada desde este equipo local'}
+                                {callPacketCount} paquetes de red capturados · {callStopping ? 'Procesando resultado, GeoIP y auditoria' : 'Haz la llamada desde este equipo local'}
                             </p>
                         </div>
                     </div>
@@ -229,6 +229,8 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                 </div>
             )}
 
+            {analysis.capturePhases && <CapturePhaseSummary phases={analysis.capturePhases} />}
+
             <CallTrafficMap analysis={analysis} />
 
             {observedCandidates.length > 0 && (
@@ -287,6 +289,41 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                     </div>
                 </details>
             )}
+        </div>
+    );
+}
+
+function CapturePhaseSummary({ phases }: { phases: CallCapturePhases }) {
+    if (!phases.baselineAvailable) {
+        return (
+            <div role="status" className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+                <p className="text-xs font-semibold text-amber-300">Resultado sin línea base previa</p>
+                <p className="mt-1 text-[11px] text-amber-100/75">
+                    No se registró una ventana previa separable. El tráfico de fondo puede influir y limita la confianza del análisis.
+                </p>
+            </div>
+        );
+    }
+
+    const baselineDuration = phases.baselineStartedAt && phases.baselineEndedAt
+        ? Math.max(0, Math.round((new Date(phases.baselineEndedAt).getTime() - new Date(phases.baselineStartedAt).getTime()) / 1000))
+        : 0;
+    if (!phases.negotiationStartedAt) {
+        return (
+            <div role="status" className="mb-4 rounded-lg border border-surface-border bg-surface-hover px-3 py-3">
+                <p className="text-xs font-semibold text-txt-primary">Solo se registró la línea base</p>
+                <p className="mt-1 text-[11px] text-txt-secondary">
+                    Se capturaron {baselineDuration}s de actividad previa, pero no se observó el inicio de una llamada correlacionada en esta ventana.
+                </p>
+            </div>
+        );
+    }
+    return (
+        <div role="status" className="mb-4 rounded-lg border border-success/30 bg-success/10 px-3 py-3">
+            <p className="text-xs font-semibold text-success">Comparación con línea base disponible</p>
+            <p className="mt-1 text-[11px] text-txt-secondary">
+                Se separaron {baselineDuration}s de actividad previa para reducir el peso del tráfico que ya existía antes de la llamada.
+            </p>
         </div>
     );
 }

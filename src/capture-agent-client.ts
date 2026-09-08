@@ -233,10 +233,23 @@ function parseCandidate(value: unknown): CandidateIP {
     if (addressFamily !== undefined && addressFamily !== detectedAddressFamily) {
         throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate addressFamily', 502, 'invalid_agent_response');
     }
+    const packets = requireNonNegativeInteger(object.packets, 'candidate packets');
+    const baselinePackets = object.baselinePackets === undefined
+        ? undefined
+        : requireNonNegativeInteger(object.baselinePackets, 'candidate baselinePackets');
+    const activeCallPackets = object.activeCallPackets === undefined
+        ? undefined
+        : requireNonNegativeInteger(object.activeCallPackets, 'candidate activeCallPackets');
+    if ((baselinePackets === undefined) !== (activeCallPackets === undefined)) {
+        throw new CaptureAgentClientError('Capture agent returned incomplete candidate phase counts', 502, 'invalid_agent_response');
+    }
+    if (baselinePackets !== undefined && activeCallPackets !== undefined && baselinePackets + activeCallPackets !== packets) {
+        throw new CaptureAgentClientError('Capture agent returned inconsistent candidate phase counts', 502, 'invalid_agent_response');
+    }
 
     return {
         ip,
-        packets: requireNonNegativeInteger(object.packets, 'candidate packets'),
+        packets,
         bytesTotal: requireNonNegativeInteger(object.bytesTotal, 'candidate bytesTotal'),
         firstSeen,
         lastSeen,
@@ -304,12 +317,8 @@ function parseCandidate(value: unknown): CandidateIP {
                 'unknown',
             ]),
         }),
-        ...(object.baselinePackets === undefined ? {} : {
-            baselinePackets: requireNonNegativeInteger(object.baselinePackets, 'candidate baselinePackets'),
-        }),
-        ...(object.activeCallPackets === undefined ? {} : {
-            activeCallPackets: requireNonNegativeInteger(object.activeCallPackets, 'candidate activeCallPackets'),
-        }),
+        ...(baselinePackets === undefined ? {} : { baselinePackets }),
+        ...(activeCallPackets === undefined ? {} : { activeCallPackets }),
         ...(object.protocolEvidence === undefined ? {} : {
             protocolEvidence: requireArray(object.protocolEvidence, 'candidate protocolEvidence', 16).map((entry, index) => (
                 requireEnum(entry, `candidate protocolEvidence[${index}]`, [
@@ -381,6 +390,9 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
     if (negotiationStartedAt && activeCallStartedAt && activeCallStartedAt.getTime() < negotiationStartedAt.getTime()) {
         throw new CaptureAgentClientError('Capture agent returned an invalid active call phase', 502, 'invalid_agent_response');
     }
+    if (activeCallStartedAt && !negotiationStartedAt) {
+        throw new CaptureAgentClientError('Capture agent returned an active phase without negotiation', 502, 'invalid_agent_response');
+    }
 
     return {
         baselineAvailable,
@@ -435,6 +447,20 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     const captureBounds = object.captureBounds === undefined
         ? undefined
         : parseCaptureBounds(object.captureBounds);
+    if (capturePhases) {
+        const phaseDates = [
+            capturePhases.baselineStartedAt,
+            capturePhases.baselineEndedAt,
+            capturePhases.negotiationStartedAt,
+            capturePhases.activeCallStartedAt,
+        ].filter((value): value is Date => value !== null);
+        if (phaseDates.some(value => value.getTime() < startTime.getTime())) {
+            throw new CaptureAgentClientError('Capture agent returned a phase before capture start', 502, 'invalid_agent_response');
+        }
+        if (endTime && phaseDates.some(value => value.getTime() > endTime.getTime())) {
+            throw new CaptureAgentClientError('Capture agent returned a phase after capture end', 502, 'invalid_agent_response');
+        }
+    }
     if (captureBounds && captureBounds.storedPackets + captureBounds.droppedPackets !== totalPackets) {
         throw new CaptureAgentClientError('Capture agent returned inconsistent packet totals', 502, 'invalid_agent_response');
     }

@@ -27,8 +27,8 @@ El flujo correcto es:
 1. crear o seleccionar un caso autorizado;
 2. relacionar el numero propio o expresamente autorizado;
 3. ejecutar WP MONITOR nativo en la misma computadora, o usar el navegador persistente del VPS con `CALL_CAPTURE_MODE=agent`;
-4. capturar una linea base sin llamada;
-5. iniciar una ventana nueva y realizar la llamada desde WhatsApp;
+4. iniciar manualmente una ventana y dejar un intervalo deliberado de linea base sin llamada;
+5. realizar la llamada desde WhatsApp dentro de esa misma ventana;
 6. detener la captura al finalizar;
 7. separar red local, Meta/relays, cloud/CDN/STUN-TURN y direcciones publicas por revisar;
 8. puntuar las observaciones segun volumen, direccion, proveedor y tamano de muestra;
@@ -84,13 +84,20 @@ En Docker/VPS enlaza WhatsApp Web mediante Selkies detras del acceso/tunel prote
 
 ### Practica controlada
 
-1. captura linea base sin llamada;
-2. inicia una nueva ventana con Case ID;
-3. realiza llamada propia durante 60-90 segundos;
-4. contesta o no segun el escenario documentado;
-5. detiene desde WP MONITOR;
-6. espera el resultado en tiempo real;
-7. compara contra linea base.
+1. selecciona el Case ID autorizado;
+2. inicia la captura manual antes de llamar;
+3. deja un intervalo deliberado de linea base sin llamada;
+4. realiza la llamada propia durante 60-90 segundos en la misma ventana;
+5. contesta o no segun el escenario documentado;
+6. detiene desde WP MONITOR;
+7. espera el resultado en tiempo real y revisa la disponibilidad de linea base.
+
+Con proveedor local, el resultado separa paquetes previos y posteriores al
+inicio correlacionado de la llamada. Si la captura comienza automaticamente, la
+interfaz advierte que no hubo linea base previa y que el trafico de fondo limita
+la confianza. Los resultados historicos sin fases se mantienen compatibles y no
+reciben una afirmacion inventada. El transporte de estas transiciones hacia el
+proveedor `agent` queda pendiente del contrato firmado de `OBS-20.8`.
 
 ### Categorias del resultado
 

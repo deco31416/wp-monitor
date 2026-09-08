@@ -353,7 +353,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     explicitamente en `OBS-20.6`. QA completa en verde el 2026-09-08: 268
     backend, 25 frontend, typechecks, lint y builds.
 
-- [ ] **OBS-20.6 — Captura UDP/TCP con IPv4 e IPv6** — `IN PROGRESS (E2 LOCAL PASS; E3 PENDING)`
+- [x] **OBS-20.6 — Captura UDP/TCP con IPv4 e IPv6** — `DONE (E3 VPS STAGING)`
   - Alcance: ampliar el filtro y decodificacion conservando limites de memoria,
     metadata minima y captura unica.
   - Aceptacion: UDP y TCP alcanzan sus ramas reales; IPv6 no se descarta; una
@@ -373,13 +373,26 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     de 86 bytes usa la trama completa, no la longitud IP. Un colector aislado
     prueba exactamente 50.000 registros, descartes declarados y reinicio entre
     capturas. QA completa en verde el 2026-09-08: 279 backend, 25 frontend,
-    typechecks, lint y builds. La prueba
-    libpcap operacional en el namespace objetivo se mantiene como evidencia E4
-    de promocion y no se sustituye por fixtures locales. Hasta `OBS-20.9`, IPv6
+    typechecks, lint y builds. Smoke E3 aislado ejecutado en VPS el 2026-09-08
+    sobre el SHA exacto `d09c7f90e150e6cd62430200421532135b4831f0`:
+    el cliente HMAC real inicio y detuvo cuatro capturas libpcap independientes.
+    UDP/IPv4 almaceno 24 paquetes, TCP/IPv4 43, UDP/IPv6 24 y TCP/IPv6 43; cada
+    resultado conservo la familia y el puerto sintetico esperados, publico
+    `transport_flow`, y TCP/IPv6 conservo ademas la señal secundaria
+    `frame_length_86`. En los cuatro casos `captureBounds` declaro limite
+    50.000, cero descartes y `truncated=false`; el estado final quedo sin
+    captura activa. El agente y el emisor usaron una red, direcciones y
+    contenedores sinteticos sin puertos publicos ni volumenes productivos; al
+    terminar se eliminaron los recursos y el secreto temporales. Los cuatro
+    servicios productivos permanecieron saludables y con cero reinicios. El
+    veredicto global heredado `relay` ante trafico desconocido sin rango Meta no
+    se usa como prueba de atribucion y queda dentro de la correccion de
+    correlacion/scoring de `OBS-20.10`. La prueba operacional en el namespace
+    productivo sigue reservada para E4 en `OBS-20.12`. Hasta `OBS-20.9`, IPv6
     queda visible pero limitado a no concluyente para evitar que la ausencia de
     rangos versionados convierta infraestructura desconocida en falsa candidata.
 
-- [ ] **OBS-20.7 — Fases y linea base real de captura** — `TODO`
+- [x] **OBS-20.7 — Fases y linea base real de captura** — `DONE (E3 LOCAL)`
   - Alcance: separar prellamada, negociacion, llamada activa y cierre; marcar si
     una captura automatica carece de linea base previa.
   - Aceptacion: trafico existente antes de la llamada pierde peso y una captura
@@ -387,6 +400,22 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
   - Afecta: agente, backend, Llamada y documentacion de operacion.
   - Evidencia requerida: reloj determinista, transiciones validas/invalidas y
     smoke manual con trafico de fondo sintetico.
+  - Evidencia: una maquina de fases pura correlaciona captura, contacto y
+    llamada observada; separa linea base, negociacion y estado activo, conserva
+    idempotencia y rechaza otra llamada o retrocesos de reloj. El proveedor
+    local clasifica paquetes por fase, conserva conteos completos y entrega al
+    scoring solo bytes, direccion, puertos, volumen y duracion posteriores a la
+    linea base. Capturas automaticas no inventan una ventana previa. El cliente
+    valida orden, rango temporal y sumas por candidata; Llamada diferencia
+    linea base disponible, ausente, aislada e historicos sin fases. QA completa
+    en verde el 2026-09-08: 286 backend, 29 frontend, typechecks, lint y builds.
+    Smoke E3 Docker local aislado con el limite contractual de 1 GiB: 89
+    paquetes observados, candidata sintetica con 24 paquetes de linea base y 40
+    de llamada, fases ordenadas, cero descartes y captura final inactiva. La red
+    temporal fue interna, sin puertos ni volumenes; sus contenedores y red se
+    eliminaron. La primera ejecucion del harness con 256 MiB termino durante el
+    analisis; la repeticion con el limite real confirmo `OOM=false`. El contrato
+    remoto de transiciones queda exclusivamente en `OBS-20.8`.
 
 - [ ] **OBS-20.8 — Contrato firmado de fases con capture-agent** — `TODO`
   - Alcance: comunicar inicio/aceptacion/finalizacion al agente mediante el
