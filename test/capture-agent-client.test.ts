@@ -308,6 +308,12 @@ test('capture agent client accepts the additive v2 packet contract without requi
             negotiationStartedAt: new Date(NOW + 3_000).toISOString(),
             activeCallStartedAt: new Date(NOW + 5_000).toISOString(),
         },
+        captureBounds: {
+            packetLimit: 50_000,
+            storedPackets: 10,
+            droppedPackets: 2,
+            truncated: true,
+        },
     };
     const client = new CaptureAgentClient({
         baseUrl: 'http://capture-agent.test:4100',
@@ -325,6 +331,12 @@ test('capture agent client accepts the additive v2 packet contract without requi
     assert.deepEqual(result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
     assert.ok(result.capturePhases?.baselineStartedAt instanceof Date);
     assert.equal(result.capturePhases?.baselineAvailable, true);
+    assert.deepEqual(result.captureBounds, {
+        packetLimit: 50_000,
+        storedPackets: 10,
+        droppedPackets: 2,
+        truncated: true,
+    });
 });
 
 test('capture agent client rejects inconsistent v2 evidence and backend-owned conclusions', async () => {
@@ -360,6 +372,26 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
                 confidenceScore: 100,
                 evidenceSources: ['packet_flow'],
                 limitations: [],
+            },
+        },
+        {
+            ...basePayload,
+            totalPackets: 2,
+            captureBounds: {
+                packetLimit: 50_000,
+                storedPackets: 1,
+                droppedPackets: 0,
+                truncated: false,
+            },
+        },
+        {
+            ...basePayload,
+            totalPackets: 1,
+            captureBounds: {
+                packetLimit: 50_000,
+                storedPackets: 0,
+                droppedPackets: 1,
+                truncated: false,
             },
         },
     ];

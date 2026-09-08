@@ -223,6 +223,12 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                 <SummaryStat value={`${analysis.durationSec || 0}s`} label="Duracion" tone="primary" />
             </div>
 
+            {analysis.captureBounds?.truncated && (
+                <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                    La captura alcanzo su limite de memoria: se analizaron {analysis.captureBounds.storedPackets.toLocaleString()} de {analysis.totalPackets.toLocaleString()} paquetes observados.
+                </div>
+            )}
+
             <CallTrafficMap analysis={analysis} />
 
             {observedCandidates.length > 0 && (

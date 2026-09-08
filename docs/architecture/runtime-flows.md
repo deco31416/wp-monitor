@@ -90,7 +90,14 @@ Puede iniciarse manualmente o por evento cuando existe metadata por defecto auto
 - `agent`: firma una solicitud HMAC al sidecar del navegador, con timestamp y nonce anti-replay;
 - `disabled`: rechaza de forma explicita sin simular resultados.
 
-En modo agente, el sidecar valida privilegios, interfaz enumerada, JID, `callId`, tipo y captura unica. `stop` devuelve un resultado acotado que el cliente vuelve a validar antes de enriquecer, persistir, auditar y emitir `call-analysis`.
+En modo agente, el sidecar valida privilegios, interfaz enumerada, JID, `callId`, tipo y captura unica. La captura observa UDP/TCP sobre IPv4/IPv6, descarta de forma controlada protocolos, fragmentos o tramas que no puede interpretar y conserva como maximo 50.000 registros de metadata. `stop` devuelve el total observado y `captureBounds`, de modo que una muestra truncada nunca se presenta como completa. El cliente vuelve a validar este resultado antes de enriquecer, persistir, auditar y emitir `call-analysis`.
+
+En paralelo, el backend interpreta solo metadata permitida de `CB:call` y guarda
+temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla
+llamada, contacto, caso y sesion; una operacion Lua deduplica, limita y renueva
+el TTL. Al terminar una captura automatica con el mismo `callId`, el backend
+consume ese estado de forma atomica y lo agrega como `transportEvidence` v2. Una
+caida de Redis degrada esa evidencia secundaria, no la actividad de llamada.
 
 El ciclo de evento de llamada y el ciclo de captura no son el mismo objeto. Una llamada puede no producir captura si falta autorizacion/capacidad; una captura manual puede existir sin evento de llamada.
 

@@ -98,6 +98,8 @@ export interface SanitizedCallEndpoint {
 }
 
 export interface CallTransportEvidence {
+    firstObservedAt: string;
+    lastObservedAt: string;
     peerNegotiationObserved: boolean;
     relayNegotiationObserved: boolean;
     keepaliveObserved: boolean;
@@ -137,6 +139,12 @@ export interface CallAnalysisResult {
     capturePhases?: CallCapturePhases;
     transportEvidence?: CallTransportEvidence;
     routeAssessment?: CallRouteAssessment;
+    captureBounds?: {
+        packetLimit: number;
+        storedPackets: number;
+        droppedPackets: number;
+        truncated: boolean;
+    };
 }
 
 export interface CallEvent {

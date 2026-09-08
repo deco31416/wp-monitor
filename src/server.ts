@@ -29,6 +29,8 @@ import { BaileysPresenceObserver } from './baileys-presence-observer.js';
 import { BaileysProfileObserver } from './baileys-profile-observer.js';
 import { BaileysCallObserver, type ObservedBaileysCall } from './baileys-call-observer.js';
 import { BaileysRawNodeHub } from './baileys-raw-node-hub.js';
+import { observeCallTransportNode } from './call-transport-observer.js';
+import { CallTransportStateStore, type CallTransportScope } from './call-transport-state.js';
 import { WhatsAppIdentityResolver } from './whatsapp-identity.js';
 import { RedisObservationCoordinator } from './observation-dedupe.js';
 import { PresenceSubscriptionCoordinator, type PresenceSubscriptionReason } from './presence-subscription.js';
@@ -174,6 +176,14 @@ const OBSERVATION_DEDUPE_TTL_MS = Math.min(
     24 * 60 * 60_000,
     parsePositiveInteger(process.env.OBSERVATION_DEDUPE_TTL_MS, 10 * 60_000, 10_000),
 );
+const CALL_TRANSPORT_STATE_TTL_MS = Math.min(
+    24 * 60 * 60_000,
+    parsePositiveInteger(process.env.CALL_TRANSPORT_STATE_TTL_MS, 15 * 60_000, 10_000),
+);
+const CALL_TRANSPORT_STATE_MAX_OBSERVATIONS = Math.min(
+    512,
+    parsePositiveInteger(process.env.CALL_TRANSPORT_STATE_MAX_OBSERVATIONS, 128),
+);
 const PRESENCE_SUBSCRIPTION_STATE_TTL_MS = Math.min(
     24 * 60 * 60_000,
     parsePositiveInteger(process.env.PRESENCE_SUBSCRIPTION_STATE_TTL_MS, 30 * 60_000, 60_000),
@@ -188,6 +198,13 @@ const observationCoordinator = new RedisObservationCoordinator(
     REDIS_CONFIG.keyPrefix,
     AUTH_IDENTITY_SECRET,
     OBSERVATION_DEDUPE_TTL_MS,
+);
+const callTransportStateStore = new CallTransportStateStore(
+    redisService,
+    REDIS_CONFIG.keyPrefix,
+    AUTH_IDENTITY_SECRET,
+    CALL_TRANSPORT_STATE_TTL_MS,
+    CALL_TRANSPORT_STATE_MAX_OBSERVATIONS,
 );
 const presenceSubscriptionCoordinator = new PresenceSubscriptionCoordinator(
     redisService,
@@ -866,6 +883,10 @@ interface TrackerEntry {
 }
 
 const trackers: Map<string, TrackerEntry> = new Map(); // JID -> Tracker entry
+const pendingCallTransportWrites = new Set<Promise<void>>();
+const MAX_PENDING_CALL_TRANSPORT_WRITES = 256;
+const CALL_TRANSPORT_PRESSURE_LOG_INTERVAL_MS = 30_000;
+let lastCallTransportPressureLogAt = 0;
 const presenceCoverageLifecycle = new PresenceCoverageLifecycle({
     open: openPresenceCoverageWindow,
     confirm: confirmPresenceCoverage,
@@ -1107,6 +1128,28 @@ function normalizeLiveJid(value: unknown): string | null {
 
 function resolveTrackedLiveJid(...values: unknown[]): string | null {
     return whatsappIdentityResolver.resolveActive(values, jid => trackers.has(jid));
+}
+
+function buildCallTransportScope(callId: string, jid: string): CallTransportScope | null {
+    const trackingSession = trackers.get(jid)?.trackingSession;
+    if (!trackingSession) return null;
+    return {
+        callId,
+        targetJid: jid,
+        caseId: trackingSession.caseId,
+        trackingSessionId: trackingSession.trackingSessionId,
+    };
+}
+
+async function takeCallTransportEvidence(callId: string, jid: string) {
+    const scope = buildCallTransportScope(callId, jid);
+    if (!scope) return null;
+    if (pendingCallTransportWrites.size > 0) {
+        await Promise.allSettled([...pendingCallTransportWrites]);
+    }
+    const snapshot = await callTransportStateStore.take(scope);
+    if (snapshot.degraded) console.warn('[CALL] Transport evidence unavailable: Redis is degraded');
+    return snapshot.evidence;
 }
 
 function resolveStoredLidMapping(canonicalLid: string): string | null {
@@ -1512,15 +1555,19 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         }
     }
 
-    if (!callCaptureService.isEnabled()
-        || !['terminate', 'reject', 'timeout'].includes(call.status)
-        || !activeCallAuditContext
-        || activeCallAuditContext.callId !== call.id
-        || activeCallAuditContext.targetJid !== jid) {
+    const isTerminalCallStatus = ['terminate', 'reject', 'timeout'].includes(call.status);
+    const matchesActiveCapture = Boolean(
+        activeCallAuditContext
+        && activeCallAuditContext.callId === call.id
+        && activeCallAuditContext.targetJid === jid,
+    );
+    if (!callCaptureService.isEnabled() || !isTerminalCallStatus || !matchesActiveCapture) {
+        if (isTerminalCallStatus) await takeCallTransportEvidence(call.id, jid);
         return;
     }
 
     const stoppedCallAuditContext = activeCallAuditContext;
+    if (!stoppedCallAuditContext) return;
     let rawResult: Awaited<ReturnType<typeof callCaptureService.stop>>;
     try {
         rawResult = await callCaptureService.stop();
@@ -1529,7 +1576,11 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
         return;
     }
     activeCallAuditContext = null;
-    const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
+    const transportEvidence = await takeCallTransportEvidence(call.id, jid);
+    const enrichedResult = rawResult ? await enrichCallAnalysis(rawResult) : null;
+    const result = enrichedResult && transportEvidence
+        ? { ...enrichedResult, schemaVersion: 2 as const, transportEvidence }
+        : enrichedResult;
     if (!result) return;
 
     console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(candidate => candidate.isP2P).length} direct-path candidates`);
@@ -1552,6 +1603,37 @@ function handleRawCallNode(value: unknown): void {
         const node = value as BinaryNode;
         const [infoChild] = getAllBinaryNodeChildren(node);
         if (!infoChild) return;
+        const transportObservation = observeCallTransportNode(value);
+        if (transportObservation) {
+            const jid = resolveTrackedLiveJid(
+                infoChild.attrs?.from,
+                infoChild.attrs?.['call-creator'],
+                infoChild.attrs?.caller_pn,
+                node.attrs?.from,
+            );
+            const scope = jid ? buildCallTransportScope(transportObservation.callId, jid) : null;
+            if (scope) {
+                if (pendingCallTransportWrites.size >= MAX_PENDING_CALL_TRANSPORT_WRITES) {
+                    const now = Date.now();
+                    if (now - lastCallTransportPressureLogAt >= CALL_TRANSPORT_PRESSURE_LOG_INTERVAL_MS) {
+                        lastCallTransportPressureLogAt = now;
+                        console.warn('[CALL] Transport observation skipped: ingestion pressure limit reached');
+                    }
+                } else {
+                    const pending = callTransportStateStore.record(scope, transportObservation).then(result => {
+                        if (result.status === 'degraded') {
+                            console.warn('[CALL] Transport observation not retained: Redis is degraded');
+                        } else if (result.status === 'limit_reached') {
+                            console.warn('[CALL] Transport observation limit reached for active call');
+                        }
+                    }).catch(() => {
+                        console.warn('[CALL] Transport observation rejected safely');
+                    });
+                    pendingCallTransportWrites.add(pending);
+                    void pending.finally(() => pendingCallTransportWrites.delete(pending));
+                }
+            }
+        }
         const reason = infoChild.attrs?.reason || infoChild.attrs?.status || '';
         const rawStatus = infoChild.tag === 'busy' || reason === 'busy' ? 'busy' : '';
         if (!rawStatus) return;

@@ -38,6 +38,8 @@
 | `REDIS_URL` | Si | Sesiones y contadores compartidos; `redis://` o `rediss://` |
 | `REDIS_KEY_PREFIX` | Recomendado | Namespace unico por despliegue |
 | `OBSERVATION_DEDUPE_TTL_MS` | No | Ventana Redis para dedupe de observaciones; default `600000`, rango 10000-86400000 |
+| `CALL_TRANSPORT_STATE_TTL_MS` | No | Vigencia del estado sanitizado por llamada; default `900000`, rango 10000-86400000 |
+| `CALL_TRANSPORT_STATE_MAX_OBSERVATIONS` | No | Maximo atomico por llamada; default `128`, rango 1-512 |
 | `PRESENCE_SUBSCRIPTION_STATE_TTL_MS` | No | Vigencia de la confirmacion operacional opaca de suscripcion de presencia; default `1800000`, rango 60000-86400000 |
 | `PRESENCE_DIAGNOSTICS_ENABLED` | No | Diagnostico temporal apagado por defecto; registra solo contadores sanitizados de ingreso y atribucion de presencia |
 
@@ -89,6 +91,14 @@ Las observaciones usan claves HMAC opacas bajo el mismo namespace. Redis evita
 reprocesar eventos ya confirmados y MongoDB aplica una clave unica parcial como
 garantia durable. Una caida transitoria de Redis degrada la coordinacion, pero no
 impide intentar la escritura durable ni habilita un fallback en memoria.
+
+La señalizacion de transporte de llamada usa un estado Redis distinto y no
+durable. La clave es una HMAC conjunta de `callId`, contacto, caso y sesion; el
+valor no conserva esos identificadores, tokens, claves ni buffers. Las
+inserciones y el dedupe son atomicos, el estado vence por defecto en 15 minutos
+y se consume y elimina al cerrar una captura automatica correlacionada. Si Redis
+se degrada, se omite esta evidencia secundaria sin inventar un fallback local y
+sin impedir que la actividad comercial de llamada continue.
 
 `PRESENCE_DIAGNOSTICS_ENABLED=true` debe usarse solo durante una prueba
 controlada. Cada `presence.update` genera una linea `[PRESENCE-DIAG]` con

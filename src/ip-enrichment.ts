@@ -243,6 +243,7 @@ function reScoreEnrichedCandidate(candidate: CandidateIP, targetJid: string, dur
         durationSec,
         targetJid,
         observedCountryCode: observedCountryCode ?? null,
+        ...(candidate.addressFamily === undefined ? {} : { addressFamily: candidate.addressFamily }),
     });
 
     return {

@@ -320,24 +320,40 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     pruebas dirigidas y QA completa en verde: 255 backend, 25 frontend,
     typechecks, lint y builds.
 
-- [ ] **OBS-20.4 — Estado temporal distribuido por llamada** — `TODO`
+- [x] **OBS-20.4 — Estado temporal distribuido por llamada** — `DONE (E2 LOCAL)`
   - Alcance: conservar evidencia sanitizada por `callId` en Redis con TTL,
     limites de tamaño, idempotencia y limpieza al cerrar.
   - Aceptacion: reconexion, duplicados, expiracion y Redis degradado producen un
     resultado controlado sin mezclar llamadas, casos o contactos.
   - Afecta: Redis, backend y observabilidad.
-  - Evidencia requerida: pruebas de concurrencia, aislamiento, TTL y degradacion.
+  - Evidencia: `call-transport-state` usa una clave HMAC conjunta de llamada,
+    contacto, caso y sesion sin conservar esos identificadores en el valor. Un
+    script Lua inserta, deduplica, limita y renueva TTL atomicamente; `take`
+    agrega y elimina el estado al cierre correlacionado. El backend solo acepta
+    nodos atribuibles a un seguimiento activo, adjunta `transportEvidence` v2 a
+    capturas automaticas con el mismo `callId` y degrada sin fallback local. Seis
+    pruebas dirigidas cubren concurrencia/reconexion, aislamiento, TTL, limite,
+    limpieza, corrupcion y Redis no disponible. QA completa en verde el
+    2026-09-07: 261 backend, 25 frontend, typechecks, lint y builds.
 
-- [ ] **OBS-20.5 — Parser estructural de STUN** — `TODO`
+- [x] **OBS-20.5 — Parser estructural de STUN** — `DONE (E2 LOCAL)`
   - Alcance: reconocer encabezado, tipo, transaccion y atributos de red
     permitidos sin depender exclusivamente de puerto o longitud de trama.
   - Aceptacion: diferencia endpoint propio, servidor STUN/TURN, relay y dato no
     interpretable; `frame.len == 86` solo puede ser una señal secundaria.
   - Afecta: capture-agent y clasificacion tecnica.
-  - Evidencia requerida: fixtures binarias sinteticas validas, truncadas,
-    desconocidas y malformadas.
+  - Evidencia: `stun-parser` puro valida cookie, bits de tipo, longitud exacta,
+    padding TLV y maximo de 128 atributos. Reconoce clase/metodo, genera una
+    huella opaca de transaccion y separa endpoint publico propio, peer, relay y
+    servidor STUN/TURN en IPv4/IPv6. Atributos conocidos de credenciales,
+    integridad y datos se cuentan pero no se retienen; extensiones desconocidas
+    solo producen metadata acotada. Siete pruebas dirigidas cubren mensajes
+    validos, truncados, desconocidos, malformados, limites y 1000 entradas
+    binarias arbitrarias. La integracion con bytes de captura queda
+    explicitamente en `OBS-20.6`. QA completa en verde el 2026-09-08: 268
+    backend, 25 frontend, typechecks, lint y builds.
 
-- [ ] **OBS-20.6 — Captura UDP/TCP con IPv4 e IPv6** — `TODO`
+- [ ] **OBS-20.6 — Captura UDP/TCP con IPv4 e IPv6** — `IN PROGRESS (E2 LOCAL PASS; E3 PENDING)`
   - Alcance: ampliar el filtro y decodificacion conservando limites de memoria,
     metadata minima y captura unica.
   - Aceptacion: UDP y TCP alcanzan sus ramas reales; IPv6 no se descarta; una
@@ -345,6 +361,23 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
   - Afecta: call-analyzer y capture-agent; no modifica capabilities ni puertos.
   - Evidencia requerida: pruebas de paquetes por protocolo/familia y captura
     sintetica local.
+  - Evidencia: el filtro libpcap cubre UDP/TCP sobre IPv4/IPv6 y usa el tipo de
+    enlace devuelto por `Cap.open`. Un decodificador puro valida Ethernet/RAW,
+    hasta dos VLAN, IPv4/IPv6, extensiones IPv6 acotadas y cabeceras UDP/TCP;
+    integra STUN estructural y omite entradas malformadas, fragmentadas,
+    cifradas o no soportadas. La captura conserva metadata minima, limita memoria
+    a 50.000 paquetes y publica cualquier truncamiento mediante `captureBounds`,
+    validado tambien por el cliente interno y visible en UI. Siete pruebas de
+    paquetes cubren las cuatro combinaciones protocolo/familia, VLAN, extension
+    IPv6, STUN, descarte seguro y 1000 tramas arbitrarias. La longitud secundaria
+    de 86 bytes usa la trama completa, no la longitud IP. Un colector aislado
+    prueba exactamente 50.000 registros, descartes declarados y reinicio entre
+    capturas. QA completa en verde el 2026-09-08: 279 backend, 25 frontend,
+    typechecks, lint y builds. La prueba
+    libpcap operacional en el namespace objetivo se mantiene como evidencia E4
+    de promocion y no se sustituye por fixtures locales. Hasta `OBS-20.9`, IPv6
+    queda visible pero limitado a no concluyente para evitar que la ausencia de
+    rangos versionados convierta infraestructura desconocida en falsa candidata.
 
 - [ ] **OBS-20.7 — Fases y linea base real de captura** — `TODO`
   - Alcance: separar prellamada, negociacion, llamada activa y cierre; marcar si

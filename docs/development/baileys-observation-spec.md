@@ -161,6 +161,9 @@ Reglas:
 | BO-CALL-09 | Una ruta directa confirmada requiere como minimo dos fuentes independientes; volumen, GeoIP o proveedor desconocido no bastan por separado. |
 | BO-CALL-10 | Cada endpoint conserva familia, rol y procedencia; una IP IPv6 valida no se rechaza por limitaciones del contrato IPv4 historico. |
 | BO-CALL-11 | Claves, tokens relay, buffers de señalizacion y contenido de llamada quedan excluidos de API, Socket.IO, persistencia, logs e informes. |
+| BO-CALL-12 | El estado efimero de transporte usa una clave HMAC por llamada, contacto, caso y sesion, tiene TTL y limite atomico, y se consume al cerrar una captura automatica correlacionada. |
+| BO-CALL-13 | STUN se reconoce por encabezado, cookie, longitud, clase, metodo y TLV validos; la transaccion se representa mediante una huella opaca y credenciales, integridad y datos quedan excluidos. |
+| BO-CALL-14 | La captura acepta UDP/TCP sobre IPv4/IPv6, omite de forma controlada tramas no soportadas y limita a 50.000 los paquetes conservados en memoria; cualquier descarte se declara en `captureBounds`. |
 
 ### Alcance, identidad e idempotencia
 

@@ -391,6 +391,18 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
     };
 }
 
+function parseCaptureBounds(value: unknown): NonNullable<CallAnalysisResult['captureBounds']> {
+    const object = requireObject(value, 'captureBounds');
+    const packetLimit = requireIntegerInRange(object.packetLimit, 'captureBounds.packetLimit', 1, 1_000_000);
+    const storedPackets = requireIntegerInRange(object.storedPackets, 'captureBounds.storedPackets', 0, packetLimit);
+    const droppedPackets = requireNonNegativeInteger(object.droppedPackets, 'captureBounds.droppedPackets');
+    const truncated = requireBoolean(object.truncated, 'captureBounds.truncated');
+    if (truncated !== (droppedPackets > 0)) {
+        throw new CaptureAgentClientError('Capture agent returned inconsistent capture bounds', 502, 'invalid_agent_response');
+    }
+    return { packetLimit, storedPackets, droppedPackets, truncated };
+}
+
 function parseAnalysis(payload: unknown): CallAnalysisResult {
     const object = requireObject(payload, 'Capture agent');
     if (object.transportEvidence !== undefined || object.routeAssessment !== undefined) {
@@ -420,6 +432,12 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     const capturePhases = object.capturePhases === undefined
         ? undefined
         : parseCapturePhases(object.capturePhases);
+    const captureBounds = object.captureBounds === undefined
+        ? undefined
+        : parseCaptureBounds(object.captureBounds);
+    if (captureBounds && captureBounds.storedPackets + captureBounds.droppedPackets !== totalPackets) {
+        throw new CaptureAgentClientError('Capture agent returned inconsistent packet totals', 502, 'invalid_agent_response');
+    }
     return {
         callId: requireCallId(object.callId, 'callId'),
         targetJid: requireJid(object.targetJid, 'targetJid'),
@@ -440,6 +458,7 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
         captureInterface,
         ...(schemaVersion === undefined ? {} : { schemaVersion: schemaVersion as 2 }),
         ...(capturePhases === undefined ? {} : { capturePhases }),
+        ...(captureBounds === undefined ? {} : { captureBounds }),
     };
 }
 

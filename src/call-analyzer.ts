@@ -21,7 +21,10 @@ import capModule from 'cap';
 // @ts-ignore - geoip-lite is CJS
 import geoipModule from 'geoip-lite';
 import os from 'os';
+import { BlockList, isIP } from 'node:net';
 import { isMetaIP, isKnownRelayIP, isPrivateIP, classifyIP } from './meta-ip-ranges.js';
+import { decodeCallPacketFrame } from './call-packet-decoder.js';
+import { BoundedPacketCollector } from './bounded-packet-collector.js';
 import {
     lookupNetworkIntelligence,
     scoreCandidate,
@@ -40,7 +43,8 @@ import type {
 import type { IpEnrichment } from './ip-enrichment.js';
 
 const geoip = (geoipModule as any)?.default ?? geoipModule as any;
-const { Cap, decoders, findDevice } = capModule as any;
+const { Cap, findDevice } = capModule as any;
+const MAX_CAPTURED_CALL_PACKETS = 50_000;
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -88,6 +92,8 @@ export interface SanitizedCallEndpoint {
 }
 
 export interface CallTransportEvidence {
+    firstObservedAt: Date;
+    lastObservedAt: Date;
     peerNegotiationObserved: boolean;
     relayNegotiationObserved: boolean;
     keepaliveObserved: boolean;
@@ -155,6 +161,14 @@ export interface CallAnalysisResult {
     capturePhases?: CallCapturePhases;
     transportEvidence?: CallTransportEvidence;
     routeAssessment?: CallRouteAssessment;
+    captureBounds?: CallCaptureBounds;
+}
+
+export interface CallCaptureBounds {
+    packetLimit: number;
+    storedPackets: number;
+    droppedPackets: number;
+    truncated: boolean;
 }
 
 export interface CallCaptureStatus {
@@ -172,10 +186,13 @@ interface RawCallPacket {
     timestamp: Date;
     srcIp: string;
     dstIp: string;
-    srcPort: number | null;
-    dstPort: number | null;
-    protocol: number;   // 6=TCP, 17=UDP
+    srcPort: number;
+    dstPort: number;
+    protocol: 6 | 17;
+    addressFamily: 4 | 6;
     length: number;
+    payloadLength: number;
+    protocolEvidence: CallProtocolEvidence[];
 }
 
 // ── State ──────────────────────────────────────────────────────
@@ -186,9 +203,16 @@ let currentCallId: string | null = null;
 let currentTargetJid: string | null = null;
 let currentIsVideo: boolean = false;
 let captureStartTime: Date | null = null;
-let capturedPackets: RawCallPacket[] = [];
+const capturedPacketCollector = new BoundedPacketCollector<RawCallPacket>(MAX_CAPTURED_CALL_PACKETS);
 let captureInterfaceAddr: string = '';
 let localIPs: Set<string> = new Set();
+let localIpBlockList = new BlockList();
+
+const privateIpBlockList = new BlockList();
+privateIpBlockList.addSubnet('fc00::', 7, 'ipv6');
+privateIpBlockList.addSubnet('fe80::', 10, 'ipv6');
+privateIpBlockList.addAddress('::1', 'ipv6');
+privateIpBlockList.addAddress('::', 'ipv6');
 
 // Callback for real-time packet streaming
 let onCallPacket: ((packet: RawCallPacket & { isMetaIP: boolean }) => void) | null = null;
@@ -203,9 +227,10 @@ function resetCaptureState() {
     currentTargetJid = null;
     currentIsVideo = false;
     captureStartTime = null;
-    capturedPackets = [];
+    capturedPacketCollector.clear();
     captureInterfaceAddr = '';
     localIPs = new Set();
+    localIpBlockList = new BlockList();
     onCallPacket = null;
 }
 
@@ -217,12 +242,29 @@ function getLocalIPs(): Set<string> {
     for (const addrs of Object.values(interfaces)) {
         if (!addrs) continue;
         for (const addr of addrs) {
-            if (addr.family === 'IPv4') {
+            if (addr.family === 'IPv4' || addr.family === 'IPv6') {
                 ips.add(addr.address);
             }
         }
     }
     return ips;
+}
+
+function buildLocalIpBlockList(ips: Set<string>): BlockList {
+    const list = new BlockList();
+    for (const ip of ips) {
+        const family = isIP(ip);
+        if (family === 4) list.addAddress(ip, 'ipv4');
+        if (family === 6) list.addAddress(ip, 'ipv6');
+    }
+    return list;
+}
+
+function isLocalOrPrivateIP(ip: string): boolean {
+    const family = isIP(ip);
+    if (family === 4) return localIpBlockList.check(ip, 'ipv4') || isPrivateIP(ip);
+    if (family === 6) return localIpBlockList.check(ip, 'ipv6') || privateIpBlockList.check(ip, 'ipv6');
+    return false;
 }
 
 function lookupGeo(ip: string): CallGeoInfo | null {
@@ -284,14 +326,14 @@ export function startCallCapture(
         currentTargetJid = targetJid;
         currentIsVideo = isVideo;
         captureStartTime = new Date();
-        capturedPackets = [];
+        capturedPacketCollector.clear();
         captureInterfaceAddr = interfaceAddr;
         localIPs = getLocalIPs();
+        localIpBlockList = buildLocalIpBlockList(localIPs);
         onCallPacket = packetCallback || null;
 
-        // BPF filter: capture UDP traffic (SRTP for voice/video calls)
-        // Also capture STUN packets (port 3478) for NAT traversal detection
-        const bpfFilter = 'udp';
+        // Calls primarily use UDP, but signaling and relay fallback can use TCP.
+        const bpfFilter = '(udp or tcp) and (ip or ip6)';
 
         const device = findDevice(interfaceAddr);
         if (!device) {
@@ -304,61 +346,39 @@ export function startCallCapture(
         const snapLen = 65535;
         const buffer = Buffer.alloc(snapLen);
 
-        capSession.open(device, bpfFilter, bufSize, buffer);
+        const linkType = capSession.open(device, bpfFilter, bufSize, buffer);
         captureOpened = true;
         capSession.setMinBytes && capSession.setMinBytes(0);
 
-        const linkType = capSession.linkType;
-
-        capSession.on('packet', (nbytes: number) => {
-            const raw = buffer.slice(0, nbytes);
+        capSession.on('packet', (nbytes: number, truncated: boolean) => {
+            if (truncated || !Number.isSafeInteger(nbytes) || nbytes < 1 || nbytes > buffer.length) return;
 
             try {
-                let ethSize = 0;
-                if (linkType === 'ETHERNET' || linkType === undefined || linkType === null) {
-                    try {
-                        const ethInfo = decoders.Ethernet(raw);
-                        if (ethInfo.info.type !== 0x0800) return; // Only IPv4
-                        ethSize = ethInfo.offset;
-                    } catch {
-                        ethSize = 0;
-                    }
-                }
-
-                const ipInfo = decoders.IPV4(raw, ethSize);
-                const ip = ipInfo.info;
-
-                let srcPort: number | null = null;
-                let dstPort: number | null = null;
-
-                if (ip.protocol === 17) { // UDP
-                    const udpInfo = decoders.UDP(raw, ipInfo.offset);
-                    srcPort = udpInfo.info.srcport;
-                    dstPort = udpInfo.info.dstport;
-                } else if (ip.protocol === 6) { // TCP (less common for calls, but capture anyway)
-                    const tcpInfo = decoders.TCP(raw, ipInfo.offset);
-                    srcPort = tcpInfo.info.srcport;
-                    dstPort = tcpInfo.info.dstport;
-                }
+                const decoded = decodeCallPacketFrame(buffer.subarray(0, nbytes), linkType);
+                if (decoded.status !== 'decoded') return;
+                const observed = decoded.packet;
 
                 // Skip local-only traffic
-                if (isPrivateIP(ip.srcaddr) && isPrivateIP(ip.dstaddr)) return;
+                if (isLocalOrPrivateIP(observed.srcIp) && isLocalOrPrivateIP(observed.dstIp)) return;
 
                 const packet: RawCallPacket = {
                     timestamp: new Date(),
-                    srcIp: ip.srcaddr,
-                    dstIp: ip.dstaddr,
-                    srcPort,
-                    dstPort,
-                    protocol: ip.protocol,
-                    length: ip.totallen,
+                    srcIp: observed.srcIp,
+                    dstIp: observed.dstIp,
+                    srcPort: observed.srcPort,
+                    dstPort: observed.dstPort,
+                    protocol: observed.protocol,
+                    addressFamily: observed.addressFamily,
+                    length: observed.length,
+                    payloadLength: observed.payloadLength,
+                    protocolEvidence: observed.protocolEvidence,
                 };
 
-                capturedPackets.push(packet);
+                if (!capturedPacketCollector.add(packet)) return;
 
                 // Emit real-time packet
                 if (onCallPacket) {
-                    const remoteIp = localIPs.has(ip.srcaddr) ? ip.dstaddr : ip.srcaddr;
+                    const remoteIp = isLocalOrPrivateIP(packet.srcIp) ? packet.dstIp : packet.srcIp;
                     onCallPacket({
                         ...packet,
                         isMetaIP: isKnownRelayIP(remoteIp),
@@ -404,17 +424,19 @@ export function stopCallCapture(): CallAnalysisResult | null {
         ? Math.round((endTime.getTime() - captureStartTime.getTime()) / 1000)
         : 0;
 
-    console.log(`[CALL-ANALYZER] Capture stopped. ${capturedPackets.length} packets collected in ${durationSec}s`);
+    const collectionStats = capturedPacketCollector.stats();
+    console.log(`[CALL-ANALYZER] Capture stopped. ${collectionStats.storedPackets} packets stored, ${collectionStats.droppedPackets} dropped by bound in ${durationSec}s`);
 
     const result = analyzePackets(
-        capturedPackets,
+        [...capturedPacketCollector.packets()],
         currentCallId || 'unknown',
         currentTargetJid || 'unknown',
         captureStartTime || new Date(),
         endTime,
         durationSec,
         currentIsVideo,
-        captureInterfaceAddr
+        captureInterfaceAddr,
+        collectionStats.droppedPackets,
     );
 
     // Store in history
@@ -443,8 +465,16 @@ function analyzePackets(
     endTime: Date,
     durationSec: number,
     isVideo: boolean,
-    captureInterface: string
+    captureInterface: string,
+    droppedPacketCount: number = 0,
 ): CallAnalysisResult {
+    const totalObservedPackets = packets.length + droppedPacketCount;
+    const captureBounds: CallCaptureBounds = {
+        packetLimit: MAX_CAPTURED_CALL_PACKETS,
+        storedPackets: packets.length,
+        droppedPackets: droppedPacketCount,
+        truncated: droppedPacketCount > 0,
+    };
     if (packets.length === 0) {
         return {
             callId,
@@ -453,11 +483,13 @@ function analyzePackets(
             endTime,
             durationSec,
             isVideo,
-            totalPackets: 0,
+            totalPackets: totalObservedPackets,
             candidateIps: [],
             metaIps: [],
             verdict: 'insufficient_data',
             captureInterface,
+            schemaVersion: 2,
+            captureBounds,
         };
     }
 
@@ -470,14 +502,16 @@ function analyzePackets(
         ports: Set<number>;
         inbound: number;
         outbound: number;
+        addressFamily: 4 | 6;
+        protocolEvidence: Set<CallProtocolEvidence>;
     }>();
 
     const metaIpSet = new Set<string>();
 
     for (const pkt of packets) {
         // Determine which IP is "remote" (not local)
-        const isLocalSrc = localIPs.has(pkt.srcIp) || isPrivateIP(pkt.srcIp);
-        const isLocalDst = localIPs.has(pkt.dstIp) || isPrivateIP(pkt.dstIp);
+        const isLocalSrc = isLocalOrPrivateIP(pkt.srcIp);
+        const isLocalDst = isLocalOrPrivateIP(pkt.dstIp);
 
         let remoteIp: string;
         let isInbound: boolean;
@@ -498,7 +532,7 @@ function analyzePackets(
         }
 
         // Skip private IPs
-        if (isPrivateIP(remoteIp)) continue;
+        if (isLocalOrPrivateIP(remoteIp)) continue;
 
         // Track Meta IPs separately
         if (isMetaIP(remoteIp)) {
@@ -514,6 +548,8 @@ function analyzePackets(
                 ports: new Set(),
                 inbound: 0,
                 outbound: 0,
+                addressFamily: pkt.addressFamily,
+                protocolEvidence: new Set(),
             });
         }
 
@@ -525,6 +561,7 @@ function analyzePackets(
         if (pkt.dstPort) stats.ports.add(pkt.dstPort);
         if (isInbound) stats.inbound++;
         else stats.outbound++;
+        for (const evidence of pkt.protocolEvidence) stats.protocolEvidence.add(evidence);
     }
 
     // Build candidate list
@@ -556,6 +593,7 @@ function analyzePackets(
             durationSec,
             targetJid,
             observedCountryCode: geo?.country ?? null,
+            addressFamily: stats.addressFamily,
         });
 
         candidates.push({
@@ -577,6 +615,10 @@ function analyzePackets(
             technicalNote: score.technicalNote,
             isP2P: score.isP2P,
             correlation: score.correlation,
+            addressFamily: stats.addressFamily,
+            endpointRole: provider === 'meta' ? 'relay' : 'unknown',
+            protocolEvidence: [...stats.protocolEvidence].sort(),
+            scoreVersion: 2,
         });
     }
 
@@ -591,7 +633,7 @@ function analyzePackets(
     const hasRelay = metaIpSet.size > 0;
 
     let verdict: 'p2p' | 'relay' | 'mixed' | 'insufficient_data';
-    if (packets.length < 10) {
+    if (totalObservedPackets < 10) {
         verdict = 'insufficient_data';
     } else if (p2pCandidates.length > 0 && hasRelay) {
         verdict = 'mixed';
@@ -608,14 +650,16 @@ function analyzePackets(
         endTime,
         durationSec,
         isVideo,
-        totalPackets: packets.length,
+        totalPackets: totalObservedPackets,
         candidateIps: candidates,
         metaIps: Array.from(metaIpSet),
         verdict,
         captureInterface,
+        schemaVersion: 2,
+        captureBounds,
     };
 
-    console.log(`[CALL-ANALYZER] Analysis complete: ${verdict} | ${p2pCandidates.length} direct-path candidates | ${metaIpSet.size} Meta IPs | ${packets.length} total packets`);
+    console.log(`[CALL-ANALYZER] Analysis complete: ${verdict} | ${p2pCandidates.length} direct-path candidates | ${metaIpSet.size} Meta IPs | ${totalObservedPackets} observed packets`);
 
     return result;
 }
@@ -631,7 +675,7 @@ export function getCallCaptureStatus(): CallCaptureStatus {
         targetJid: currentTargetJid,
         callId: currentCallId,
         startTime: captureStartTime,
-        packetsCollected: capturedPackets.length,
+        packetsCollected: capturedPacketCollector.stats().totalObservedPackets,
         elapsed: captureStartTime
             ? Math.round((Date.now() - captureStartTime.getTime()) / 1000)
             : 0,

@@ -38,6 +38,7 @@ export interface CandidateScoreInput {
     durationSec: number;
     targetJid?: string | null;
     observedCountryCode?: string | null;
+    addressFamily?: 4 | 6;
 }
 
 export interface CandidateScoreResult {
@@ -286,10 +287,21 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         }
     }
 
+    if (input.addressFamily === 6) {
+        const before = score;
+        score = Math.min(score, 30);
+        caps.push('Registro IPv6 pendiente');
+        reasonCodes.push({
+            code: 'IPV6_REGISTRY_PENDING',
+            label: 'IPv6 observado; clasificacion de infraestructura pendiente de registro versionado',
+            delta: Math.min(0, score - before),
+        });
+    }
+
     const confidenceScore = clampScore(score);
     const confidence = confidenceFromScore(confidenceScore);
     const baseP2P = input.provider === 'unknown' && !input.networkIntelligence.isDatacenterLikely;
-    const correlation = buildCorrelation({
+    const scoredCorrelation = buildCorrelation({
         baseP2P,
         confidenceScore,
         packets: input.packets,
@@ -299,6 +311,14 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         networkCategory,
         caps,
     });
+    const correlation: CandidateCorrelation = input.addressFamily === 6
+        ? {
+            ...scoredCorrelation,
+            classification: 'insufficient',
+            label: 'IPv6 pendiente de clasificacion',
+            summary: 'La ruta IPv6 fue observada, pero el registro de infraestructura vigente aun no permite atribuirla de forma responsable.',
+        }
+        : scoredCorrelation;
     const isP2P = baseP2P && confidenceScore >= 45 && correlation.classification === 'candidate';
     const technicalNote = buildTechnicalNote(baseP2P, correlation);
 

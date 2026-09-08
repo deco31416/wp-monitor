@@ -41,9 +41,32 @@ Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce ant
 
 Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
 
+### `src/stun-parser.ts`
+
+Parser puro y acotado de mensajes STUN/TURN. Valida encabezado, cookie, longitud,
+clase, metodo y TLV; decodifica unicamente atributos de direccion permitidos
+IPv4/IPv6 y representa la transaccion mediante una huella SHA-256 contextual.
+Omite contenido de autenticacion, integridad y datos. `call-packet-decoder.ts`
+le entrega unicamente payloads delimitados despues de validar Ethernet/RAW,
+VLAN, IPv4/IPv6 y cabeceras UDP/TCP. El contrato sigue [RFC 8489](https://www.rfc-editor.org/rfc/rfc8489.html),
+[RFC 8656](https://www.rfc-editor.org/rfc/rfc8656.html) y el
+[registro STUN de IANA](https://www.iana.org/assignments/stun-parameters).
+
+### `src/call-packet-decoder.ts` y `src/call-analyzer.ts`
+
+El decodificador puro acepta enlaces Ethernet y RAW, hasta dos etiquetas VLAN,
+IPv4 e IPv6 y transporte UDP/TCP. Rechaza fragmentos y extensiones cifradas que
+no puede atribuir sin reensamblado, y omite tramas truncadas o no soportadas sin
+detener la captura. `call-analyzer` usa el filtro
+`(udp or tcp) and (ip or ip6)`, conserva solo metadata y limita la memoria a
+50.000 paquetes. `captureBounds` revela cuantas observaciones fueron descartadas
+al alcanzar ese limite; el contenido bruto nunca entra al resultado. Hasta que
+`OBS-20.9` incorpore rangos IPv6 versionados, una direccion IPv6 se conserva
+como observacion tecnica pero no se promueve por si sola a candidata directa.
+
 ### `src/redis.ts` y `src/rate-limit.ts`
 
-`redis.ts` mantiene la conexion al cliente oficial y expone health sin secretos. `rate-limit.ts` implementa el contrato fixed-window y contador Redis atomico mediante Lua; el fallback local solo sirve para pruebas aisladas del componente. El proceso real necesita Redis y falla cerrado si no esta disponible.
+`redis.ts` mantiene la conexion al cliente oficial y expone health sin secretos. `rate-limit.ts` implementa el contrato fixed-window y contador Redis atomico mediante Lua; el fallback local solo sirve para pruebas aisladas del componente. `call-transport-state.ts` conserva evidencia sanitizada de señalizacion por alcance HMAC, con dedupe, limite, TTL y consumo atomicos, sin fallback local. El proceso real necesita Redis y falla cerrado si no esta disponible.
 
 ### `src/operator-auth.ts`, `src/password-security.ts` y `src/routes/auth.ts`
 

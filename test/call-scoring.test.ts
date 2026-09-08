@@ -143,3 +143,23 @@ test('caps tiny samples and country mismatch as non-conclusive observations', ()
     assert.ok(score.reasonCodes.some(reason => reason.code === 'HARD_CAP_TINY_SAMPLE'));
     assert.ok(score.reasonCodes.some(reason => reason.code === 'PHONE_GEO_COUNTRY_MISMATCH'));
 });
+
+test('keeps IPv6 visible but non-conclusive until its infrastructure registry is versioned', () => {
+    const networkIntelligence = lookupNetworkIntelligence('2001:db8::20', 'unknown');
+    const score = scoreCandidate({
+        provider: 'unknown',
+        networkIntelligence,
+        packets: 500,
+        bytesTotal: 500_000,
+        direction: 'bidirectional',
+        ports: [443],
+        durationSec: 60,
+        addressFamily: 6,
+    });
+
+    assert.equal(score.isP2P, false);
+    assert.equal(score.confidence, 'low');
+    assert.ok(score.confidenceScore <= 30);
+    assert.equal(score.correlation.classification, 'insufficient');
+    assert.ok(score.reasonCodes.some(reason => reason.code === 'IPV6_REGISTRY_PENDING'));
+});
