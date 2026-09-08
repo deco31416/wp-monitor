@@ -815,6 +815,9 @@ export function Dashboard({ connectionState, experimentalProbesEnabled = false }
                             deviceAlerts={contact.deviceAlerts}
                             onRemove={() => handleRemove(contact.jid)}
                             privacyMode={privacyMode}
+                            availableCases={cases}
+                            casesLoading={casesLoading}
+                            selectedCaseId={caseId}
                         />
                     ))}
                 </div>

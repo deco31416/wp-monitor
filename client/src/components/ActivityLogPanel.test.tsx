@@ -25,11 +25,19 @@ test('renders persisted human activity without presenting it as RTT', () => {
                 },
                 {
                     source: 'presence',
-                    type: 'composing',
-                    label: 'Escribiendo',
+                    type: 'available',
+                    label: 'En línea observado',
                     confidence: 'high',
                     timestamp: '2026-08-21T17:39:00.000Z',
                     timestampUtc: '2026-08-21T17:39:00.000Z',
+                },
+                {
+                    source: 'presence',
+                    type: 'composing',
+                    label: 'Escribiendo observado',
+                    confidence: 'high',
+                    timestamp: '2026-08-21T17:39:10.000Z',
+                    timestampUtc: '2026-08-21T17:39:10.000Z',
                 },
             ]}
             formatDateTime={value => value || '-'}
@@ -39,11 +47,14 @@ test('renders persisted human activity without presenting it as RTT', () => {
     expect(screen.getByText('Mensaje enviado (text)')).toBeInTheDocument();
     expect(screen.getByText('Mensaje entregado')).toBeInTheDocument();
     expect(screen.getByText(/Confirmación · confianza alta/)).toBeInTheDocument();
-    expect(screen.getByText('Escribiendo')).toBeInTheDocument();
-    expect(screen.getByText('3 actividades observadas')).toBeInTheDocument();
+    expect(screen.getByText('En línea observado')).toBeInTheDocument();
+    expect(screen.getByText('Escribiendo observado')).toBeInTheDocument();
+    expect(screen.getByText(/Disponibilidad observable · confianza alta/)).toBeInTheDocument();
+    expect(screen.getByText(/Señal directa del chat · confianza alta/)).toBeInTheDocument();
+    expect(screen.getByText('4 actividades observadas')).toBeInTheDocument();
     expect(screen.getByText('Distribución horaria de actividad')).toBeInTheDocument();
     expect(screen.getByLabelText('Gráfica de actividad observada por hora')).toBeInTheDocument();
-    expect(screen.getByText(/una misma llamada se muestran como una sola actividad/i)).toBeInTheDocument();
+    expect(screen.getByText(/disponibilidad visible y las señales directas del chat se mantienen separadas/i)).toBeInTheDocument();
     expect(screen.queryByText(/RTT:/)).not.toBeInTheDocument();
 });
 
@@ -67,11 +78,19 @@ test('groups observed signals by local hour and source without mixing RTT', () =
             source: 'call', type: 'offer', label: 'Llamada entrante', confidence: 'high',
             timestamp: '2026-08-21T18:00:00', timestampUtc: '2026-08-21T23:00:00.000Z',
         },
+        {
+            source: 'presence', type: 'available', label: 'En línea observado', confidence: 'high',
+            timestamp: '2026-08-21T17:12:00', timestampUtc: '2026-08-21T22:12:00.000Z',
+        },
+        {
+            source: 'presence', type: 'composing', label: 'Escribiendo observado', confidence: 'high',
+            timestamp: '2026-08-21T17:13:00', timestampUtc: '2026-08-21T22:13:00.000Z',
+        },
     ]);
 
     expect(hourly).toHaveLength(24);
-    expect(hourly[17]).toMatchObject({ messages: 1, receipts: 1, presence: 0, calls: 0 });
-    expect(hourly[18]).toMatchObject({ messages: 0, receipts: 0, presence: 0, calls: 1 });
+    expect(hourly[17]).toMatchObject({ messages: 1, receipts: 1, availability: 1, chatSignals: 1, calls: 0 });
+    expect(hourly[18]).toMatchObject({ messages: 0, receipts: 0, availability: 0, chatSignals: 0, calls: 1 });
 });
 
 test('makes a truncated activity page explicit', () => {

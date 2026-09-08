@@ -50,7 +50,7 @@ export interface TrackerStateCounts {
 
 export interface PresenceSignalLike {
     lastKnownPresence?: string | null;
-    [key: string]: unknown;
+    lastSeen?: number | null;
 }
 
 export interface PresenceUpdateLike {

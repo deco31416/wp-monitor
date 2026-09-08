@@ -212,7 +212,7 @@ Usar el panel de contacto y la pestana de llamada:
 
 1. Buscar o abrir el contacto.
 2. Abrir el panel de analisis de llamada.
-3. Completar `Case ID`, operador y autorizacion.
+3. Seleccionar un caso guardado. La sesion activa del contacto se prioriza y el panel completa el operador y la autorizacion registrados.
 4. Iniciar captura manual.
 5. Realizar la llamada o interaccion por WhatsApp Web en la misma maquina.
 6. Detener captura.

@@ -18,6 +18,15 @@ export interface ObservedActivityPatterns {
         receipt: number;
     };
     topSource: keyof ObservedActivityPatterns['sourceCounts'] | null;
+    presence: {
+        availabilitySignals: number;
+        available: number;
+        unavailable: number;
+        directChatSignals: number;
+        composing: number;
+        recording: number;
+        paused: number;
+    };
     dayParts: {
         dawn: number;
         morning: number;
@@ -27,6 +36,12 @@ export interface ObservedActivityPatterns {
     firstActivityAt: string | null;
     lastActivityAt: string | null;
     timeZone: string;
+}
+
+export function classifyObservedPresenceType(type: string): 'availability' | 'direct_chat' | null {
+    if (type === 'available' || type === 'unavailable') return 'availability';
+    if (type === 'composing' || type === 'recording' || type === 'paused') return 'direct_chat';
+    return null;
 }
 
 interface ZonedParts {
@@ -82,6 +97,15 @@ export function buildObservedActivityPatterns(
     };
     const activeDates = new Set<string>();
     const validTimestamps: Array<{ iso: string; epoch: number }> = [];
+    const presence: ObservedActivityPatterns['presence'] = {
+        availabilitySignals: 0,
+        available: 0,
+        unavailable: 0,
+        directChatSignals: 0,
+        composing: 0,
+        recording: 0,
+        paused: 0,
+    };
 
     events.forEach(event => {
         const timestamp = event.timestampUtc || event.timestamp;
@@ -94,6 +118,16 @@ export function buildObservedActivityPatterns(
         if (row) row[zoned.hour] = (row[zoned.hour] || 0) + 1;
         activeDates.add(zoned.dateKey);
         sourceCounts[event.source] += 1;
+        if (event.source === 'presence') {
+            const scope = classifyObservedPresenceType(event.type);
+            if (scope === 'availability') presence.availabilitySignals += 1;
+            if (scope === 'direct_chat') presence.directChatSignals += 1;
+            if (event.type === 'available') presence.available += 1;
+            if (event.type === 'unavailable') presence.unavailable += 1;
+            if (event.type === 'composing') presence.composing += 1;
+            if (event.type === 'recording') presence.recording += 1;
+            if (event.type === 'paused') presence.paused += 1;
+        }
         validTimestamps.push({ iso: timestamp, epoch });
     });
 
@@ -117,6 +151,7 @@ export function buildObservedActivityPatterns(
         peakDayCount: peakDay === null ? 0 : dayTotals[peakDay] || 0,
         sourceCounts,
         topSource: topSourceEntry && topSourceEntry[1] > 0 ? topSourceEntry[0] : null,
+        presence,
         dayParts: {
             dawn: hourly.slice(0, 6).reduce((sum, value) => sum + value, 0),
             morning: hourly.slice(6, 12).reduce((sum, value) => sum + value, 0),

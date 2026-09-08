@@ -37,6 +37,9 @@
 | `MONGODB_DB` | Recomendado | Base separada por entorno |
 | `REDIS_URL` | Si | Sesiones y contadores compartidos; `redis://` o `rediss://` |
 | `REDIS_KEY_PREFIX` | Recomendado | Namespace unico por despliegue |
+| `OBSERVATION_DEDUPE_TTL_MS` | No | Ventana Redis para dedupe de observaciones; default `600000`, rango 10000-86400000 |
+| `PRESENCE_SUBSCRIPTION_STATE_TTL_MS` | No | Vigencia de la confirmacion operacional opaca de suscripcion de presencia; default `1800000`, rango 60000-86400000 |
+| `PRESENCE_DIAGNOSTICS_ENABLED` | No | Diagnostico temporal apagado por defecto; registra solo contadores sanitizados de ingreso y atribucion de presencia |
 
 El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son dependencias de autenticacion. No uses datos de produccion durante tests.
 
@@ -81,6 +84,21 @@ Las credenciales iniciales se leen unicamente si no existe `primary-operator` en
 | `CHECKIN_SUBMIT_RATE_MAX_PER_TOKEN_IP` | `8` | Maximo token+IP/ventana |
 
 Los contadores se incrementan atomicamente en Redis, conservan TTL, sobreviven despliegues normales y coordinan replicas con el mismo `REDIS_KEY_PREFIX`. Si Redis falla, login y submit publico fallan cerrados.
+
+Las observaciones usan claves HMAC opacas bajo el mismo namespace. Redis evita
+reprocesar eventos ya confirmados y MongoDB aplica una clave unica parcial como
+garantia durable. Una caida transitoria de Redis degrada la coordinacion, pero no
+impide intentar la escritura durable ni habilita un fallback en memoria.
+
+`PRESENCE_DIAGNOSTICS_ENABLED=true` debe usarse solo durante una prueba
+controlada. Cada `presence.update` genera una linea `[PRESENCE-DIAG]` con
+contadores `raw`, `resolved`, `attributed`, `scoped`, `attempted`, `accepted` y
+`rejected`.
+No registra JID, estado, contenido ni identificadores. Si no aparece ninguna
+linea mientras los mensajes directos si llegan, Baileys no emitio el evento al
+hub. En una prueba controlada del contacto activo, `raw>0`, `resolved=0` y
+`attributed=0` localiza el fallo en atribucion PN/LID. Fuera de una prueba
+controlada tambien puede representar correctamente un evento ajeno al contacto.
 
 ## Swagger
 

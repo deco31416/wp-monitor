@@ -11,10 +11,14 @@ interface ActivityLogPanelProps {
     formatDateTime: (value: string | null) => string;
 }
 
-function sourceLabel(source: ObservedActivityEvent['source']): string {
-    if (source === 'message') return 'Mensaje';
-    if (source === 'receipt') return 'Confirmación';
-    if (source === 'presence') return 'Presencia';
+function sourceLabel(entry: ObservedActivityEvent): string {
+    if (entry.source === 'message') return 'Mensaje';
+    if (entry.source === 'receipt') return 'Confirmación';
+    if (entry.source === 'presence') {
+        return entry.type === 'available' || entry.type === 'unavailable'
+            ? 'Disponibilidad observable'
+            : 'Señal directa del chat';
+    }
     return 'Llamada';
 }
 
@@ -47,7 +51,7 @@ export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPa
                                 <BarChart3 size={13} /> Distribución horaria de actividad
                             </h5>
                             <p className="text-[11px] text-txt-dim mt-1">
-                                Actividad observada por hora local. Las señales técnicas de una misma llamada se muestran como una sola actividad.
+                                Actividad observada por hora local. La disponibilidad visible y las señales directas del chat se mantienen separadas.
                             </p>
                         </div>
                         <span className="badge-neutral !text-[9px] !py-0 !px-1.5 w-fit">
@@ -79,7 +83,8 @@ export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPa
                                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                                 <Bar dataKey="messages" name="Mensajes" stackId="activity" fill="#25d366" radius={[2, 2, 0, 0]} />
                                 <Bar dataKey="receipts" name="Confirmaciones" stackId="activity" fill="#38bdf8" radius={[2, 2, 0, 0]} />
-                                <Bar dataKey="presence" name="Presencia" stackId="activity" fill="#a78bfa" radius={[2, 2, 0, 0]} />
+                                <Bar dataKey="availability" name="Disponibilidad" stackId="activity" fill="#a78bfa" radius={[2, 2, 0, 0]} />
+                                <Bar dataKey="chatSignals" name="Señales de chat" stackId="activity" fill="#818cf8" radius={[2, 2, 0, 0]} />
                                 <Bar dataKey="calls" name="Llamadas" stackId="activity" fill="#f59e0b" radius={[2, 2, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
@@ -113,7 +118,7 @@ export function ActivityLogPanel({ events, page, formatDateTime }: ActivityLogPa
                     <div className="text-center py-8">
                         <History size={32} className="mx-auto text-txt-dim mb-2" />
                         <p className="text-txt-muted text-sm">Sin actividad observada</p>
-                        <p className="text-txt-dim text-xs mt-1">Aquí aparecerán mensajes, confirmaciones, presencia y llamadas atribuibles a esta sesión.</p>
+                        <p className="text-txt-dim text-xs mt-1">Aquí aparecerán mensajes, confirmaciones, disponibilidad observable, señales directas del chat y llamadas atribuibles a esta sesión.</p>
                     </div>
                 )}
             </section>
@@ -164,7 +169,7 @@ function ActivityTimelineRow({
                         {entry.label}
                     </span>
                     <span className="text-[10px] text-txt-dim ml-2">
-                        {sourceLabel(entry.source)} · confianza {confidenceLabel(entry.confidence)}
+                        {sourceLabel(entry)} · confianza {confidenceLabel(entry.confidence)}
                         {callDetail && ` · ${callDetail}`}
                     </span>
                 </div>

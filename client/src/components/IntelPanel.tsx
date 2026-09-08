@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { Activity, Brain, Briefcase, CalendarDays, Clock3, Coffee, Eye, MessageSquare, Moon, Shield, Sun, Target, Timer, Zap } from 'lucide-react';
 import type { ObservedActivityEvent } from '../types';
 import { buildObservedActivityPatterns, OBSERVED_DAY_LABELS } from '../observed-patterns';
+import { PresenceCoveragePanel, type PresenceCoverageData } from './StatsPanel';
 
 interface IntelSession {
     totalSessions: number;
@@ -87,6 +88,7 @@ interface IntelPanelProps {
     observedEvents?: ObservedActivityEvent[];
     observedEventTotal?: number;
     observedEventsTruncated?: boolean;
+    presenceCoverage?: PresenceCoverageData | null;
 }
 
 export function IntelPanel({
@@ -96,6 +98,7 @@ export function IntelPanel({
     observedEvents = [],
     observedEventTotal = observedEvents.length,
     observedEventsTruncated = false,
+    presenceCoverage = null,
 }: IntelPanelProps) {
     if (intelLoading && !intel && observedEvents.length === 0) {
         return (
@@ -116,6 +119,7 @@ export function IntelPanel({
                 events={observedEvents}
                 total={observedEventTotal}
                 truncated={observedEventsTruncated}
+                presenceCoverage={presenceCoverage}
             />
         );
     }
@@ -123,6 +127,7 @@ export function IntelPanel({
     if (!intel) {
         return (
             <div className="space-y-4">
+                {presenceCoverage && <PresenceCoveragePanel coverage={presenceCoverage} />}
                 <div className="text-center py-8">
                     <Brain size={32} className="mx-auto text-txt-dim mb-2" />
                     <p className="text-txt-muted text-sm">Patrones aún no disponibles</p>
@@ -140,20 +145,24 @@ export function IntelPanel({
                     total={observedEventTotal}
                     truncated={observedEventsTruncated}
                     technicalCoverage={intel.coverage}
+                    presenceCoverage={presenceCoverage}
                 />
             );
         }
         return (
-            <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
-                <Brain size={32} className="mx-auto text-txt-dim mb-2" />
-                <p className="text-txt-primary text-sm font-semibold">Patrones aún no disponibles</p>
-                <p className="text-txt-muted text-xs mt-2 max-w-xl mx-auto">
-                    Esta sesión no reúne suficientes mediciones confirmadas para inferir rutinas de forma responsable.
-                    La actividad observada permanece disponible en su propia sección.
-                </p>
-                <p className="text-txt-dim text-[10px] mt-3">
-                    Cobertura actual: {intel.coverage.conclusiveMeasurements.toLocaleString()} mediciones RTT concluyentes en {intel.coverage.activeDays} días.
-                </p>
+            <div className="space-y-4">
+                {presenceCoverage && <PresenceCoveragePanel coverage={presenceCoverage} />}
+                <div className="bg-surface-overlay rounded-xl border border-surface-border p-8 text-center">
+                    <Brain size={32} className="mx-auto text-txt-dim mb-2" />
+                    <p className="text-txt-primary text-sm font-semibold">Patrones aún no disponibles</p>
+                    <p className="text-txt-muted text-xs mt-2 max-w-xl mx-auto">
+                        Esta sesión no reúne suficientes mediciones confirmadas para inferir rutinas de forma responsable.
+                        La actividad observada permanece disponible en su propia sección.
+                    </p>
+                    <p className="text-txt-dim text-[10px] mt-3">
+                        Cobertura actual: {intel.coverage.conclusiveMeasurements.toLocaleString()} mediciones RTT concluyentes en {intel.coverage.activeDays} días.
+                    </p>
+                </div>
             </div>
         );
     }
@@ -166,7 +175,11 @@ export function IntelPanel({
                     total={observedEventTotal}
                     truncated={observedEventsTruncated}
                     technicalCoverage={intel.coverage}
+                    presenceCoverage={presenceCoverage}
                 />
+            )}
+            {observedEvents.length === 0 && presenceCoverage && (
+                <PresenceCoveragePanel coverage={presenceCoverage} />
             )}
             <HabitProfileCard habits={intel.habits} />
             <WeeklyHeatmapCard heatmap={intel.heatmap} />
@@ -183,11 +196,13 @@ function ObservedPatternsPanel({
     total,
     truncated,
     technicalCoverage,
+    presenceCoverage,
 }: {
     events: ObservedActivityEvent[];
     total: number;
     truncated: boolean;
     technicalCoverage?: IntelData['coverage'];
+    presenceCoverage?: PresenceCoverageData | null;
 }) {
     const timeZone = resolveBrowserTimeZone();
     const patterns = buildObservedActivityPatterns(events, timeZone);
@@ -206,7 +221,7 @@ function ObservedPatternsPanel({
                             <Activity size={13} /> Patrones de actividad observada
                         </h5>
                         <p className="text-xs text-txt-muted mt-2 max-w-2xl">
-                            Distribución descriptiva de mensajes, confirmaciones, llamadas y presencia registrados en esta sesión.
+                            Distribución descriptiva de mensajes, confirmaciones, llamadas, disponibilidad visible y señales directas del chat registradas en esta sesión.
                         </p>
                     </div>
                     <span className="w-fit rounded-full border border-success/30 bg-success-muted px-3 py-1 text-[10px] font-semibold text-success">
@@ -235,6 +250,14 @@ function ObservedPatternsPanel({
                     <p className="text-[10px] text-txt-dim mt-3">
                         Ventana de la muestra: {formatObservedDate(patterns.firstActivityAt, timeZone)} – {formatObservedDate(patterns.lastActivityAt, timeZone)}.
                     </p>
+                )}
+                {patterns.sourceCounts.presence > 0 && (
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 mt-4 border-t border-surface-border pt-4">
+                        <ObservedMetric label="Disponibilidad visible" value={patterns.presence.availabilitySignals.toLocaleString()} />
+                        <ObservedMetric label="En línea observado" value={patterns.presence.available.toLocaleString()} />
+                        <ObservedMetric label="Sin disponibilidad visible" value={patterns.presence.unavailable.toLocaleString()} />
+                        <ObservedMetric label="Señales directas del chat" value={patterns.presence.directChatSignals.toLocaleString()} />
+                    </div>
                 )}
             </section>
 
@@ -309,7 +332,7 @@ function ObservedPatternsPanel({
             <section className="rounded-xl border border-warning/25 bg-warning-muted/30 p-4">
                 <p className="text-xs font-semibold text-warning">Alcance de la evidencia</p>
                 <p className="text-[11px] text-white/90 mt-1">
-                    Estos patrones describen cuándo se registraron actividades. No prueban presencia continua, disponibilidad, horarios de sueño ni tiempo de uso.
+                    Estos patrones describen cuándo se registraron actividades. “En línea observado” confirma disponibilidad únicamente en ese instante; no revela conversaciones, destinatarios, llamadas con terceros, horarios de sueño ni tiempo total de uso.
                 </p>
                 {technicalCoverage && !technicalCoverage.available && (
                     <p className="text-[10px] text-white/75 mt-2">
@@ -322,6 +345,8 @@ function ObservedPatternsPanel({
                     </p>
                 )}
             </section>
+
+            {presenceCoverage && <PresenceCoveragePanel coverage={presenceCoverage} />}
         </div>
     );
 }
@@ -360,7 +385,7 @@ function observedSourceLabel(source: ObservedActivityEvent['source']): string {
     if (source === 'message') return 'Mensajes';
     if (source === 'receipt') return 'Confirmaciones';
     if (source === 'call') return 'Llamadas';
-    return 'Presencia';
+    return 'Disponibilidad y chat';
 }
 
 function padHour(hour: number): string {

@@ -47,4 +47,33 @@ describe('observed activity patterns', () => {
         expect(result.firstActivityAt).toBeNull();
         expect(result.lastActivityAt).toBeNull();
     });
+
+    test('separates observable availability from direct chat presence', () => {
+        const presenceEvent = (type: string, timestampUtc: string): ObservedActivityEvent => ({
+            source: 'presence',
+            type,
+            label: type,
+            confidence: 'high',
+            timestamp: timestampUtc,
+            timestampUtc,
+        });
+        const result = buildObservedActivityPatterns([
+            presenceEvent('available', '2026-09-02T12:00:00.000Z'),
+            presenceEvent('unavailable', '2026-09-02T12:01:00.000Z'),
+            presenceEvent('composing', '2026-09-02T12:02:00.000Z'),
+            presenceEvent('recording', '2026-09-02T12:03:00.000Z'),
+            presenceEvent('paused', '2026-09-02T12:04:00.000Z'),
+        ], 'UTC');
+
+        expect(result.sourceCounts.presence).toBe(5);
+        expect(result.presence).toEqual({
+            availabilitySignals: 2,
+            available: 1,
+            unavailable: 1,
+            directChatSignals: 3,
+            composing: 1,
+            recording: 1,
+            paused: 1,
+        });
+    });
 });

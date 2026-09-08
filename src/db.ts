@@ -8,10 +8,17 @@
 import { MongoClient, Db, Collection } from 'mongodb';
 import 'dotenv/config';
 import type { CallAnalysisResult } from './call-analyzer.js';
+import type { ObservationPersistenceResult } from './observation-dedupe.js';
 import { PRIMARY_OPERATOR_ID } from './operator-auth.js';
 import type { OperatorUserDoc } from './operator-auth.js';
 import { buildStatsInsights } from './stats-insights.js';
 import type { StatsInsights } from './stats-insights.js';
+import {
+    buildPresenceCoverageSummary,
+    type PresenceCoverageCloseReason,
+    type PresenceCoverageOpenReason,
+    type PresenceCoverageSummary,
+} from './presence-coverage.js';
 import { buildPageMetadata, type PageMetadata } from './page-metadata.js';
 import {
     buildCommercialCallActivity,
@@ -28,6 +35,11 @@ import {
     summarizeTrackerStates,
     type TrackerDeviceUpdate,
 } from './tracker-signals.js';
+import {
+    classifyObservedPresenceScope,
+    summarizeObservedPresenceGroups,
+    type ObservedPresenceCounts,
+} from './presence-semantics.js';
 
 // Types
 export interface MeasurementDoc {
@@ -54,6 +66,7 @@ export interface ActivityEventDoc {
     type: string;
     label: string;
     confidence: 'none' | 'low' | 'medium' | 'high';
+    idempotencyKey?: string;
     details?: Record<string, unknown>;
     timestamp: Date;
     timestampUtc: string;
@@ -70,6 +83,11 @@ export interface ObservedActivityListItem {
 
 export interface CommercialObservedActivityListItem extends ObservedActivityListItem {
     call?: CommercialCallMetadata;
+}
+
+export interface PresenceObservationSummary extends ObservedPresenceCounts {
+    lastAvailability: CommercialObservedActivityListItem | null;
+    lastDirectChatSignal: CommercialObservedActivityListItem | null;
 }
 
 export interface ContactDoc {
@@ -115,6 +133,19 @@ export interface TrackingSessionDoc {
     startedAt: Date;
     stoppedAt: Date | null;
     stopReason: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+export interface PresenceCoverageWindowDoc {
+    caseId: string;
+    trackingSessionId: string;
+    jid: string;
+    openReason: PresenceCoverageOpenReason;
+    startedAt: Date;
+    lastConfirmedAt: Date;
+    endedAt: Date | null;
+    closeReason: PresenceCoverageCloseReason | null;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -285,6 +316,7 @@ let activityEvents: Collection<ActivityEventDoc>;
 let contacts: Collection<ContactDoc>;
 let sessions: Collection<SessionDoc>;
 let trackingSessions: Collection<TrackingSessionDoc>;
+let presenceCoverageWindows: Collection<PresenceCoverageWindowDoc>;
 type StoredCallAnalysis = CallAnalysisResult & {
     caseId?: string;
     savedAt?: Date;
@@ -321,6 +353,7 @@ export async function connectDB(): Promise<boolean> {
         contacts = db.collection<ContactDoc>('contacts');
         sessions = db.collection<SessionDoc>('sessions');
         trackingSessions = db.collection<TrackingSessionDoc>('tracking_sessions');
+        presenceCoverageWindows = db.collection<PresenceCoverageWindowDoc>('presence_coverage_windows');
         callAnalyses = db.collection<StoredCallAnalysis>('call_analyses');
         auditEvents = db.collection<AuditEventDoc>('audit_events');
         caseRecords = db.collection<CaseDoc>('cases');
@@ -338,6 +371,13 @@ export async function connectDB(): Promise<boolean> {
         await measurements.createIndex({ trackingSessionId: 1, timestamp: -1 });
         await activityEvents.createIndex({ caseId: 1, jid: 1, timestamp: -1 });
         await activityEvents.createIndex({ trackingSessionId: 1, timestamp: -1 });
+        await activityEvents.createIndex(
+            { idempotencyKey: 1 },
+            {
+                unique: true,
+                partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+            },
+        );
         await contacts.createIndex({ jid: 1 }, { unique: true });
         await trackingSessions.createIndex({ trackingSessionId: 1 }, { unique: true });
         await trackingSessions.createIndex({ caseId: 1, startedAt: -1 });
@@ -345,6 +385,11 @@ export async function connectDB(): Promise<boolean> {
         await trackingSessions.createIndex(
             { jid: 1 },
             { unique: true, partialFilterExpression: { status: 'active' } }
+        );
+        await presenceCoverageWindows.createIndex({ trackingSessionId: 1, startedAt: 1 });
+        await presenceCoverageWindows.createIndex(
+            { trackingSessionId: 1 },
+            { unique: true, partialFilterExpression: { endedAt: null } },
         );
         await callAnalyses.createIndex({ callId: 1 });
         await callAnalyses.createIndex(
@@ -396,12 +441,17 @@ export async function saveMeasurement(data: Omit<MeasurementDoc, 'timestamp'>): 
  * Save a high-value observed activity event (presence, call, message).
  * RTT probes remain in the measurements collection to avoid duplicate volume.
  */
-export async function saveActivityEvent(data: Omit<ActivityEventDoc, 'timestamp' | 'timestampUtc'> & { timestamp?: Date | number | string }): Promise<void> {
-    if (!db) return;
+export async function saveActivityEvent(data: Omit<ActivityEventDoc, 'timestamp' | 'timestampUtc'> & { timestamp?: Date | number | string }): Promise<ObservationPersistenceResult> {
+    if (!db) return 'failed';
     try {
         await activityEvents.insertOne(buildActivityEventDoc(data));
+        return 'inserted';
     } catch (err) {
+        if (typeof err === 'object' && err !== null && 'code' in err && err.code === 11000) {
+            return 'duplicate';
+        }
         console.error('[DB] Error saving activity event:', err);
+        return 'failed';
     }
 }
 
@@ -417,6 +467,7 @@ export function buildActivityEventDoc(
         type: data.type,
         label: data.label,
         confidence: data.confidence,
+        ...(data.idempotencyKey !== undefined ? { idempotencyKey: data.idempotencyKey } : {}),
         ...(data.details !== undefined ? { details: data.details } : {}),
         timestamp,
         timestampUtc: timestamp.toISOString(),
@@ -829,6 +880,121 @@ export async function updateTrackingSessionProbeMethod(
     } catch (err) {
         console.error('[DB] Error updating tracking session probe method:', err);
         return false;
+    }
+}
+
+export async function openPresenceCoverageWindow(input: {
+    caseId: string;
+    trackingSessionId: string;
+    jid: string;
+    openReason: PresenceCoverageOpenReason;
+    openedAt?: Date;
+}): Promise<boolean> {
+    if (!db) return false;
+    const openedAt = input.openedAt ?? new Date();
+    try {
+        const staleWindows = await presenceCoverageWindows
+            .find({ trackingSessionId: input.trackingSessionId, endedAt: null })
+            .toArray();
+        for (const stale of staleWindows) {
+            await presenceCoverageWindows.updateOne(
+                { _id: stale._id, endedAt: null },
+                {
+                    $set: {
+                        endedAt: stale.lastConfirmedAt,
+                        closeReason: 'subscription_replaced',
+                        updatedAt: openedAt,
+                    },
+                },
+            );
+        }
+
+        await presenceCoverageWindows.insertOne({
+            caseId: input.caseId,
+            trackingSessionId: input.trackingSessionId,
+            jid: input.jid,
+            openReason: input.openReason,
+            startedAt: openedAt,
+            lastConfirmedAt: openedAt,
+            endedAt: null,
+            closeReason: null,
+            createdAt: openedAt,
+            updatedAt: openedAt,
+        });
+        return true;
+    } catch (err) {
+        console.error('[DB] Error opening presence coverage window:', err);
+        return false;
+    }
+}
+
+export async function confirmPresenceCoverage(
+    trackingSessionId: string,
+    confirmedAt: Date = new Date(),
+): Promise<boolean> {
+    if (!db) return false;
+    try {
+        const result = await presenceCoverageWindows.updateOne(
+            { trackingSessionId, endedAt: null },
+            { $set: { lastConfirmedAt: confirmedAt, updatedAt: confirmedAt } },
+        );
+        return result.matchedCount === 1;
+    } catch (err) {
+        console.error('[DB] Error confirming presence coverage:', err);
+        return false;
+    }
+}
+
+export async function closePresenceCoverageWindow(
+    trackingSessionId: string,
+    closeReason: PresenceCoverageCloseReason,
+    closedAt: Date = new Date(),
+): Promise<boolean> {
+    if (!db) return false;
+    try {
+        const active = await presenceCoverageWindows.findOne({ trackingSessionId, endedAt: null });
+        if (!active) return true;
+        const safeClosedAt = new Date(Math.max(closedAt.getTime(), active.lastConfirmedAt.getTime()));
+        const result = await presenceCoverageWindows.updateOne(
+            { _id: active._id, endedAt: null },
+            {
+                $set: {
+                    lastConfirmedAt: safeClosedAt,
+                    endedAt: safeClosedAt,
+                    closeReason,
+                    updatedAt: safeClosedAt,
+                },
+            },
+        );
+        return result.modifiedCount === 1;
+    } catch (err) {
+        console.error('[DB] Error closing presence coverage window:', err);
+        return false;
+    }
+}
+
+export async function getPresenceCoverageSummary(
+    trackingSessionId: string,
+    evaluatedAt: Date = new Date(),
+): Promise<PresenceCoverageSummary | null> {
+    if (!db) return null;
+    try {
+        const trackingSession = await trackingSessions.findOne({ trackingSessionId });
+        if (!trackingSession) return null;
+        const effectiveEnd = trackingSession.stoppedAt && trackingSession.stoppedAt < evaluatedAt
+            ? trackingSession.stoppedAt
+            : evaluatedAt;
+        const windows = await presenceCoverageWindows
+            .find({ trackingSessionId })
+            .sort({ startedAt: 1 })
+            .toArray();
+        const summary = buildPresenceCoverageSummary(trackingSession.startedAt, effectiveEnd, windows);
+        return trackingSession.status === 'active'
+            ? summary
+            : { ...summary, currentState: 'interrupted' };
+    } catch (err) {
+        console.error('[DB] Error calculating presence coverage:', err);
+        return null;
     }
 }
 
@@ -1249,6 +1415,7 @@ export async function getObservedActivitySummary(
     confidence: Record<string, number>;
     callOutcomes: Record<CommercialCallOutcome, number>;
     messageDirections: { incoming: number; outgoing: number };
+    presenceObservation: PresenceObservationSummary;
     activeDays: number;
     windowDays: number;
 }> {
@@ -1265,6 +1432,11 @@ export async function getObservedActivitySummary(
         confidence: {},
         callOutcomes: emptyCallOutcomeCounts(),
         messageDirections: { incoming: 0, outgoing: 0 },
+        presenceObservation: {
+            ...summarizeObservedPresenceGroups([]),
+            lastAvailability: null,
+            lastDirectChatSignal: null,
+        },
         activeDays: 0,
         windowDays: days,
     };
@@ -1400,6 +1572,21 @@ export async function getObservedActivitySummary(
         const activeEvents = grouped
             .filter(group => activeTypes.has(group._id.type))
             .reduce((sum, group) => sum + group.count, 0);
+        const presenceObservation: PresenceObservationSummary = {
+            ...summarizeObservedPresenceGroups(
+                grouped
+                    .filter(group => group._id.source === 'presence')
+                    .map(group => ({ type: group._id.type, count: group.count })),
+            ),
+            lastAvailability: events.find(event => (
+                event.source === 'presence'
+                && classifyObservedPresenceScope(event.type) === 'availability'
+            )) || null,
+            lastDirectChatSignal: events.find(event => (
+                event.source === 'presence'
+                && classifyObservedPresenceScope(event.type) === 'direct_chat'
+            )) || null,
+        };
 
         return {
             totalEvents,
@@ -1414,6 +1601,7 @@ export async function getObservedActivitySummary(
             confidence,
             callOutcomes,
             messageDirections,
+            presenceObservation,
             activeDays: daySet.size,
             windowDays: days,
         };
@@ -1448,6 +1636,7 @@ export async function getStateDistribution(
     avgRtt: number;
     insights: StatsInsights;
     observedActivity: Awaited<ReturnType<typeof getObservedActivitySummary>>;
+    presenceCoverage: PresenceCoverageSummary | null;
 }> {
     const empty = {
         online: 0,
@@ -1465,6 +1654,7 @@ export async function getStateDistribution(
         lastOnline: null,
         avgRtt: 0,
         insights: buildStatsInsights([]),
+        presenceCoverage: null,
         observedActivity: {
             totalEvents: 0,
             activeEvents: 0,
@@ -1478,6 +1668,11 @@ export async function getStateDistribution(
             confidence: {},
             callOutcomes: emptyCallOutcomeCounts(),
             messageDirections: { incoming: 0, outgoing: 0 },
+            presenceObservation: {
+                ...summarizeObservedPresenceGroups([]),
+                lastAvailability: null,
+                lastDirectChatSignal: null,
+            },
             activeDays: 0,
             windowDays: 30,
         },
@@ -1505,9 +1700,14 @@ export async function getStateDistribution(
         }>(pipeline).toArray();
         const [r] = result;
         if (!r) {
+            const [observedActivity, presenceCoverage] = await Promise.all([
+                getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
+                trackingSessionId ? getPresenceCoverageSummary(trackingSessionId) : Promise.resolve(null),
+            ]);
             return {
                 ...empty,
-                observedActivity: await getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
+                observedActivity,
+                presenceCoverage,
             };
         }
 
@@ -1540,7 +1740,10 @@ export async function getStateDistribution(
             .sort({ timestamp: 1 })
             .toArray();
 
-        const observedActivity = await getObservedActivitySummary(jid, 30, caseId, trackingSessionId);
+        const [observedActivity, presenceCoverage] = await Promise.all([
+            getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
+            trackingSessionId ? getPresenceCoverageSummary(trackingSessionId) : Promise.resolve(null),
+        ]);
 
         const [lastOnline] = lastOnlineDoc;
         return {
@@ -1566,6 +1769,7 @@ export async function getStateDistribution(
                 timestamp: doc.timestamp,
             }))),
             observedActivity,
+            presenceCoverage,
         };
     } catch (err) {
         console.error('[DB] Error fetching state distribution:', err);

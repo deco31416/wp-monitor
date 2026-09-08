@@ -4,7 +4,7 @@ import { Square, Activity, Wifi, Smartphone, Monitor, Clock, Database, BarChart3
 import clsx from 'clsx';
 import { socket } from '../socket';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
-import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type ObservedActivityEvent, type ObservedActivityResponse, type TrackerDeviceInfo } from '../types';
+import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type CaseRecord, type ObservedActivityEvent, type ObservedActivityResponse, type TrackerDeviceInfo } from '../types';
 import { ActivityJournalPanel } from './ActivityJournalPanel';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
@@ -45,12 +45,16 @@ function formatProbeState(value: string): string {
     return value;
 }
 
-function formatSignalSource(source: LiveState['source']): string {
-    if (source === 'presence') return 'presencia';
-    if (source === 'call') return 'llamada';
-    if (source === 'message') return 'mensaje';
-    if (source === 'receipt') return 'confirmación';
-    if (source === 'rtt_probe') return 'medición técnica';
+function formatSignalSource(signal: LiveState): string {
+    if (signal.source === 'presence') {
+        return signal.state === 'available' || signal.state === 'unavailable'
+            ? 'disponibilidad observable'
+            : 'señal directa del chat';
+    }
+    if (signal.source === 'call') return 'llamada';
+    if (signal.source === 'message') return 'mensaje';
+    if (signal.source === 'receipt') return 'confirmación';
+    if (signal.source === 'rtt_probe') return 'medición técnica';
     return 'sistema';
 }
 
@@ -200,6 +204,9 @@ interface ContactCardProps {
     deviceAlerts?: { deviceJid: string; totalDevices: number; timestamp: number }[] | undefined;
     onRemove: () => void;
     privacyMode?: boolean;
+    availableCases: CaseRecord[];
+    casesLoading: boolean;
+    selectedCaseId: string;
 }
 
 export function ContactCard({
@@ -217,7 +224,10 @@ export function ContactCard({
     liveState,
     deviceAlerts,
     onRemove,
-    privacyMode = false
+    privacyMode = false,
+    availableCases,
+    casesLoading,
+    selectedCaseId,
 }: ContactCardProps) {
     const [stats, setStats] = useState<StatsData | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
@@ -286,24 +296,39 @@ export function ContactCard({
     const [callEvent, setCallEvent] = useState<CallEvent | null>(null);
     const [callPacketCount, setCallPacketCount] = useState(0);
     const [callStopping, setCallStopping] = useState(false);
-    const [callCaseId, setCallCaseId] = useState('');
-    const [callOperatorName, setCallOperatorName] = useState('');
-    const [callAuthorizationNote, setCallAuthorizationNote] = useState('');
+    const [selectedCallCaseId, setSelectedCallCaseId] = useState('');
     const [callCaptureError, setCallCaptureError] = useState<string | null>(null);
+    const [trackingCaseId, setTrackingCaseId] = useState<string | null>(null);
     const callCapturingRef = useRef(false);
+
+    const preferredCallCase = availableCases.find(item => item.caseId === selectedCallCaseId)
+        || availableCases.find(item => item.caseId === trackingCaseId)
+        || availableCases.find(item => item.caseId === selectedCaseId)
+        || availableCases[0];
+    const callCaseId = preferredCallCase?.caseId || '';
+    const callOperatorName = preferredCallCase?.primaryOperator || '';
+    const callAuthorizationNote = preferredCallCase?.authorizationNote || '';
+
+    const selectCallCase = useCallback((nextCaseId: string) => {
+        setSelectedCallCaseId(nextCaseId);
+        setCallAnalysis(null);
+        setCallHistory([]);
+        setCallCaptureError(null);
+    }, []);
 
     useEffect(() => {
         callCapturingRef.current = callCapturing;
     }, [callCapturing]);
 
     const fetchCallHistory = useCallback(() => {
-        authFetch(`${API_URL}/api/call-history/${encodeURIComponent(jid)}?limit=10`)
+        if (!callCaseId) return;
+        authFetch(`${API_URL}/api/call-history/${encodeURIComponent(jid)}?limit=10&caseId=${encodeURIComponent(callCaseId)}`)
             .then(r => r.json())
             .then(data => {
                 if (Array.isArray(data)) setCallHistory(data as CallAnalysisResult[]);
             })
             .catch(console.error);
-    }, [jid]);
+    }, [callCaseId, jid]);
 
     // Listen for call events from server
     useEffect(() => {
@@ -355,9 +380,6 @@ export function ContactCard({
         if (!normalizedCaseId || normalizedCaseId.length < 3) {
             setCallCaptureError('Case ID debe tener minimo 3 caracteres validos. Ejemplo: CASE-001');
             return;
-        }
-        if (normalizedCaseId !== callCaseId.trim()) {
-            setCallCaseId(normalizedCaseId);
         }
         try {
             setCallAnalysis(null);
@@ -435,11 +457,11 @@ export function ContactCard({
     const acknowledgedRttData = data.filter(entry => !isNoAckState(entry.state) && entry.avg > 0);
     const lastData = acknowledgedRttData[acknowledgedRttData.length - 1];
     const presenceStatus = typingState === 'composing' || presence === 'composing'
-        ? 'Escribiendo'
+        ? 'Escribiendo observado'
         : typingState === 'recording' || presence === 'recording'
-            ? 'Grabando audio'
+            ? 'Grabando audio observado'
             : presence === 'available'
-                ? 'Online'
+                ? 'En línea observado'
                 : null;
     const liveStatus = liveState && liveState.state !== 'unknown' && liveState.confidence !== 'none'
         ? liveState.label
@@ -450,8 +472,10 @@ export function ContactCard({
 
     const blurredNumber = privacyMode ? displayNumber.replace(/\d/g, '•') : displayNumber;
 
+    const activePresenceState = liveState?.source === 'presence'
+        && ['available', 'composing', 'recording'].includes(liveState.state);
     const statusColor = isNoAckState(currentStatus) ? 'warning'
-        : currentStatus.includes('Online') || currentStatus === 'Escribiendo' || currentStatus === 'Grabando audio' || liveState?.source === 'message' || liveState?.source === 'receipt' || liveState?.source === 'call' ? 'success'
+        : activePresenceState || liveState?.source === 'message' || liveState?.source === 'receipt' || liveState?.source === 'call' ? 'success'
         : currentStatus === 'Standby' ? 'warning' : 'neutral';
 
     const statusConfig = {
@@ -490,6 +514,7 @@ export function ContactCard({
                     limit: 200,
                 });
                 setTrackingStartedAt(response.trackingStartedAt || null);
+                setTrackingCaseId(response.caseId || null);
             })
             .catch(console.error);
     }, [jid]);
@@ -602,15 +627,17 @@ export function ContactCard({
     const formatPresence = (value: string | null) => {
         switch (value) {
             case 'available':
-                return 'Online';
+                return 'En línea observada';
             case 'unavailable':
-                return 'No disponible';
+                return 'Sin disponibilidad visible';
             case 'composing':
-                return 'Escribiendo';
+                return 'Escribiendo observado';
             case 'recording':
-                return 'Grabando audio';
+                return 'Grabando audio observado';
+            case 'paused':
+                return 'Señal directa finalizada';
             default:
-                return value || 'Presencia no disponible';
+                return value || 'Disponibilidad no observable';
         }
     };
 
@@ -721,7 +748,7 @@ export function ContactCard({
                             </span>
                             {liveState && liveState.source !== 'system' && (
                                 <span className="text-[10px] text-txt-dim">
-                                    vía {formatSignalSource(liveState.source)} · confianza {formatConfidence(liveState.confidence)}
+                                    vía {formatSignalSource(liveState)} · confianza {formatConfidence(liveState.confidence)}
                                 </span>
                             )}
                             {profile?.about && !privacyMode && (
@@ -815,11 +842,11 @@ export function ContactCard({
                                         "flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg text-xs font-bold animate-pulse",
                                         typingState === 'composing' ? "bg-blue-500/20 text-blue-400" : "bg-red-500/20 text-red-400"
                                     )}>
-                                        {typingState === 'composing' ? '✍️ Escribiendo...' : '🎙️ Grabando audio...'}
+                                        {typingState === 'composing' ? '✍️ Escribiendo observado...' : '🎙️ Grabando audio observado...'}
                                     </div>
                                 )}
                                 <div className="flex justify-between items-center text-txt-secondary">
-                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Presencia</span>
+                                    <span className="flex items-center gap-1.5"><Wifi size={14} className="text-txt-dim" /> Disponibilidad observada</span>
                                     <span className="font-medium text-txt-primary">{formatPresence(presence)}</span>
                                 </div>
                                 {/* Connection type */}
@@ -1114,6 +1141,7 @@ export function ContactCard({
                                 observedEvents={observedActivity}
                                 observedEventTotal={observedActivityPage.total}
                                 observedEventsTruncated={observedActivityPage.truncated}
+                                presenceCoverage={stats?.presenceCoverage ?? null}
                             />
                         )}
                         {activePanel === 'profile' && (
@@ -1148,10 +1176,10 @@ export function ContactCard({
                                 callCaseId={callCaseId}
                                 callOperatorName={callOperatorName}
                                 callAuthorizationNote={callAuthorizationNote}
+                                availableCases={availableCases}
+                                casesLoading={casesLoading}
                                 callCaptureError={callCaptureError}
-                                onCaseIdChange={setCallCaseId}
-                                onOperatorNameChange={setCallOperatorName}
-                                onAuthorizationNoteChange={setCallAuthorizationNote}
+                                onCaseIdChange={selectCallCase}
                                 onStartManualCapture={handleStartManualCapture}
                                 onStopManualCapture={handleStopManualCapture}
                                 onSelectAnalysis={setCallAnalysis}

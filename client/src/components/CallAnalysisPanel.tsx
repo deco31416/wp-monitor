@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 import { ExternalLink, Globe, History, Monitor, Phone, Shield, Square, Target, Wifi } from 'lucide-react';
-import { CallAnalysisResult, CallEvent, CandidateIP } from '../types';
+import { CallAnalysisResult, CallEvent, CandidateIP, type CaseRecord } from '../types';
 
 interface CallAnalysisPanelProps {
     callAnalysis: CallAnalysisResult | null;
@@ -13,10 +13,10 @@ interface CallAnalysisPanelProps {
     callCaseId: string;
     callOperatorName: string;
     callAuthorizationNote: string;
+    availableCases: CaseRecord[];
+    casesLoading: boolean;
     callCaptureError: string | null;
     onCaseIdChange: (value: string) => void;
-    onOperatorNameChange: (value: string) => void;
-    onAuthorizationNoteChange: (value: string) => void;
     onStartManualCapture: () => void;
     onStopManualCapture: () => void;
     onSelectAnalysis: (analysis: CallAnalysisResult) => void;
@@ -32,10 +32,10 @@ export function CallAnalysisPanel({
     callCaseId,
     callOperatorName,
     callAuthorizationNote,
+    availableCases,
+    casesLoading,
     callCaptureError,
     onCaseIdChange,
-    onOperatorNameChange,
-    onAuthorizationNoteChange,
     onStartManualCapture,
     onStopManualCapture,
     onSelectAnalysis,
@@ -52,24 +52,33 @@ export function CallAnalysisPanel({
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-                    <input
+                    <select
+                        aria-label="Caso de la captura"
                         value={callCaseId}
                         onChange={event => onCaseIdChange(event.target.value)}
-                        disabled={callCapturing}
-                        placeholder="Case ID (ej. CASE-001)"
-                        className="input-field !text-xs"
-                    />
+                        disabled={callCapturing || casesLoading || availableCases.length === 0}
+                        className="select-field !text-xs"
+                    >
+                        <option value="">
+                            {casesLoading ? 'Cargando casos...' : 'Seleccionar caso autorizado'}
+                        </option>
+                        {availableCases.map(item => (
+                            <option key={item.caseId} value={item.caseId}>
+                                {item.caseId}{item.title && item.title !== item.caseId ? ` - ${item.title}` : ''} ({item.status})
+                            </option>
+                        ))}
+                    </select>
                     <input
+                        aria-label="Operador de la captura"
                         value={callOperatorName}
-                        onChange={event => onOperatorNameChange(event.target.value)}
-                        disabled={callCapturing}
+                        readOnly
                         placeholder="Operador"
                         className="input-field !text-xs"
                     />
                     <input
+                        aria-label="Autorización de la captura"
                         value={callAuthorizationNote}
-                        onChange={event => onAuthorizationNoteChange(event.target.value)}
-                        disabled={callCapturing}
+                        readOnly
                         placeholder="Autorizacion / motivo"
                         className="input-field !text-xs"
                     />
@@ -96,7 +105,7 @@ export function CallAnalysisPanel({
                 </div>
 
                 <p className="mt-2 text-[10px] text-txt-dim">
-                    Case ID tecnico: letras, numeros, punto, guion bajo, dos puntos o guion. Los espacios se normalizan antes de iniciar.
+                    La captura se asociara al caso seleccionado y usara su operador y autorizacion registrados.
                 </p>
 
                 {callCaptureError && (

@@ -20,6 +20,21 @@ export interface StatsData {
     avgRtt: number;
     insights?: StatsInsights;
     observedActivity?: ObservedActivitySummary;
+    presenceCoverage?: PresenceCoverageData | null;
+}
+
+export interface PresenceCoverageData {
+    sessionStartedAt: string;
+    evaluatedAt: string;
+    firstObservedAt: string | null;
+    lastObservedAt: string | null;
+    elapsedMs: number;
+    coveredMs: number;
+    interruptedMs: number;
+    coveragePct: number;
+    windowCount: number;
+    interruptionCount: number;
+    currentState: 'observing' | 'interrupted';
 }
 
 interface ObservedActivityEvent {
@@ -52,6 +67,17 @@ interface ObservedActivitySummary {
         ended_unconfirmed: number;
     };
     messageDirections?: { incoming: number; outgoing: number };
+    presenceObservation?: {
+        availabilitySignals: number;
+        available: number;
+        unavailable: number;
+        directChatSignals: number;
+        composing: number;
+        recording: number;
+        paused: number;
+        lastAvailability: ObservedActivityEvent | null;
+        lastDirectChatSignal: ObservedActivityEvent | null;
+    };
     activeDays: number;
     windowDays: number;
 }
@@ -118,6 +144,9 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
     if (stats.totalMeasurements <= 0) {
         return (
             <div className="space-y-4">
+                {stats.presenceCoverage && (
+                    <PresenceCoveragePanel coverage={stats.presenceCoverage} />
+                )}
                 {stats.observedActivity && stats.observedActivity.totalEvents > 0 && (
                     <ObservedActivityPanel
                         observed={stats.observedActivity}
@@ -181,6 +210,10 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
                 </div>
             </section>
 
+            {stats.presenceCoverage && (
+                <PresenceCoveragePanel coverage={stats.presenceCoverage} />
+            )}
+
             {stats.observedActivity && stats.observedActivity.totalEvents > 0 && (
                 <ObservedActivityPanel
                     observed={stats.observedActivity}
@@ -235,6 +268,44 @@ export function StatsPanel({ stats, patterns, formatDateTime, timeAgo }: StatsPa
     );
 }
 
+export function PresenceCoveragePanel({ coverage }: { coverage: PresenceCoverageData }) {
+    const observing = coverage.currentState === 'observing';
+    return (
+        <section className="bg-surface-overlay rounded-xl border border-surface-border p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                    <h6 className="text-[10px] text-txt-dim uppercase tracking-wider flex items-center gap-1.5">
+                        <Wifi size={12} /> Cobertura del canal de presencia
+                    </h6>
+                    <p className="text-xs text-txt-muted mt-1 max-w-2xl">
+                        Periodo en que WhatsApp mantuvo disponible la observación de presencia para esta sesión.
+                    </p>
+                </div>
+                <span className={clsx(
+                    'w-fit rounded-full border px-3 py-1 text-[10px] font-semibold',
+                    observing
+                        ? 'border-success/30 bg-success-muted text-success'
+                        : 'border-warning/30 bg-warning-muted text-warning',
+                )}>
+                    {observing ? 'Canal en observación' : 'Observación interrumpida'}
+                </span>
+            </div>
+
+            <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 mt-4">
+                <MetricTile icon={<Radio size={15} />} label="Cobertura" value={`${coverage.coveragePct}%`} />
+                <MetricTile icon={<Timer size={15} />} label="Tiempo observado" value={formatCoverageDuration(coverage.coveredMs)} />
+                <MetricTile icon={<Clock size={15} />} label="Sin cobertura" value={formatCoverageDuration(coverage.interruptedMs)} />
+                <MetricTile icon={<Activity size={15} />} label="Ventanas" value={coverage.windowCount.toLocaleString()} />
+                <MetricTile icon={<History size={15} />} label="Interrupciones" value={coverage.interruptionCount.toLocaleString()} />
+            </div>
+
+            <p className="text-[10px] text-txt-dim mt-3">
+                Esta cobertura mide disponibilidad del canal de observación; no representa tiempo online, uso continuo ni actividad con terceros.
+            </p>
+        </section>
+    );
+}
+
 function ObservedActivityPanel({
     observed,
     formatDateTime,
@@ -272,7 +343,7 @@ function ObservedActivityPanel({
                         <Activity size={12} /> Actividad observada
                     </h6>
                     <p className="text-xs text-txt-muted mt-1">
-                        Actividades atribuibles a esta sesión: presencia, llamadas, mensajes y confirmaciones de entrega.
+                        Actividades atribuibles a esta sesión: disponibilidad visible, señales directas del chat, llamadas, mensajes y confirmaciones.
                     </p>
                 </div>
                 <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md border border-success/30 bg-success-muted text-success w-fit">
@@ -282,11 +353,36 @@ function ObservedActivityPanel({
 
             <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
                 <MetricTile icon={<Radio size={15} />} label="Actividades" value={observed.totalEvents.toLocaleString()} />
-                <MetricTile icon={<Keyboard size={15} />} label="Presencia" value={sourceCounts.presence.toLocaleString()} />
+                <MetricTile icon={<Keyboard size={15} />} label="Presencia WhatsApp" value={sourceCounts.presence.toLocaleString()} />
                 <MetricTile icon={<PhoneCall size={15} />} label="Llamadas" value={sourceCounts.call.toLocaleString()} />
                 <MetricTile icon={<MessageSquare size={15} />} label="Mensajes" value={sourceCounts.message.toLocaleString()} />
                 <MetricTile icon={<CheckCheck size={15} />} label="Confirmaciones" value={sourceCounts.receipt.toLocaleString()} />
             </div>
+
+            {observed.presenceObservation && sourceCounts.presence > 0 && (
+                <div className="mt-3 rounded-lg border border-accent/25 bg-accent/5 p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <p className="text-[10px] text-accent uppercase tracking-wider font-semibold">Disponibilidad observada</p>
+                            <p className="text-[11px] text-txt-muted mt-1 max-w-2xl">
+                                Señales de presencia que WhatsApp hizo visibles durante la sesión, incluso sin una conversación directa en ese instante.
+                            </p>
+                        </div>
+                        <span className="text-[9px] text-txt-dim">Observación puntual · no implica actividad con terceros</span>
+                    </div>
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+                        <MiniFact icon={<Wifi size={13} />} label="Disponibilidad visible" value={observed.presenceObservation.availabilitySignals.toLocaleString()} accent />
+                        <MiniFact icon={<Radio size={13} />} label="En línea observado" value={observed.presenceObservation.available.toLocaleString()} />
+                        <MiniFact icon={<Clock size={13} />} label="Sin disponibilidad visible" value={observed.presenceObservation.unavailable.toLocaleString()} />
+                        <MiniFact icon={<Keyboard size={13} />} label="Señales directas del chat" value={observed.presenceObservation.directChatSignals.toLocaleString()} />
+                    </div>
+                    <p className="text-[10px] text-txt-dim mt-3">
+                        Última disponibilidad: {observed.presenceObservation.lastAvailability
+                            ? `${observed.presenceObservation.lastAvailability.label} · ${formatDateTime(observed.presenceObservation.lastAvailability.timestamp)}`
+                            : 'sin señal observable'}.
+                    </p>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-3 mt-3">
                 <div className="rounded-lg border border-surface-border bg-surface-hover p-3">
@@ -534,6 +630,18 @@ function formatMinutes(minutes: number): string {
     if (!minutes || minutes <= 0) return '-';
     if (minutes < 60) return `${minutes}m`;
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function formatCoverageDuration(milliseconds: number): string {
+    if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '0m';
+    const totalMinutes = Math.floor(milliseconds / 60_000);
+    if (totalMinutes < 60) return `${Math.max(1, totalMinutes)}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours < 24) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
 function sourceLabel(source: string): string {

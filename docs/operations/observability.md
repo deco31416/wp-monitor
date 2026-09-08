@@ -76,6 +76,20 @@ No todas estan implementadas como endpoint de metricas. Deben planificarse antes
 
 No registrar contrasenas, tokens, cookies, URI, contenido de sesion, payload de mensajes, coordenadas completas innecesarias ni reportes completos. Cuando un JID/IP sea necesario para diagnostico, limita acceso, retencion y exportacion.
 
+El diagnostico temporal de presencia se habilita con
+`PRESENCE_DIAGNOSTICS_ENABLED=true`. Solo emite contadores sanitizados bajo
+`[PRESENCE-DIAG]`; no incluye JID, estado, contenido o ID. Interpretacion:
+
+- sin linea: Baileys no entrego `presence.update` al hub;
+- `raw>0`, `resolved=0` y `attributed=0`: el evento es ajeno al contacto o
+  falta un mapping PN/LID autenticado; repetir con un contacto y una ventana
+  controlados antes de clasificarlo como fallo;
+- `resolved>0`: el resolvedor autenticado correlaciono un alias tecnico nuevo;
+- `attributed>0` y `accepted=0`: revisar semantica, duplicacion o persistencia;
+- `accepted>0`: la transicion llego al pipeline durable.
+
+Deshabilita la bandera al terminar el smoke para evitar ruido operativo.
+
 ## Runbook corto
 
 1. captura timestamp UTC y version;

@@ -357,6 +357,17 @@ function summarizeActivityStats(activityStats: any[]) {
             observedEventCount: observed.totalEvents || 0,
             observedActiveDays: observed.activeDays || 0,
             observedBySource: observed.bySource || {},
+            observedPresence: observed.presenceObservation || {
+                availabilitySignals: 0,
+                available: 0,
+                unavailable: 0,
+                directChatSignals: 0,
+                composing: 0,
+                recording: 0,
+                paused: 0,
+                lastAvailability: null,
+                lastDirectChatSignal: null,
+            },
             observedConfidence: observed.confidence || {},
             lastObservedEvent: observed.lastEvent || null,
         };
@@ -519,7 +530,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
             <tr>
                 <td><code>${escapeHtml(item.targetJid)}</code></td>
                 <td>${escapeHtml(item.observedEventCount)}<br><span class="muted">${escapeHtml(item.observedActiveDays)} día(s)</span></td>
-                <td>${escapeHtml(item.observedBySource?.message || 0)} / ${escapeHtml(item.observedBySource?.receipt || 0)} / ${escapeHtml(item.observedBySource?.presence || 0)} / ${escapeHtml(item.observedBySource?.call || 0)}</td>
+                <td>${escapeHtml(item.observedBySource?.message || 0)} / ${escapeHtml(item.observedBySource?.receipt || 0)} / ${escapeHtml(item.observedPresence?.availabilitySignals || 0)}+${escapeHtml(item.observedPresence?.directChatSignals || 0)} / ${escapeHtml(item.observedBySource?.call || 0)}</td>
                 <td>${escapeHtml(item.conclusiveMeasurements)} / ${escapeHtml(item.totalMeasurements)}</td>
                 <td>${item.conclusiveMeasurements > 0 ? `${escapeHtml(item.onlinePct)}%` : '—'}</td>
                 <td>${(item.last24h?.conclusiveMeasurements ?? 0) > 0 ? `${escapeHtml(item.last24h.onlinePct)}% <span class="muted">(${escapeHtml(formatStatsChange(item.last24h.changeOnlinePct))})</span>` : '—'}</td>
@@ -779,7 +790,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Contacto</th><th>Señales 30d / días</th><th>Mens. / conf. / pres. / llam. (30d)</th><th>RTT concl. / intentos</th><th>En línea RTT</th><th>En línea / concl. 24h</th><th>En línea / concl. 7d</th><th>En línea / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
+        <thead><tr><th>Contacto</th><th>Señales 30d / días</th><th>Mens. / conf. / disp.+chat / llam. (30d)</th><th>RTT concl. / intentos</th><th>En línea RTT</th><th>En línea / concl. 24h</th><th>En línea / concl. 7d</th><th>En línea / concl. 30d</th><th>Cobertura</th><th>Confiabilidad RTT</th></tr></thead>
         <tbody>${activityRows}</tbody>
       </table>
     </div>
@@ -1427,6 +1438,10 @@ function buildCsvAnnexes(
         item.observedBySource?.message || 0,
         item.observedBySource?.receipt || 0,
         item.observedBySource?.presence || 0,
+        item.observedPresence?.availabilitySignals || 0,
+        item.observedPresence?.directChatSignals || 0,
+        item.observedPresence?.available || 0,
+        item.observedPresence?.unavailable || 0,
         item.observedBySource?.call || 0,
         item.totalMeasurements,
         item.onlinePct,
@@ -1507,7 +1522,7 @@ function buildCsvAnnexes(
         {
             name: 'annexes/activity-stats.csv',
             data: toCsv(
-                ['targetJid', 'observedEventCount', 'observedActiveDays', 'observedMessages', 'observedReceipts', 'observedPresence', 'observedCalls', 'totalMeasurements', 'onlinePct', 'standbyPct', 'noAckPct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes', 'calibratingPct', 'unknownPct', 'conclusiveMeasurements', 'inconclusiveMeasurements', 'acknowledgedRttMeasurements'],
+                ['targetJid', 'observedEventCount', 'observedActiveDays', 'observedMessages', 'observedReceipts', 'observedPresence', 'observedAvailabilitySignals', 'observedDirectChatSignals', 'observedAvailable', 'observedUnavailable', 'observedCalls', 'totalMeasurements', 'onlinePct', 'standbyPct', 'noAckPct', 'avgRtt', 'firstSeen', 'lastSeen', 'lastOnline', 'last24hOnlinePct', 'last24hChangeOnlinePct', 'last7dOnlinePct', 'last7dChangeOnlinePct', 'last30dOnlinePct', 'coverageActiveDays14', 'reliabilityScore', 'reliabilityLabel', 'reliabilityReasonCodes', 'calibratingPct', 'unknownPct', 'conclusiveMeasurements', 'inconclusiveMeasurements', 'acknowledgedRttMeasurements'],
                 activityRows
             ),
         },

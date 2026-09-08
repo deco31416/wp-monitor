@@ -22,10 +22,32 @@ import { Boom } from '@hapi/boom';
 import { WhatsAppTracker } from './tracker.js';
 import type { ProbeMethod } from './tracker.js';
 import { isNoAckState, selectPrimaryTrackerDevice, shouldPersistTrackerMeasurement } from './tracker-signals.js';
-import { isSyntheticProbeId, isSyntheticProbeMessage } from './probe-messages.js';
-import { MessageReceiptRegistry, fingerprintMessageId, type MessageReceiptTransition } from './message-receipts.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getCommercialObservedActivityEvents, countCommercialObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import { fingerprintMessageId, type MessageReceiptTransition } from './message-receipts.js';
+import { BaileysObservationHub, type BaileysObservationHubEvent } from './baileys-observation-hub.js';
+import { BaileysMessageObserver, type ObservedMessageActivity } from './baileys-message-observer.js';
+import { BaileysPresenceObserver } from './baileys-presence-observer.js';
+import { BaileysProfileObserver } from './baileys-profile-observer.js';
+import { BaileysCallObserver, type ObservedBaileysCall } from './baileys-call-observer.js';
+import { BaileysRawNodeHub } from './baileys-raw-node-hub.js';
+import { WhatsAppIdentityResolver } from './whatsapp-identity.js';
+import { RedisObservationCoordinator } from './observation-dedupe.js';
+import { PresenceSubscriptionCoordinator, type PresenceSubscriptionReason } from './presence-subscription.js';
+import {
+    closesObservedPresence,
+    formatObservedPresenceLabel,
+    isActiveObservedPresence,
+    normalizeObservedPresence,
+    observedPresenceTtlMs,
+} from './presence-semantics.js';
+import {
+    OrderedDurablePublicationQueue,
+    type DurablePersistenceResult,
+    type DurablePublicationResult,
+} from './durable-publication.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getCommercialObservedActivityEvents, countCommercialObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, openPresenceCoverageWindow, confirmPresenceCoverage, closePresenceCoverageWindow, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
+import type { PresenceCoverageCloseReason } from './presence-coverage.js';
+import { PresenceCoverageLifecycle } from './presence-coverage-lifecycle.js';
 import { listInterfaces, startCapture, stopCapture, getCaptureStatus, getRecentPackets, updateFilter, exportJSON, exportCSV } from './packet-capture.js';
 import type { CaptureFilter, PacketMeta } from './packet-capture.js';
 import { initAnalytics, getFullIntelligence, getDailyRoutine, getAvailabilityProfile, getSessionStats, getWeeklyHeatmap, getHabitProfile, getCorrelation } from './analytics.js';
@@ -148,9 +170,32 @@ const AUTH_LOGIN_RATE_WINDOW_MS = parsePositiveInteger(process.env.AUTH_LOGIN_RA
 const AUTH_LOGIN_RATE_MAX_PER_IP = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_IP, 50);
 const AUTH_LOGIN_RATE_MAX_PER_USERNAME = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_USERNAME, 50);
 const AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP = parsePositiveInteger(process.env.AUTH_LOGIN_RATE_MAX_PER_USERNAME_IP, 10);
+const OBSERVATION_DEDUPE_TTL_MS = Math.min(
+    24 * 60 * 60_000,
+    parsePositiveInteger(process.env.OBSERVATION_DEDUPE_TTL_MS, 10 * 60_000, 10_000),
+);
+const PRESENCE_SUBSCRIPTION_STATE_TTL_MS = Math.min(
+    24 * 60 * 60_000,
+    parsePositiveInteger(process.env.PRESENCE_SUBSCRIPTION_STATE_TTL_MS, 30 * 60_000, 60_000),
+);
+const PRESENCE_COVERAGE_HEARTBEAT_MS = 30_000;
+const PRESENCE_DIAGNOSTICS_ENABLED = process.env.PRESENCE_DIAGNOSTICS_ENABLED === 'true';
 const SECURE_AUTH_COOKIES = NODE_ENV === 'production';
 const RATE_LIMIT_IDENTITY_SECRET = AUTH_IDENTITY_SECRET;
 const redisService = new RedisService(REDIS_CONFIG);
+const observationCoordinator = new RedisObservationCoordinator(
+    redisService,
+    REDIS_CONFIG.keyPrefix,
+    AUTH_IDENTITY_SECRET,
+    OBSERVATION_DEDUPE_TTL_MS,
+);
+const presenceSubscriptionCoordinator = new PresenceSubscriptionCoordinator(
+    redisService,
+    REDIS_CONFIG.keyPrefix,
+    AUTH_IDENTITY_SECRET,
+    PRESENCE_SUBSCRIPTION_STATE_TTL_MS,
+);
+const durablePublicationQueue = new OrderedDurablePublicationQueue();
 const publicCheckInRateLimitStore = REDIS_CONFIG.configured
     ? new RedisFixedWindowRateLimitStore(redisService, REDIS_CONFIG.keyPrefix)
     : new MemoryFixedWindowRateLimitStore();
@@ -241,6 +286,10 @@ function logStartupConfiguration() {
                 ? 'Call capture service: available'
                 : 'Call capture service: unavailable');
     }
+    bootLog(PRESENCE_DIAGNOSTICS_ENABLED ? 'warn' : 'ok',
+        PRESENCE_DIAGNOSTICS_ENABLED
+            ? 'Presence diagnostics: enabled (sanitized counters only)'
+            : 'Presence diagnostics: disabled');
 }
 
 async function initializeRedis(): Promise<boolean> {
@@ -808,6 +857,8 @@ let isWhatsAppConnecting = false;
 let isRotatingWhatsAppAuth = false;
 const WHATSAPP_AUTH_DIR = 'auth_info_baileys';
 let autoRestoreTimer: NodeJS.Timeout | null = null;
+let presenceCoverageHeartbeatTimer: NodeJS.Timeout | null = null;
+let presenceCoverageHeartbeatPromise: Promise<void> | null = null;
 
 interface TrackerEntry {
     tracker: WhatsAppTracker;
@@ -815,15 +866,23 @@ interface TrackerEntry {
 }
 
 const trackers: Map<string, TrackerEntry> = new Map(); // JID -> Tracker entry
+const presenceCoverageLifecycle = new PresenceCoverageLifecycle({
+    open: openPresenceCoverageWindow,
+    confirm: confirmPresenceCoverage,
+    close: closePresenceCoverageWindow,
+});
+
+const whatsappIdentityResolver = new WhatsAppIdentityResolver({
+    resolveStoredLid: resolveStoredLidMapping,
+});
 
 function requireActiveObservationContext(rawJid: string, res: express.Response): { jid: string; entry: TrackerEntry } | null {
-    const jidResult = validateJid(rawJid);
-    if (!jidResult.ok) {
-        validationError(res, jidResult.errors || ['Invalid JID']);
+    const jid = normalizeLiveJid(rawJid);
+    if (!jid) {
+        validationError(res, ['jid must resolve to a valid WhatsApp account']);
         return null;
     }
 
-    const jid = jidResult.value!;
     const entry = trackers.get(jid);
     if (!entry) {
         res.status(409).json({
@@ -838,9 +897,6 @@ function requireActiveObservationContext(rawJid: string, res: express.Response):
 
 type LiveSignalSource = 'presence' | 'call' | 'message' | 'receipt' | 'rtt_probe' | 'system';
 type LiveConfidence = 'none' | 'low' | 'medium' | 'high';
-const EPHEMERAL_PRESENCE_TTL_MS = 12_000;
-const AVAILABLE_PRESENCE_TTL_MS = 45_000;
-const UNAVAILABLE_PRESENCE_TTL_MS = 90_000;
 const ACTIVE_CALL_TTL_MS = 2 * 60_000;
 const ENDED_CALL_TTL_MS = 8_000;
 
@@ -867,8 +923,6 @@ interface ContactLiveState {
 
 const liveSignals: Map<string, Partial<Record<LiveSignalSource, LiveSignal>>> = new Map();
 const liveSignalHistory: Map<string, LiveSignal[]> = new Map();
-const persistedActivityEventKeys: Map<string, number> = new Map();
-const messageReceiptRegistry = new MessageReceiptRegistry();
 
 interface CaptureAuditContext {
     caseId: string;
@@ -883,7 +937,8 @@ const liveSignalExpiryTimers = new Map<string, NodeJS.Timeout>();
 function clearContactObservationState(jid: string): void {
     liveSignals.delete(jid);
     liveSignalHistory.delete(jid);
-    messageReceiptRegistry.clearContact(jid);
+    baileysMessageObserver.clearContact(jid);
+    baileysPresenceObserver.deactivate(jid);
 
     const timerPrefix = `${jid}:`;
     for (const [key, timer] of liveSignalExpiryTimers) {
@@ -1047,17 +1102,15 @@ async function auditEvent(
 }
 
 function normalizeLiveJid(value: unknown): string | null {
-    const text = cleanText(value, 140);
-    if (!text) return null;
-    const candidate = text.includes('@') ? text : `${text}@s.whatsapp.net`;
-    const normalized = candidate.endsWith('@lid') ? resolveLidToPhoneJid(candidate) : candidate;
-    if (!normalized) return null;
-    const result = validateJid(normalized);
-    return result.ok ? result.value! : null;
+    return whatsappIdentityResolver.canonicalize(value);
 }
 
-function resolveLidToPhoneJid(candidate: string): string | null {
-    const lid = cleanText(candidate.split('@')[0], 80).replace(/\D/g, '');
+function resolveTrackedLiveJid(...values: unknown[]): string | null {
+    return whatsappIdentityResolver.resolveActive(values, jid => trackers.has(jid));
+}
+
+function resolveStoredLidMapping(canonicalLid: string): string | null {
+    const lid = canonicalLid.split('@')[0]?.replace(/\D/g, '') || '';
     if (!lid) return null;
     const reverseMapPath = path.join(WHATSAPP_AUTH_DIR, `lid-mapping-${lid}_reverse.json`);
     if (!existsSync(reverseMapPath)) return null;
@@ -1068,16 +1121,6 @@ function resolveLidToPhoneJid(candidate: string): string | null {
         return `${digits}@s.whatsapp.net`;
     } catch {
         return null;
-    }
-}
-
-function formatPresenceLabel(value: string): string {
-    switch (value) {
-        case 'composing': return 'Escribiendo';
-        case 'recording': return 'Grabando audio';
-        case 'available': return 'Online';
-        case 'unavailable': return 'No disponible';
-        default: return value || 'Sin presencia';
     }
 }
 
@@ -1101,29 +1144,9 @@ function isActiveCallStatus(value: string): boolean {
     return ['offer', 'ringing', 'accept', 'busy'].includes(value);
 }
 
-function formatMessageLabel(direction: string, messageType: string): string {
-    const typeLabel = (() => {
-        switch (messageType) {
-            case 'image': return 'imagen';
-            case 'video': return 'video';
-            case 'audio': return 'audio';
-            case 'document': return 'documento';
-            case 'sticker': return 'sticker';
-            case 'location': return 'ubicación';
-            case 'contact': return 'contacto';
-            case 'text': return '';
-            default: return '';
-        }
-    })();
-    const suffix = typeLabel ? ` · ${typeLabel}` : '';
-    return direction === 'outgoing'
-        ? `Mensaje enviado${suffix}`
-        : `Mensaje recibido${suffix}`;
-}
-
-function publishMessageReceipt(transition: MessageReceiptTransition | null): void {
+async function publishMessageReceipt(transition: MessageReceiptTransition | null): Promise<void> {
     if (!transition || !trackers.has(transition.jid)) return;
-    updateLiveSignal(transition.jid, {
+    await updateLiveSignal(transition.jid, {
         source: 'receipt',
         value: transition.state,
         label: transition.label,
@@ -1135,37 +1158,272 @@ function publishMessageReceipt(transition: MessageReceiptTransition | null): voi
             latencyMs: transition.latencyMs,
             timingBasis: transition.latencyMs === null ? 'status_only' : 'local_observation',
         },
-    });
-    io.emit('message-receipt', {
-        jid: transition.jid,
-        state: transition.state,
-        label: transition.label,
-        status: transition.status,
-        timestamp: new Date(transition.receiptAt).toISOString(),
-        latencyMs: transition.latencyMs,
+    }, () => {
+        io.emit('message-receipt', {
+            jid: transition.jid,
+            state: transition.state,
+            label: transition.label,
+            status: transition.status,
+            timestamp: new Date(transition.receiptAt).toISOString(),
+            latencyMs: transition.latencyMs,
+        });
     });
 }
 
-function getMessageType(message: any): string {
-    const payload = message?.message;
-    if (!payload) return 'unknown';
-    if (payload.conversation || payload.extendedTextMessage) return 'text';
-    if (payload.imageMessage) return 'image';
-    if (payload.videoMessage) return 'video';
-    if (payload.audioMessage) return 'audio';
-    if (payload.documentMessage) return 'document';
-    if (payload.stickerMessage) return 'sticker';
-    if (payload.locationMessage || payload.liveLocationMessage) return 'location';
-    if (payload.contactMessage || payload.contactsArrayMessage) return 'contact';
-    if (payload.reactionMessage) return 'reaction';
-    if (payload.call) return 'call';
-    return Object.keys(payload)[0] || 'unknown';
+async function publishObservedMessage(activity: ObservedMessageActivity): Promise<boolean> {
+    const payload = {
+        jid: activity.jid,
+        messageIdHash: activity.messageIdHash,
+        direction: activity.direction,
+        messageType: activity.messageType,
+        syntheticProbe: activity.syntheticProbe,
+        upsertType: activity.upsertType,
+        timestamp: activity.timestamp,
+    };
+    const publication = await updateLiveSignal(activity.jid, {
+        source: 'message',
+        value: activity.direction,
+        label: activity.label,
+        confidence: 'high',
+        timestamp: activity.timestampMs,
+        details: payload,
+    }, () => { io.emit('message-activity', payload); });
+    return publication.published;
 }
 
-function publishCallLiveState(call: any, source: 'baileys' | 'raw-node' = 'baileys') {
-    const resolvedCallJid = normalizeLiveJid(call.from) || normalizeLiveJid(call.chatId) || normalizeLiveJid(call.callerPn);
+const baileysMessageObserver = new BaileysMessageObserver({
+    resolveTrackedJid: value => resolveTrackedLiveJid(value),
+    onMessage: publishObservedMessage,
+    onReceipt: publishMessageReceipt,
+});
+
+const baileysPresenceObserver = new BaileysPresenceObserver({
+    resolveTrackedJid: value => resolveTrackedLiveJid(value),
+    onPresence: async transition => {
+        console.log(`[PRESENCE] Tracked contact state: ${transition.presence}`);
+        const publication = await updateLiveSignal(transition.jid, {
+            source: 'presence',
+            value: transition.presence,
+            label: formatObservedPresenceLabel(transition.presence),
+            confidence: ['composing', 'recording', 'available'].includes(transition.presence)
+                ? 'high'
+                : 'medium',
+            timestamp: transition.timestamp,
+            ...(transition.lastSeen !== undefined
+                ? { details: { lastSeenUnix: transition.lastSeen } }
+                : {}),
+        }, () => {
+            io.emit('presence-change', closesObservedPresence(transition.presence)
+                ? { ...transition, presence: 'expired', observedPresence: transition.presence }
+                : transition);
+        });
+        return publication.persistence !== 'failed';
+    },
+    onAliasLearned: alias => {
+        trackers.get(alias.targetJid)?.tracker.addTrackedJid(alias.jid);
+    },
+    onNewDevice: destination => {
+        console.log(`[TRACKING] Additional technical destination observed (total: ${destination.totalDevices})`);
+        io.emit('device-alert', destination);
+    },
+});
+
+const baileysProfileObserver = new BaileysProfileObserver({
+    resolveTrackedJid: value => resolveTrackedLiveJid(value),
+    loadProfile: async jid => {
+        const profile = await getContactProfile(jid);
+        return profile
+            ? {
+                pushName: profile.pushName,
+                about: profile.about,
+                profilePic: profile.profilePic,
+            }
+            : null;
+    },
+    persistProfile: updateContactProfile,
+    fetchProfilePicture: async jid => {
+        const activeSocket = sock;
+        if (!activeSocket) return null;
+        return await activeSocket.profilePictureUrl(jid, 'image') || null;
+    },
+    onApplied: change => {
+        if (change.changes.profilePic !== undefined) {
+            io.emit('profile-pic', { jid: change.jid, url: change.changes.profilePic });
+        }
+        io.emit('contact-profile-update', { jid: change.jid, ...change.changes });
+        console.log(`[CONTACTS] Tracked profile changed (${Object.keys(change.changes).length} field(s))`);
+    },
+    onUnavailable: context => {
+        if (context.reason === 'picture_unavailable') {
+            console.log('[CONTACTS] Profile picture refresh unavailable; stored value preserved');
+        } else {
+            console.warn('[CONTACTS] Profile synchronization skipped because the tracked profile is unavailable');
+        }
+    },
+});
+
+const baileysCallObserver = new BaileysCallObserver({
+    resolveTrackedJid: value => resolveTrackedLiveJid(value),
+    onCall: handleObservedBaileysCall,
+});
+
+async function activatePresenceObservation(
+    jid: string,
+    socket: { presenceSubscribe: (targetJid: string) => Promise<void> },
+    reason: PresenceSubscriptionReason,
+): Promise<boolean> {
+    baileysPresenceObserver.activate(jid);
+    const trackingSession = trackers.get(jid)?.trackingSession;
+    if (!trackingSession) {
+        console.warn('[PRESENCE] Subscription skipped because no active tracking session exists');
+        return false;
+    }
+
+    const result = await presenceSubscriptionCoordinator.subscribe({
+        jid,
+        trackingSessionId: trackingSession.trackingSessionId,
+    }, socket, reason);
+    const subscriptionUsable = result.subscribed
+        && sock === socket
+        && isWhatsAppConnected
+        && trackers.get(jid)?.trackingSession.trackingSessionId === trackingSession.trackingSessionId;
+    const coverageWindowOpened = subscriptionUsable
+        ? await presenceCoverageLifecycle.open({
+            caseId: trackingSession.caseId,
+            trackingSessionId: trackingSession.trackingSessionId,
+            jid,
+            openReason: reason,
+        })
+        : false;
+    const action = !subscriptionUsable
+        ? 'presence_subscription_failed'
+        : result.redisCoordinated && coverageWindowOpened
+            ? 'presence_subscription_active'
+            : 'presence_subscription_degraded';
+    await auditEvent({
+        caseId: trackingSession.caseId,
+        operatorName: trackingSession.operatorName,
+        authorizationNote: trackingSession.authorizationNote,
+    }, action, 'contact', {
+        trackingSessionId: trackingSession.trackingSessionId,
+        reason: result.reason,
+        attempts: result.attempts,
+        redisCoordinated: result.redisCoordinated,
+        socketCurrent: sock === socket,
+        coverageWindowOpened,
+    }, jid);
+
+    if (!subscriptionUsable) {
+        console.warn('[PRESENCE] Subscription unavailable after bounded retries; passive presence is degraded');
+    } else if (!result.redisCoordinated || !coverageWindowOpened) {
+        console.warn('[PRESENCE] Subscription active with operational coverage degraded');
+    } else {
+        console.log('[PRESENCE] Subscription active for authorized contact');
+    }
+    return subscriptionUsable;
+}
+
+async function closeTrackedPresenceCoverage(
+    trackingSessionId: string,
+    reason: PresenceCoverageCloseReason,
+): Promise<boolean> {
+    return presenceCoverageLifecycle.close(trackingSessionId, reason);
+}
+
+function startPresenceCoverageHeartbeat(): void {
+    if (presenceCoverageHeartbeatTimer) return;
+    presenceCoverageHeartbeatTimer = setInterval(() => {
+        if (presenceCoverageHeartbeatPromise || !isWhatsAppConnected) return;
+        presenceCoverageHeartbeatPromise = (async () => {
+            const confirmedAt = new Date();
+            for (const { trackingSession } of trackers.values()) {
+                if (!presenceCoverageLifecycle.isActive(trackingSession.trackingSessionId)) continue;
+                const confirmed = await presenceCoverageLifecycle.confirm(
+                    trackingSession.trackingSessionId,
+                    confirmedAt,
+                );
+                if (!confirmed) {
+                    console.warn('[PRESENCE] Coverage heartbeat could not be persisted');
+                }
+            }
+        })().catch(() => {
+            console.error('[PRESENCE] Coverage heartbeat failed');
+        }).finally(() => {
+            presenceCoverageHeartbeatPromise = null;
+        });
+    }, PRESENCE_COVERAGE_HEARTBEAT_MS);
+    presenceCoverageHeartbeatTimer.unref();
+}
+
+function routeBaileysObservation(event: BaileysObservationHubEvent): void | Promise<void> {
+    switch (event.name) {
+        case 'lid-mapping.update':
+            whatsappIdentityResolver.learn(event.payload);
+            return;
+        case 'contacts.update':
+            return baileysProfileObserver.handleUpdates(event.payload);
+        case 'contacts.upsert':
+            return baileysProfileObserver.handleUpserts(event.payload);
+        case 'messages.update':
+            const receiptRouting = baileysMessageObserver.handleUpdates(event.payload);
+            for (const entry of trackers.values()) {
+                entry.tracker.handleMessageUpdates(event.payload);
+            }
+            return receiptRouting;
+        case 'messages.upsert':
+            baileysMessageObserver.handleUpsert(event.payload);
+            return;
+        case 'presence.update':
+            return baileysPresenceObserver.handleUpdate(event.payload).then(result => {
+                if (!PRESENCE_DIAGNOSTICS_ENABLED) return;
+                console.log(
+                    '[PRESENCE-DIAG]'
+                    + ` raw=${result.rawEntries}`
+                    + ` contexts=${result.activeContexts}`
+                    + ` resolved=${result.resolvedAliases}`
+                    + ` attributed=${result.attributedContexts}`
+                    + ` scoped=${result.scopedEntries}`
+                    + ` unsupported=${result.unsupportedTransitions}`
+                    + ` duplicate=${result.duplicateTransitions}`
+                    + ` attempted=${result.attemptedTransitions}`
+                    + ` accepted=${result.acceptedTransitions}`
+                    + ` rejected=${result.rejectedTransitions}`,
+                );
+            });
+        case 'call':
+            return baileysCallObserver.handleCalls(event.payload);
+        default:
+            return;
+    }
+}
+
+const baileysObservationHub = new BaileysObservationHub(
+    routeBaileysObservation,
+    (_error, context) => {
+        console.error(`[OBSERVATION] ${context.operation} failed for ${context.event}`);
+    },
+);
+
+const baileysRawNodeHub = new BaileysRawNodeHub({
+    onCallNode: handleRawCallNode,
+    onReceiptNode: handleRawReceiptNode,
+    onError: (_error, context) => {
+        console.error(`[OBSERVATION] ${context.operation} failed for ${context.event}`);
+    },
+});
+
+async function publishCallLiveState(
+    call: any,
+    source: 'baileys' | 'raw-node' = 'baileys',
+    attributedJid?: string | null,
+): Promise<string | null> {
+    const resolvedCallJid = attributedJid
+        || normalizeLiveJid(call.from)
+        || normalizeLiveJid(call.chatId)
+        || normalizeLiveJid(call.callerPn);
     console.log(`[CALL] Event ${call.status} | mapped: ${Boolean(resolvedCallJid)} | video: ${Boolean(call.isVideo)} | source: ${source}`);
-    if (resolvedCallJid) updateLiveSignal(resolvedCallJid, {
+    if (!resolvedCallJid) return null;
+    await updateLiveSignal(resolvedCallJid, {
         source: 'call',
         value: call.status,
         label: formatCallLabel(call.status),
@@ -1178,116 +1436,255 @@ function publishCallLiveState(call: any, source: 'baileys' | 'raw-node' = 'baile
             offline: call.offline,
             latencyMs: call.latencyMs,
         },
-    });
-
-    io.emit('call-event', {
-        callId: call.id,
-        from: resolvedCallJid || call.from,
-        rawFrom: call.from,
-        chatId: call.chatId || null,
-        callerPn: call.callerPn || null,
-        status: call.status,
-        label: formatCallLabel(call.status),
-        isVideo: call.isVideo || false,
-        date: call.date,
-        offline: call.offline,
-        latencyMs: call.latencyMs,
-        detector: source,
+    }, () => {
+        io.emit('call-event', {
+            callId: call.id,
+            from: resolvedCallJid,
+            rawFrom: call.from,
+            chatId: call.chatId || null,
+            callerPn: call.callerPn || null,
+            status: call.status,
+            label: formatCallLabel(call.status),
+            isVideo: call.isVideo || false,
+            date: call.date,
+            offline: call.offline,
+            latencyMs: call.latencyMs,
+            detector: source,
+        });
     });
 
     return resolvedCallJid;
 }
 
-function installRawCallNodeMonitor(socket: any) {
-    socket?.ws?.on?.('CB:call', (node: BinaryNode) => {
+async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<void> {
+    const { call, jid } = event;
+    await publishCallLiveState(call, 'baileys', jid);
+
+    // Auto-start only when a default case context is configured and the call
+    // belongs to an explicitly active tracking session.
+    if (callCaptureService.isEnabled() && (call.status === 'offer' || call.status === 'accept')) {
+        const defaultContext = getDefaultCaptureAuditContext();
+        if (!defaultContext) {
+            console.log('[CALL] Auto-capture skipped: DEFAULT_CASE_ID, DEFAULT_OPERATOR_NAME, and DEFAULT_AUTHORIZATION_NOTE are required');
+            return;
+        }
+        const activeTrackingSession = trackers.get(jid)?.trackingSession;
+        if (!activeTrackingSession || activeTrackingSession.caseId !== defaultContext.caseId) {
+            console.log('[CALL] Auto-capture skipped: call is outside the configured authorized case');
+            return;
+        }
+        const caseCheck = await checkCaseCanCapture(defaultContext);
+        if (!caseCheck.ok) {
+            console.log('[CALL] Auto-capture skipped: configured case is not available for capture');
+            return;
+        }
         try {
-            const [infoChild] = getAllBinaryNodeChildren(node);
-            if (!infoChild) return;
-            const reason = infoChild.attrs?.reason || infoChild.attrs?.status || '';
-            const rawStatus = infoChild.tag === 'busy' || reason === 'busy' ? 'busy' : '';
-            if (!rawStatus) return;
-
-            publishCallLiveState({
-                chatId: node.attrs?.from || null,
-                from: infoChild.attrs?.from || infoChild.attrs?.['call-creator'] || node.attrs?.from,
-                callerPn: infoChild.attrs?.caller_pn,
-                id: infoChild.attrs?.['call-id'] || node.attrs?.id || `raw-${Date.now()}`,
-                date: node.attrs?.t ? new Date(Number(node.attrs.t) * 1000) : new Date(),
-                offline: node.attrs?.offline === 'true' || node.attrs?.offline === '1',
-                status: rawStatus,
-                isVideo: getAllBinaryNodeChildren(infoChild).some(child => child.tag === 'video'),
-            }, 'raw-node');
-        } catch (err: any) {
-            console.log(`[CALL] Raw node monitor skipped event: ${err?.message || err}`);
+            if (!await callCaptureService.refreshAvailability()) {
+                console.warn('[CALL] Auto-capture skipped: capture service unavailable');
+                return;
+            }
+            const iface = await callCaptureService.autoDetectInterface();
+            if (!iface) {
+                console.warn('[CALL] No network interface found for auto-capture');
+                return;
+            }
+            const started = await callCaptureService.start(
+                iface,
+                jid,
+                call.id,
+                call.isVideo || false,
+                packet => { io.emit('call-packet', packet); },
+            );
+            if (started) {
+                activeCallAuditContext = { ...defaultContext, targetJid: jid, callId: call.id };
+                await auditEvent(defaultContext, 'call_capture_start', 'call', {
+                    callId: call.id,
+                    interfaceAddr: iface,
+                    isVideo: call.isVideo || false,
+                    trigger: 'auto',
+                    captureMode: CALL_CAPTURE_MODE,
+                }, jid);
+                console.log('[CALL] Auto-capture started');
+                io.emit('call-capture-started', { callId: call.id, targetJid: jid });
+            }
+        } catch {
+            console.warn('[CALL] Auto-capture skipped: capture service request failed');
         }
-    });
+    }
+
+    if (!callCaptureService.isEnabled()
+        || !['terminate', 'reject', 'timeout'].includes(call.status)
+        || !activeCallAuditContext
+        || activeCallAuditContext.callId !== call.id
+        || activeCallAuditContext.targetJid !== jid) {
+        return;
+    }
+
+    const stoppedCallAuditContext = activeCallAuditContext;
+    let rawResult: Awaited<ReturnType<typeof callCaptureService.stop>>;
+    try {
+        rawResult = await callCaptureService.stop();
+    } catch {
+        console.warn('[CALL] Auto-stop failed: capture service unavailable');
+        return;
+    }
+    activeCallAuditContext = null;
+    const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
+    if (!result) return;
+
+    console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(candidate => candidate.isP2P).length} direct-path candidates`);
+    io.emit('call-analysis', result);
+    await saveCallAnalysis(result, stoppedCallAuditContext.caseId);
+    await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
+        callId: result.callId,
+        startedCallId: stoppedCallAuditContext.callId,
+        verdict: result.verdict,
+        totalPackets: result.totalPackets,
+        durationSec: result.durationSec,
+        candidateCount: result.candidateIps.filter(candidate => candidate.isP2P).length,
+        metaIpCount: result.metaIps.length,
+        trigger: 'auto',
+    }, result.targetJid);
 }
 
-function shouldPersistActivitySignal(jid: string, trackingSessionId: string, signal: LiveSignal): boolean {
-    if (signal.source === 'rtt_probe' || signal.source === 'system') return false;
-    const keyParts = [trackingSessionId, jid, signal.source, signal.value];
+function handleRawCallNode(value: unknown): void {
+    try {
+        const node = value as BinaryNode;
+        const [infoChild] = getAllBinaryNodeChildren(node);
+        if (!infoChild) return;
+        const reason = infoChild.attrs?.reason || infoChild.attrs?.status || '';
+        const rawStatus = infoChild.tag === 'busy' || reason === 'busy' ? 'busy' : '';
+        if (!rawStatus) return;
+
+        const rawCall = {
+            chatId: node.attrs?.from || null,
+            from: infoChild.attrs?.from || infoChild.attrs?.['call-creator'] || node.attrs?.from,
+            callerPn: infoChild.attrs?.caller_pn,
+            id: infoChild.attrs?.['call-id'] || node.attrs?.id || `raw-${Date.now()}`,
+            date: node.attrs?.t ? new Date(Number(node.attrs.t) * 1000) : new Date(),
+            offline: node.attrs?.offline === 'true' || node.attrs?.offline === '1',
+            status: rawStatus,
+            isVideo: getAllBinaryNodeChildren(infoChild).some(child => child.tag === 'video'),
+        };
+        const jid = resolveTrackedLiveJid(rawCall.from, rawCall.chatId, rawCall.callerPn);
+        if (!jid) return;
+        void publishCallLiveState(rawCall, 'raw-node', jid).catch(() => {
+            console.error('[CALL] Raw call observation publication failed');
+        });
+    } catch (err: any) {
+        console.log(`[CALL] Raw node monitor skipped event: ${err?.message || err}`);
+    }
+}
+
+function handleRawReceiptNode(node: unknown): void {
+    for (const entry of trackers.values()) {
+        entry.tracker.handleRawReceipt(node);
+    }
+}
+
+function buildActivityIdempotencyKey(
+    trackingSession: TrackingSessionDoc,
+    signal: LiveSignal,
+): string | null {
+    if (signal.source === 'rtt_probe' || signal.source === 'system') return null;
     const details = signal.details || {};
+    const correlation: string[] = [];
     if ((signal.source === 'message' || signal.source === 'receipt') && details.messageIdHash) {
-        keyParts.push(String(details.messageIdHash));
+        correlation.push(String(details.messageIdHash));
     }
-    if (signal.source === 'call' && details.callIdHash) keyParts.push(String(details.callIdHash));
-    const key = keyParts.join(':');
-    const now = Date.now();
-    const previous = persistedActivityEventKeys.get(key) || 0;
-    const minGap = signal.source === 'presence' ? 8_000 : signal.source === 'call' ? 2_000 : 0;
-    if (previous && now - previous < minGap) return false;
-    persistedActivityEventKeys.set(key, now);
-    if (persistedActivityEventKeys.size > 2000) {
-        const cutoff = now - 10 * 60_000;
-        for (const [eventKey, timestamp] of persistedActivityEventKeys) {
-            if (timestamp < cutoff) persistedActivityEventKeys.delete(eventKey);
-        }
+    if (signal.source === 'call' && details.callIdHash) {
+        correlation.push(String(details.callIdHash));
     }
-    return true;
+    if (correlation.length === 0) {
+        const timeBucketMs = signal.source === 'presence' ? 8_000 : 1_000;
+        correlation.push(String(Math.floor(signal.timestamp / timeBucketMs)));
+    }
+    return observationCoordinator.fingerprint([
+        trackingSession.caseId,
+        trackingSession.trackingSessionId,
+        trackingSession.jid,
+        signal.source,
+        signal.value,
+        ...correlation,
+    ]);
 }
 
-function persistObservedActivitySignal(jid: string, signal: LiveSignal) {
-    const trackingSession = trackers.get(jid)?.trackingSession;
-    if (!trackingSession) return;
-    if (!shouldPersistActivitySignal(jid, trackingSession.trackingSessionId, signal)) return;
-    saveActivityEvent({
-        caseId: trackingSession.caseId,
-        trackingSessionId: trackingSession.trackingSessionId,
-        jid,
-        source: signal.source,
-        type: signal.value,
-        label: signal.label,
-        confidence: signal.confidence,
-        ...(signal.details !== undefined ? { details: signal.details } : {}),
-        timestamp: signal.timestamp,
-    }).catch(err => console.error('[ACTIVITY] Failed to persist observed activity:', err));
+async function persistObservedActivitySignal(
+    jid: string,
+    signal: LiveSignal,
+    trackingSession: TrackingSessionDoc | null,
+): Promise<DurablePersistenceResult> {
+    if (signal.source === 'rtt_probe' || signal.source === 'system') return 'not_required';
+    if (!trackingSession) return 'failed';
+    const idempotencyKey = buildActivityIdempotencyKey(trackingSession, signal);
+    if (!idempotencyKey) return 'failed';
+
+    const result = await observationCoordinator.persistOnce(idempotencyKey, () => (
+        saveActivityEvent({
+            caseId: trackingSession.caseId,
+            trackingSessionId: trackingSession.trackingSessionId,
+            jid,
+            source: signal.source,
+            type: signal.value,
+            label: signal.label,
+            confidence: signal.confidence,
+            idempotencyKey,
+            ...(signal.details !== undefined ? { details: signal.details } : {}),
+            timestamp: signal.timestamp,
+        })
+    ));
+    if (result.persistence === 'failed') {
+        console.error('[ACTIVITY] Failed to persist observed activity');
+    } else if (!result.redisCoordinated) {
+        console.warn('[ACTIVITY] Observation persisted with Redis coordination degraded');
+    }
+    return result.persistence;
 }
 
-function updateLiveSignal(jidInput: unknown, signal: Omit<LiveSignal, 'timestamp'> & { timestamp?: number }) {
+async function updateLiveSignal(
+    jidInput: unknown,
+    signal: Omit<LiveSignal, 'timestamp'> & { timestamp?: number },
+    onPublished?: (state: ContactLiveState) => void | Promise<void>,
+): Promise<DurablePublicationResult<ContactLiveState | null>> {
     const jid = normalizeLiveJid(jidInput);
-    if (!jid) return null;
+    if (!jid) return { persistence: 'failed', published: false, value: null };
 
     const timestamp = signal.timestamp || Date.now();
     const complete: LiveSignal = { ...signal, timestamp };
-    const signals = liveSignals.get(jid) || {};
-    signals[signal.source] = complete;
-    liveSignals.set(jid, signals);
+    const trackingSession = trackers.get(jid)?.trackingSession ?? null;
+    const publication = await durablePublicationQueue.enqueue(jid, () => (
+        persistObservedActivitySignal(jid, complete, trackingSession)
+    ), async () => {
+        if (complete.source !== 'rtt_probe' && complete.source !== 'system') {
+            const activeSessionId = trackers.get(jid)?.trackingSession.trackingSessionId;
+            if (!trackingSession || activeSessionId !== trackingSession.trackingSessionId) return null;
+        }
 
-    const history = [complete, ...(liveSignalHistory.get(jid) || [])].slice(0, 200);
-    liveSignalHistory.set(jid, history);
-    persistObservedActivitySignal(jid, complete);
+        const signals = liveSignals.get(jid) || {};
+        signals[complete.source] = complete;
+        liveSignals.set(jid, signals);
 
-    const state = buildContactLiveState(jid);
-    io.emit('contact-live-state', state);
-    scheduleLiveSignalExpiry(jid, complete);
-    return state;
+        const history = [complete, ...(liveSignalHistory.get(jid) || [])].slice(0, 200);
+        liveSignalHistory.set(jid, history);
+
+        const state = buildContactLiveState(jid);
+        io.emit('contact-live-state', state);
+        scheduleLiveSignalExpiry(jid, complete);
+        await onPublished?.(state);
+        return state;
+    });
+    if (publication.error) {
+        console.error(publication.persistence === 'failed'
+            ? '[ACTIVITY] Observation persistence pipeline failed'
+            : '[ACTIVITY] Durable observation could not be published');
+    }
+    return publication;
 }
 
 function liveSignalMaxAge(signal: LiveSignal): number {
     if (signal.source === 'presence') {
-        if (signal.value === 'composing' || signal.value === 'recording') return EPHEMERAL_PRESENCE_TTL_MS;
-        if (signal.value === 'available') return AVAILABLE_PRESENCE_TTL_MS;
-        return UNAVAILABLE_PRESENCE_TTL_MS;
+        const presence = normalizeObservedPresence(signal.value);
+        return presence ? observedPresenceTtlMs(presence) : 12_000;
     }
     if (signal.source === 'call') {
         return isActiveCallStatus(signal.value) ? ACTIVE_CALL_TTL_MS : ENDED_CALL_TTL_MS;
@@ -1318,6 +1715,8 @@ function scheduleLiveSignalExpiry(jid: string, signal: LiveSignal) {
         liveSignalExpiryTimers.delete(key);
         io.emit('contact-live-state', buildContactLiveState(jid));
         if (signal.source === 'presence') {
+            const expiredPresence = normalizeObservedPresence(signal.value);
+            if (expiredPresence) baileysPresenceObserver.expire(jid, expiredPresence);
             io.emit('presence-change', { jid, presence: 'expired', timestamp: Date.now() });
         }
     }, maxAge + 250);
@@ -1346,18 +1745,15 @@ function buildContactLiveState(jid: string): ContactLiveState {
     if (call && isActiveCallStatus(call.value)) {
         selected = call;
         explanation = 'Evento de llamada recibido desde Baileys; esta senal tiene prioridad alta.';
-    } else if (presence && ['composing', 'recording', 'available'].includes(presence.value)) {
+    } else if (presence && isActiveObservedPresence(presence.value)) {
         selected = presence;
-        explanation = 'Presence realtime de WhatsApp indica actividad directa del contacto.';
+        explanation = 'WhatsApp entrego una senal de presencia visible en esta conversacion.';
     } else if (receipt) {
         selected = receipt;
         explanation = 'Confirmación reciente de un mensaje real observada por WhatsApp.';
     } else if (message) {
         selected = message;
         explanation = 'Mensaje reciente observado por Baileys; confirma actividad de mensajeria en la conversacion.';
-    } else if (presence && presence.value === 'unavailable') {
-        selected = presence;
-        explanation = 'Presence reporto unavailable; puede estar limitado por privacidad o caducidad de presencia.';
     } else if (rtt) {
         selected = rtt;
         explanation = isNoAckState(rtt.value)
@@ -1999,6 +2395,7 @@ async function rotateWhatsAppAuthState(reason: string): Promise<boolean> {
     try {
         console.log(`[WHATSAPP] Auth session invalid (${reason}). Quarantining active auth files inside the persistent volume.`);
         const result = await quarantineAuthStateContents(WHATSAPP_AUTH_DIR);
+        whatsappIdentityResolver.clear();
         console.log(`[WHATSAPP] Auth quarantine complete (${result.movedEntries} entries). A new QR will be generated.`);
         return true;
     } catch (err: any) {
@@ -2026,15 +2423,18 @@ async function connectToWhatsApp() {
         return;
     }
 
-    sock = makeWASocket({
+    const connectedSocket = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
         markOnlineOnConnect: true,
         printQRInTerminal: false,
     });
-    installRawCallNodeMonitor(sock);
+    sock = connectedSocket;
+    baileysObservationHub.attach(connectedSocket.ev);
+    baileysRawNodeHub.attach(connectedSocket.ws);
 
-    sock.ev.on('connection.update', async (update: any) => {
+    connectedSocket.ev.on('connection.update', async (update: any) => {
+        if (sock !== connectedSocket) return;
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
@@ -2044,9 +2444,11 @@ async function connectToWhatsApp() {
         }
 
         if (connection === 'close') {
+            baileysObservationHub.detach();
+            baileysRawNodeHub.detach();
             isWhatsAppConnected = false;
             currentWhatsAppQr = null; // Clear QR on close
-            stopAllTrackers('whatsapp connection closed');
+            await stopAllTrackers('whatsapp connection closed', 'connection_lost');
             const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log(`connection closed (status: ${statusCode}), reconnecting: ${shouldReconnect}`);
@@ -2073,222 +2475,13 @@ async function connectToWhatsApp() {
         }
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    connectedSocket.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest }: any) => {
+    connectedSocket.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest }: any) => {
+        if (sock !== connectedSocket) return;
         console.log(`[SESSION] History sync - Chats: ${chats.length}, Contacts: ${contacts.length}, Messages: ${messages.length}, Latest: ${isLatest}`);
     });
 
-    // ── Listen to contacts.update for real push names and status changes ──
-    sock.ev.on('contacts.update', async (updates: any[]) => {
-        for (const update of updates) {
-            const jid = update.id;
-            if (!jid) continue;
-
-            // Only process contacts we are tracking
-            if (!trackers.has(jid)) continue;
-
-            const changes: any = {};
-
-            // Push name (the name the contact set in their WhatsApp profile)
-            if (update.notify) {
-                changes.pushName = update.notify;
-                console.log('[CONTACTS] Tracked profile name updated');
-            }
-
-            // Status/about text
-            if (update.status !== undefined) {
-                changes.about = update.status || null;
-                console.log('[CONTACTS] Tracked profile status updated');
-            }
-
-            // Profile picture update
-            if (update.imgUrl !== undefined) {
-                // imgUrl can be 'changed' or 'removed' - fetch fresh pic
-                try {
-                    const freshPic = await sock.profilePictureUrl(jid, 'image');
-                    changes.profilePic = freshPic || null;
-                    io.emit('profile-pic', { jid, url: freshPic || null });
-                } catch (_e) {
-                    changes.profilePic = null;
-                }
-            }
-
-            if (Object.keys(changes).length > 0) {
-                await updateContactProfile(jid, changes);
-                // Emit the updated fields to all clients
-                io.emit('contact-profile-update', { jid, ...changes });
-            }
-        }
-    });
-
-    // ── Listen to contacts.upsert for initial contact data ──
-    sock.ev.on('contacts.upsert', async (newContacts: any[]) => {
-        for (const contact of newContacts) {
-            const jid = contact.id;
-            if (!jid || !trackers.has(jid)) continue;
-
-            const changes: any = {};
-            if (contact.notify) changes.pushName = contact.notify;
-            if (contact.status) changes.about = contact.status;
-
-            if (Object.keys(changes).length > 0) {
-                await updateContactProfile(jid, changes);
-                io.emit('contact-profile-update', { jid, ...changes });
-                console.log(`[CONTACTS] Tracked profile synchronized (${Object.keys(changes).length} field(s))`);
-            }
-        }
-    });
-
-    sock.ev.on('messages.update', (updates: any) => {
-        for (const update of updates) {
-            const remoteJid = normalizeLiveJid(update?.key?.remoteJid);
-            if (!remoteJid || !trackers.has(remoteJid)) continue;
-            if (!update?.key?.fromMe || isSyntheticProbeId(update?.key?.id)) continue;
-            const transition = messageReceiptRegistry.recordStatus(
-                update?.key?.id,
-                remoteJid,
-                update?.update?.status,
-                Date.now(),
-            );
-            publishMessageReceipt(transition);
-        }
-    });
-
-    sock.ev.on('messages.upsert', ({ messages, type }: any) => {
-        for (const message of messages || []) {
-            if (isSyntheticProbeMessage(message)) continue;
-            const remoteJid = normalizeLiveJid(message?.key?.remoteJid);
-            if (!remoteJid || !trackers.has(remoteJid)) continue;
-
-            const direction = message?.key?.fromMe ? 'outgoing' : 'incoming';
-            const messageType = getMessageType(message);
-            if (messageType === 'protocolMessage' || messageType === 'senderKeyDistributionMessage') {
-                continue;
-            }
-            const timestamp = Number(message?.messageTimestamp || 0);
-            const signalTimestamp = timestamp > 0 ? timestamp * 1000 : Date.now();
-            const messageId = typeof message?.key?.id === 'string' ? message.key.id : null;
-            const messageIdHash = messageId ? fingerprintMessageId(messageId) : null;
-            const payload = {
-                jid: remoteJid,
-                messageIdHash,
-                direction,
-                messageType,
-                syntheticProbe: false,
-                upsertType: type || null,
-                timestamp: new Date(signalTimestamp).toISOString(),
-            };
-
-            const pendingTransition = direction === 'outgoing' && messageId
-                ? messageReceiptRegistry.registerOutgoing(
-                    messageId,
-                    remoteJid,
-                    Date.now(),
-                )
-                : null;
-            updateLiveSignal(remoteJid, {
-                source: 'message',
-                value: direction,
-                label: formatMessageLabel(direction, messageType),
-                confidence: 'high',
-                timestamp: signalTimestamp,
-                details: payload,
-            });
-            publishMessageReceipt(pendingTransition);
-            io.emit('message-activity', payload);
-        }
-    });
-
-    // ── Listen to call events for Call IP Analyzer ──
-    sock.ev.on('call', async (calls: any[]) => {
-        for (const call of calls) {
-            publishCallLiveState(call, 'baileys');
-
-            // Auto-start only when a default case context is configured.
-            if (callCaptureService.isEnabled() && (call.status === 'offer' || call.status === 'accept')) {
-                const defaultContext = getDefaultCaptureAuditContext();
-                if (!defaultContext) {
-                    console.log('[CALL] Auto-capture skipped: DEFAULT_CASE_ID, DEFAULT_OPERATOR_NAME, and DEFAULT_AUTHORIZATION_NOTE are required');
-                    continue;
-                }
-                const caseCheck = await checkCaseCanCapture(defaultContext);
-                if (!caseCheck.ok) {
-                    console.log('[CALL] Auto-capture skipped: configured case is not available for capture');
-                    continue;
-                }
-                try {
-                    if (!await callCaptureService.refreshAvailability()) {
-                        console.warn('[CALL] Auto-capture skipped: capture service unavailable');
-                        continue;
-                    }
-                    const iface = await callCaptureService.autoDetectInterface();
-                    if (iface) {
-                        const started = await callCaptureService.start(
-                            iface,
-                            call.from,
-                            call.id,
-                            call.isVideo || false,
-                            (packet) => {
-                                io.emit('call-packet', packet);
-                            },
-                        );
-                        if (started) {
-                            activeCallAuditContext = { ...defaultContext, targetJid: call.from, callId: call.id };
-                            await auditEvent(defaultContext, 'call_capture_start', 'call', {
-                                callId: call.id,
-                                interfaceAddr: iface,
-                                isVideo: call.isVideo || false,
-                                trigger: 'auto',
-                                captureMode: CALL_CAPTURE_MODE,
-                            }, call.from);
-                            console.log('[CALL] Auto-capture started');
-                            io.emit('call-capture-started', { callId: call.id, targetJid: call.from });
-                        }
-                    } else {
-                        console.warn('[CALL] No network interface found for auto-capture');
-                    }
-                } catch {
-                    console.warn('[CALL] Auto-capture skipped: capture service request failed');
-                }
-            }
-
-            // Auto-stop capture when call terminates
-            if (callCaptureService.isEnabled() && (call.status === 'terminate' || call.status === 'reject' || call.status === 'timeout')) {
-                if (!activeCallAuditContext || activeCallAuditContext.callId !== call.id) {
-                    continue;
-                }
-                const stoppedCallAuditContext = activeCallAuditContext;
-                let rawResult: Awaited<ReturnType<typeof callCaptureService.stop>>;
-                try {
-                    rawResult = await callCaptureService.stop();
-                } catch {
-                    console.warn('[CALL] Auto-stop failed: capture service unavailable');
-                    continue;
-                }
-                activeCallAuditContext = null;
-                const result = rawResult ? await enrichCallAnalysis(rawResult) : null;
-                if (result) {
-                    console.log(`[CALL] Analysis complete: ${result.verdict} | ${result.candidateIps.filter(c => c.isP2P).length} direct-path candidates`);
-                    io.emit('call-analysis', result);
-                    // Persist to MongoDB
-                    if (stoppedCallAuditContext) {
-                        await saveCallAnalysis(result, stoppedCallAuditContext.caseId);
-                        await auditEvent(stoppedCallAuditContext, 'call_capture_stop', 'call', {
-                            callId: result.callId,
-                            startedCallId: stoppedCallAuditContext.callId,
-                            verdict: result.verdict,
-                            totalPackets: result.totalPackets,
-                            durationSec: result.durationSec,
-                            candidateCount: result.candidateIps.filter(c => c.isP2P).length,
-                            metaIpCount: result.metaIps.length,
-                            trigger: 'auto',
-                        }, result.targetJid);
-                    }
-                }
-            }
-        }
-    });
 }
 
 // Initialize persistence, authentication, analytics, and WhatsApp before listening.
@@ -2298,6 +2491,7 @@ async function initializeApplication(): Promise<void> {
 
     dbAvailableForStartupAudit = await connectDB();
     if (!dbAvailableForStartupAudit) throw new Error('MongoDB authentication dependency is unavailable');
+    startPresenceCoverageHeartbeat();
 
     if (callCaptureService.isEnabled()) {
         await callCaptureService.refreshAvailability();
@@ -2356,11 +2550,18 @@ async function createTrackerEntry(
     wireTrackerCallbacks(entry);
 
     try {
+        const activeSocket = sock;
+        await activatePresenceObservation(jid, activeSocket, 'tracking_start');
+        if (!isWhatsAppConnected || sock !== activeSocket || trackers.get(jid) !== entry) {
+            throw new Error('Tracker start was superseded by a WhatsApp connection change');
+        }
         await tracker.startTracking();
         return entry;
     } catch (err) {
         trackers.delete(jid);
         tracker.stopTracking();
+        clearContactObservationState(jid);
+        await closeTrackedPresenceCoverage(trackingSession.trackingSessionId, 'restore_failed');
         await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'tracker_start_failed');
         console.error('[TRACKERS] Failed to start scoped session:', err);
         return null;
@@ -2368,19 +2569,23 @@ async function createTrackerEntry(
 }
 
 /**
- * Wire up standard callbacks for a tracker instance.
- * Centralizes onUpdate, onPresenceChange, onNewDevice logic.
+ * Wire up technical RTT callbacks for a tracker instance. Passive messages and
+ * presence are owned by the process-wide observation hub.
  */
 function wireTrackerCallbacks(entry: TrackerEntry) {
     const { tracker, trackingSession } = entry;
     const { jid, caseId, trackingSessionId } = trackingSession;
     tracker.onUpdate = (updateData) => {
-        io.emit('tracker-update', { jid, ...updateData });
+        io.emit('tracker-update', {
+            jid,
+            ...updateData,
+            presence: baileysPresenceObserver.getLastPresence(jid),
+        });
         const devices = updateData.devices;
         const primary = selectPrimaryTrackerDevice(devices);
         const probeState = primary?.state;
         if (probeState) {
-            updateLiveSignal(jid, {
+            void updateLiveSignal(jid, {
                 source: 'rtt_probe',
                 value: String(probeState),
                 label: isNoAckState(probeState) ? 'Sin ACK' : String(probeState),
@@ -2392,6 +2597,8 @@ function wireTrackerCallbacks(entry: TrackerEntry) {
                     threshold: updateData.threshold,
                     deviceCount: updateData.deviceCount,
                 },
+            }).catch(() => {
+                console.error('[TRACKER] Technical live state publication failed');
             });
         }
 
@@ -2413,40 +2620,34 @@ function wireTrackerCallbacks(entry: TrackerEntry) {
         }
     };
 
-    tracker.onPresenceChange = (data) => {
-        console.log(`[PRESENCE] Tracked contact state: ${data.presence}`);
-        updateLiveSignal(jid, {
-            source: 'presence',
-            value: data.presence,
-            label: formatPresenceLabel(data.presence),
-            confidence: ['composing', 'recording', 'available'].includes(data.presence) ? 'high' : 'medium',
-            timestamp: data.timestamp,
-        });
-        io.emit('presence-change', data);
-    };
-
-    tracker.onNewDevice = (data) => {
-        console.log(`[TRACKING] Additional technical destination observed (total: ${data.totalDevices})`);
-        io.emit('device-alert', data);
-    };
 }
 
-function stopAllTrackers(reason: string) {
+async function stopAllTrackers(reason: string, closeReason: PresenceCoverageCloseReason): Promise<void> {
     if (autoRestoreTimer) {
         clearTimeout(autoRestoreTimer);
         autoRestoreTimer = null;
     }
 
-    if (trackers.size === 0) return;
+    if (trackers.size === 0) {
+        baileysPresenceObserver.clear();
+        return;
+    }
 
     console.log(`[TRACKERS] Stopping ${trackers.size} active tracker(s): ${reason}`);
-    for (const [jid, { tracker }] of trackers) {
+    for (const [jid, { tracker, trackingSession }] of trackers) {
         try {
             tracker.stopTracking();
         } catch (err: any) {
             console.log(`[TRACKERS] Warning: failed to stop tracker (${err?.message || err})`);
         }
         clearContactObservationState(jid);
+        const closed = await closeTrackedPresenceCoverage(
+            trackingSession.trackingSessionId,
+            closeReason,
+        );
+        if (!closed) {
+            console.warn('[PRESENCE] Coverage window could not be closed durably');
+        }
     }
     trackers.clear();
 }
@@ -2513,6 +2714,15 @@ async function autoRestoreContacts() {
                 const entry: TrackerEntry = { tracker, trackingSession };
                 trackers.set(trackingSession.jid, entry);
                 wireTrackerCallbacks(entry);
+                const activeSocket = sock;
+                await activatePresenceObservation(
+                    trackingSession.jid,
+                    activeSocket,
+                    'connection_restore',
+                );
+                if (!isWhatsAppConnected || sock !== activeSocket || trackers.get(trackingSession.jid) !== entry) {
+                    throw new Error('Tracker restore was superseded by a WhatsApp connection change');
+                }
                 await tracker.startTracking();
 
                 // Emit contact info to connected clients
@@ -2545,6 +2755,8 @@ async function autoRestoreContacts() {
             } catch (err) {
                 trackers.get(trackingSession.jid)?.tracker.stopTracking();
                 trackers.delete(trackingSession.jid);
+                clearContactObservationState(trackingSession.jid);
+                await closeTrackedPresenceCoverage(trackingSession.trackingSessionId, 'restore_failed');
                 await finishTrackingSession(trackingSession.trackingSessionId, 'failed', 'auto_restore_failed');
                 console.error('[AUTO-RESTORE] Failed to restore an authorized tracking session:', err);
             }
@@ -3005,7 +3217,7 @@ app.get('/api/privacy-score/:jid', async (req, res) => {
 
         // Multiple devices detectable
         if (entry) {
-            const deviceMetricSize = (entry.tracker as any).knownDeviceJids?.size ?? 0;
+            const deviceMetricSize = baileysPresenceObserver.getTechnicalDestinationCount(jid);
             if (deviceMetricSize > 1) {
                 score -= 5;
                 deductions.push({ reason: `${deviceMetricSize} destinos técnicos observados`, points: 5 });
@@ -3056,7 +3268,7 @@ app.get('/api/anomalies/:jid', async (req, res) => {
             // Check if the tracker shows Online right now
             const entry = trackers.get(jid);
             if (entry) {
-                const lastPresence = (entry.tracker as any).lastPresence;
+                const lastPresence = baileysPresenceObserver.getLastPresence(jid);
                 if (lastPresence === 'available' || lastPresence === 'composing' || lastPresence === 'recording') {
                     anomalies.push({
                         type: 'unusual-hours',
@@ -3193,11 +3405,18 @@ app.get('/api/network/export/csv', (req, res) => {
 app.get('/api/call-analysis/:jid', async (req, res) => {
     const context = requireActiveObservationContext(req.params.jid, res);
     if (!context) return;
+    const requestedCase = req.query.caseId === undefined
+        ? { ok: true, value: context.entry.trackingSession.caseId }
+        : validateCaseId(req.query.caseId);
+    if (!requestedCase.ok) {
+        validationError(res, requestedCase.errors || ['Invalid caseId']);
+        return;
+    }
     try {
         const fromDB = await getCallAnalyses(
             context.jid,
             1,
-            context.entry.trackingSession.caseId,
+            requestedCase.value,
         );
         res.json(fromDB[0] ? await enrichCallAnalysis(fromDB[0]) : null);
     } catch (err) {
@@ -3209,12 +3428,19 @@ app.get('/api/call-analysis/:jid', async (req, res) => {
 app.get('/api/call-history/:jid', async (req, res) => {
     const context = requireActiveObservationContext(req.params.jid, res);
     if (!context) return;
+    const requestedCase = req.query.caseId === undefined
+        ? { ok: true, value: context.entry.trackingSession.caseId }
+        : validateCaseId(req.query.caseId);
+    if (!requestedCase.ok) {
+        validationError(res, requestedCase.errors || ['Invalid caseId']);
+        return;
+    }
     const limit = parseLimit(req.query.limit, 20, 100);
     try {
         const fromDB = await getCallAnalyses(
             context.jid,
             limit,
-            context.entry.trackingSession.caseId,
+            requestedCase.value,
         );
         res.json(await Promise.all(fromDB.map(enrichCallAnalysis)));
     } catch (err) {
@@ -3557,12 +3783,29 @@ io.on('connection', (socket) => {
         const entry = trackers.get(jid);
         if (entry) {
             const stopReason = cleanText(typeof data === 'object' ? data.stopReason : '', 500) || 'Stopped by operator';
+            const coverageClosed = await closeTrackedPresenceCoverage(
+                entry.trackingSession.trackingSessionId,
+                'tracking_stopped',
+            );
+            if (!coverageClosed) {
+                socket.emit('error', { jid, message: 'Observation coverage could not be closed durably' });
+                return;
+            }
             const finished = await finishTrackingSession(
                 entry.trackingSession.trackingSessionId,
                 'stopped',
                 stopReason,
             );
             if (!finished) {
+                const coverageRestored = await presenceCoverageLifecycle.open({
+                    caseId: entry.trackingSession.caseId,
+                    trackingSessionId: entry.trackingSession.trackingSessionId,
+                    jid,
+                    openReason: 'tracking_start',
+                });
+                if (!coverageRestored) {
+                    console.warn('[PRESENCE] Coverage could not be restored after tracking stop failed');
+                }
                 socket.emit('error', { jid, message: 'Tracking session could not be closed durably' });
                 return;
             }
@@ -3926,11 +4169,16 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM') {
     if (shutdownStarted) return;
     shutdownStarted = true;
     console.log(`\nShutting down after ${signal}...`);
-    for (const [jid, entry] of trackers) {
-        entry.tracker.stopTracking();
-        clearContactObservationState(jid);
+    baileysObservationHub.detach();
+    baileysRawNodeHub.detach();
+    if (presenceCoverageHeartbeatTimer) {
+        clearInterval(presenceCoverageHeartbeatTimer);
+        presenceCoverageHeartbeatTimer = null;
     }
-    trackers.clear();
+    if (presenceCoverageHeartbeatPromise) {
+        await presenceCoverageHeartbeatPromise;
+    }
+    await stopAllTrackers('backend shutdown', 'backend_shutdown');
     stopCapture();
     if (callCaptureAvailabilityTimer) {
         clearInterval(callCaptureAvailabilityTimer);
@@ -3942,6 +4190,10 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM') {
         console.warn('[CALL] Capture service did not acknowledge shutdown');
     }
     httpServer.close();
+    const publicationsDrained = await durablePublicationQueue.drain(5_000);
+    if (!publicationsDrained) {
+        console.warn('[ACTIVITY] Shutdown continued after the durable publication drain timeout');
+    }
     await redisService.disconnect();
     await disconnectDB();
     process.exit(0);

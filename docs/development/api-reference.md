@@ -118,6 +118,7 @@ El submit consume en Redis los limites por IP y token/IP. Devuelve `429` con `Re
 | POST | `/api/call-capture/stop` |
 
 Las rutas de captura responden `403` en `railway-dashboard`.
+`GET /api/call-analysis/:jid` y `GET /api/call-history/:jid` aceptan `caseId` opcional para consultar exclusivamente los analisis del caso seleccionado; sin ese parametro conservan el caso de la sesion activa como alcance por defecto.
 
 ## Auditoria y reportes de caso
 

@@ -57,9 +57,9 @@ The RTT research foundation follows the paper **“Careless Whisper: Exploiting 
 | Area | Capability |
 |---|---|
 | Activity analysis | Passively records real message activity and supported delivery/read receipts without generating probe traffic; optional experimental RTT probes remain explicitly gated |
-| Activity log | Separates observed messages, receipts, presence and calls from technical RTT attempts in a session-scoped timeline |
+| Activity log | Separates messages, receipts, observable availability, direct chat signals and calls from technical RTT attempts in a session-scoped timeline |
 | Behavior intelligence | Calculates routines, availability, sessions, heatmaps, habits and correlations only after sufficient conclusive RTT coverage |
-| Presence and device signals | Observes supported presence states, recording/typing indicators and technical destinations without claiming unavailable presence |
+| Presence and device signals | Observes availability shared by WhatsApp and direct typing/recording indicators without claiming continuous use or third-party activity |
 | Privacy and anomaly assessment | Produces an explainable OPSEC exposure score and flags deviations from historical activity baselines |
 | Network Monitor | Captures packet metadata through Npcap/libpcap, applies protocol filters, classifies IP observations, and exports CSV or JSON |
 | Call traffic analysis | Opens an authorized capture window around an externally initiated WhatsApp Web/Desktop call; Docker/VPS uses a dedicated sidecar in the browser network namespace |
@@ -256,7 +256,7 @@ Results can be affected by VPNs, proxies, carrier-grade NAT, mobile networks, CD
 
 ### Activity bitácora and reports
 
-- Session-scoped passive activity timeline and hourly chart for messages, confirmations, presence, and calls
+- Session-scoped passive activity timeline and hourly chart for messages, confirmations, observable availability, direct chat signals, and calls
 - Technical RTT history kept separate, with a definitive unavailable state instead of an endless loading placeholder
 - Bitácora export to JSON, HTML, and PDF with both observed activity and technical measurements
 - Full contact report with session scope, passive event list, profile, RTT statistics, patterns, measurements, history, and executive summary
@@ -274,7 +274,8 @@ Results can be affected by VPNs, proxies, carrier-grade NAT, mobile networks, CD
 
 ### Presence, device, privacy, and anomaly signals
 
-- Supported typing and recording presence events
+- Observable `available`/`unavailable` transitions, including instants without a direct conversation when WhatsApp shares them
+- Direct-chat typing and recording presence events, kept separate from general availability
 - New-device observation and device-count changes
 - RTT variance analysis for Wi-Fi versus cellular inference
 - Explainable privacy/OPSEC exposure score from `0` to `100`

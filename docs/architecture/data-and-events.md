@@ -11,6 +11,7 @@ Vistas independientes: [modelo MongoDB](../diagrams/11-mongodb-data-model.md), [
 | Eventos de actividad | `caseId + jid + timestamp`, `trackingSessionId + timestamp` | TTL 90 dias |
 | Contactos | `jid` unico | Sin TTL automatico |
 | Sesiones de tracking | `trackingSessionId` unico, un `jid` activo | Sin TTL automatico |
+| Ventanas de cobertura de presencia | `trackingSessionId + startedAt`, una ventana abierta por sesion | Sin TTL automatico |
 | Analisis de llamada | `caseId + callId` unico, `targetJid + startTime` | TTL 90 dias |
 | Eventos de auditoria | `caseId + timestamp`, `scope + action` | Sin TTL automatico |
 | Casos | `caseId` unico, `status + updatedAt` | Sin TTL automatico |
@@ -26,6 +27,13 @@ MongoDB conserva solo el hash scrypt salado del operador y una `credentialVersio
 Los analisis de llamada nuevos tambien conservan `caseId`; el paquete de evidencia exige coincidencia de caso y `callId`, evitando que un identificador manual reutilizado sobrescriba o incorpore el analisis de otro caso.
 
 Una sesion pasa de `active` a `stopped`, `interrupted` o `failed`. Solo puede existir una sesion `active` por JID en una instancia de datos. Las reconexiones de WhatsApp y reinicios normales del proceso reanudan la misma sesion autorizada; detener desde el dashboard la cierra. Si al restaurar el caso ya no esta activo, la sesion queda `interrupted`.
+
+`presence_coverage_windows` registra cuando el canal de presencia fue suscrito y
+confirmado por el backend. Un heartbeat durable actualiza `lastConfirmedAt`; una
+desconexion o cierre controlado fija `endedAt`. Tras una caida abrupta, la
+siguiente restauracion cierra la ventana anterior en su ultima confirmacion, no
+en la hora de reinicio. Por tanto, la cobertura cuantifica observabilidad del
+canal y nunca tiempo online, uso de WhatsApp o actividad con terceros.
 
 ## Estados de caso
 
@@ -61,14 +69,15 @@ Eliminar una solicitud y revocarla son operaciones distintas. La eliminacion ret
 | Fuente | Naturaleza | Persistencia/uso |
 | --- | --- | --- |
 | RTT probe | Medicion heuristica | Serie historica y clasificacion |
-| Presencia Baileys | Evento efimero | Estado actual y transicion cuando aplica |
+| Disponibilidad Baileys (`available`/`unavailable`) | Evento efimero visible | Disponibilidad observada en un instante; no identifica conversacion ni actividad con terceros |
+| Senal directa de chat (`composing`/`recording`/`paused`) | Evento efimero de la conversacion vinculada | Estado actual y transicion directa cuando aplica |
 | Mensaje | Evento real de sesion vinculada, sin contenido | Senal de actividad de la sesion activa |
 | Receipt | Estado compatible de mensaje real saliente | Transicion monotona con huella opaca del ID; no RTT experimental |
 | Llamada | Ciclo `offer/ringing/accept/reject/timeout/terminate` | Estado en vivo y actividad vinculada |
 | Captura de red | Metadata local | Paquetes en memoria, exports y resumen vinculado |
 | Check-In | Solicitud consentida | Registro, recibo y hash |
 
-No combines estas fuentes sin conservar `source`, tiempo y confianza. Ausencia de un evento no demuestra ausencia de actividad.
+No combines estas fuentes sin conservar `source`, alcance, tiempo y confianza. Ausencia de un evento no demuestra ausencia de actividad, y disponibilidad visible no demuestra con quien interactua el contacto.
 
 ## Flujo de actividad al dashboard
 

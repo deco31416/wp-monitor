@@ -2,13 +2,24 @@
 
 ## Contrato operativo
 
-Redis es el propietario de las sesiones del operador y de los contadores de rate limit de login y del submit publico de Check-In.
+Redis es el propietario de las sesiones del operador, de los contadores de rate
+limit de login/Check-In y de la coordinacion efimera de observaciones.
 
 - Todo modo de ejecucion exige `REDIS_URL` y bloquea el arranque si falta o no conecta.
 - Todas las replicas deben usar la misma instancia y `REDIS_KEY_PREFIX`.
 - Los limites de Check-In por IP/token-IP y de login por IP/usuario/usuario-IP se incrementan atomicamente.
 - IP, usuario, token de Check-In y token de sesion se transforman con HMAC antes de formar claves; no aparecen en texto claro.
 - Si Redis deja de responder, autenticacion y submit fallan cerrados con `503`; las sesiones no se aceptan desde memoria local.
+- Las observaciones usan estados `pending/stored` con TTL. MongoDB conserva una
+  `idempotencyKey` unica parcial; si Redis falla se intenta MongoDB y se registra
+  la degradacion, sin sustituir Redis por memoria local.
+- Una suscripcion de presencia confirmada registra solamente una clave HMAC
+  opaca y un estado operacional con TTL. MongoDB sigue siendo la fuente de las
+  sesiones autorizadas que deben restaurarse al reconectar.
+- Mensajes, confirmaciones, presencia y llamadas se publican a clientes solo
+  despues de una insercion durable. Duplicados o fallos no generan una segunda
+  emision comercial; el apagado drena escrituras pendientes antes de cerrar las
+  conexiones de estado.
 
 ## Docker Compose
 

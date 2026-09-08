@@ -38,6 +38,23 @@ test('retains case and tracking session provenance in persisted activity events'
     assert.equal(event.timestampUtc, '2026-08-19T12:00:00.000Z');
 });
 
+test('retains an optional opaque idempotency key for durable uniqueness', () => {
+    const key = 'a'.repeat(64);
+    const event = buildActivityEventDoc({
+        caseId: 'CASE-UNIT-001',
+        trackingSessionId: 'tracking-unit-001',
+        jid: 'synthetic-contact@s.whatsapp.net',
+        source: 'message',
+        type: 'incoming',
+        label: 'Mensaje recibido',
+        confidence: 'high',
+        idempotencyKey: key,
+        timestamp: '2026-08-19T12:00:00.000Z',
+    });
+
+    assert.equal(event.idempotencyKey, key);
+});
+
 test('scopes observed activity to one tracking session and hides unclassified legacy reactions', () => {
     assert.deepEqual(
         buildObservedActivityScope(

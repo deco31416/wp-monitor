@@ -3,6 +3,20 @@ import { expect, test } from 'vitest';
 import { IntelPanel } from './IntelPanel';
 import { StatsPanel, type StatsData } from './StatsPanel';
 
+const presenceCoverage = {
+    sessionStartedAt: '2026-09-02T12:00:00.000Z',
+    evaluatedAt: '2026-09-02T13:00:00.000Z',
+    firstObservedAt: '2026-09-02T12:05:00.000Z',
+    lastObservedAt: '2026-09-02T12:55:00.000Z',
+    elapsedMs: 60 * 60_000,
+    coveredMs: 50 * 60_000,
+    interruptedMs: 10 * 60_000,
+    coveragePct: 83,
+    windowCount: 2,
+    interruptionCount: 2,
+    currentState: 'observing' as const,
+};
+
 test('shows passive activity even when the session has no technical measurements', () => {
     const stats: StatsData = {
         online: 0,
@@ -19,6 +33,7 @@ test('shows passive activity even when the session has no technical measurements
         lastSeen: null,
         lastOnline: null,
         avgRtt: 0,
+        presenceCoverage,
         observedActivity: {
             totalEvents: 1,
             activeEvents: 1,
@@ -68,6 +83,9 @@ test('shows passive activity even when the session has no technical measurements
     expect(screen.getByText('Observación pasiva activa')).toBeInTheDocument();
     expect(screen.getByText(/sin enviar tráfico de prueba/i)).toBeInTheDocument();
     expect(screen.getByText('Medición de latencia no habilitada en esta sesión')).toBeInTheDocument();
+    expect(screen.getByText('Cobertura del canal de presencia')).toBeInTheDocument();
+    expect(screen.getByText('Canal en observación')).toBeInTheDocument();
+    expect(screen.getByText(/no representa tiempo online, uso continuo ni actividad con terceros/i)).toBeInTheDocument();
 });
 
 test('summarizes unique call outcomes without presenting raw protocol signals', () => {
@@ -113,6 +131,64 @@ test('summarizes unique call outcomes without presenting raw protocol signals', 
     expect(screen.getByText('Sin respuesta confirmada')).toBeInTheDocument();
     expect(screen.getByText(/llamadas sin confirmación de respuesta/i)).toBeInTheDocument();
     expect(screen.queryByText('relaylatency')).not.toBeInTheDocument();
+});
+
+test('integrates observable availability without claiming third-party activity', () => {
+    const lastAvailability = {
+        source: 'presence' as const,
+        type: 'available',
+        label: 'En línea observado',
+        confidence: 'high' as const,
+        timestamp: '2026-09-02T12:00:00.000Z',
+    };
+    const stats: StatsData = {
+        online: 0,
+        standby: 0,
+        offline: 0,
+        totalMeasurements: 0,
+        firstSeen: null,
+        lastSeen: null,
+        lastOnline: null,
+        avgRtt: 0,
+        observedActivity: {
+            totalEvents: 5,
+            activeEvents: 4,
+            firstEvent: lastAvailability,
+            lastEvent: lastAvailability,
+            lastPresence: lastAvailability,
+            lastCall: null,
+            lastMessage: null,
+            bySource: { presence: 5 },
+            byType: [{ source: 'presence', type: 'available', label: 'En línea observado', count: 2 }],
+            confidence: { high: 4, medium: 1 },
+            callOutcomes: {
+                incoming: 0, ringing: 0, active: 0, completed: 0,
+                busy: 0, rejected: 0, missed: 0, ended_unconfirmed: 0,
+            },
+            messageDirections: { incoming: 0, outgoing: 0 },
+            presenceObservation: {
+                availabilitySignals: 3,
+                available: 2,
+                unavailable: 1,
+                directChatSignals: 2,
+                composing: 1,
+                recording: 1,
+                paused: 0,
+                lastAvailability,
+                lastDirectChatSignal: null,
+            },
+            activeDays: 1,
+            windowDays: 30,
+        },
+    };
+
+    render(<StatsPanel stats={stats} patterns={null} formatDateTime={value => value || '-'} timeAgo={() => 'ahora'} />);
+
+    expect(screen.getByText('Disponibilidad observada')).toBeInTheDocument();
+    expect(screen.getByText(/incluso sin una conversación directa/i)).toBeInTheDocument();
+    expect(screen.getByText(/no implica actividad con terceros/i)).toBeInTheDocument();
+    expect(screen.getByText('Disponibilidad visible')).toBeInTheDocument();
+    expect(screen.getByText('Señales directas del chat')).toBeInTheDocument();
 });
 
 test('does not present a behavioral profile before coverage is sufficient', () => {
@@ -220,8 +296,9 @@ test('shows descriptive observed patterns while keeping presence inferences disa
         }}
         intelLoading={false}
         anomalies={[]}
-        observedEventTotal={3}
+        observedEventTotal={4}
         observedEventsTruncated={false}
+        presenceCoverage={presenceCoverage}
         observedEvents={[
             {
                 source: 'message',
@@ -247,15 +324,28 @@ test('shows descriptive observed patterns while keeping presence inferences disa
                 timestamp: '2026-09-02T15:00:00.000Z',
                 timestampUtc: '2026-09-02T15:00:00.000Z',
             },
+            {
+                source: 'presence',
+                type: 'available',
+                label: 'En línea observado',
+                confidence: 'high',
+                timestamp: '2026-09-02T16:00:00.000Z',
+                timestampUtc: '2026-09-02T16:00:00.000Z',
+            },
         ]}
     />);
 
     expect(screen.getByText('Patrones de actividad observada')).toBeInTheDocument();
     expect(screen.getByText('Distribución semanal de registros')).toBeInTheDocument();
     expect(screen.getByText('Actividades por franja horaria')).toBeInTheDocument();
+    expect(screen.getByText('Disponibilidad visible')).toBeInTheDocument();
+    expect(screen.getByText('En línea observado')).toBeInTheDocument();
+    expect(screen.getByText('Señales directas del chat')).toBeInTheDocument();
     expect(screen.getByText('Alcance de la evidencia')).toBeInTheDocument();
-    expect(screen.getByText(/no prueban presencia continua/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirma disponibilidad únicamente en ese instante/i)).toBeInTheDocument();
     expect(screen.getByText(/inferencias de presencia no habilitadas/i)).toBeInTheDocument();
+    expect(screen.getByText('Cobertura del canal de presencia')).toBeInTheDocument();
+    expect(screen.getByText('83%')).toBeInTheDocument();
     expect(screen.queryByText('Patrones aún no disponibles')).not.toBeInTheDocument();
     expect(screen.queryByText('Perfil de Comportamiento')).not.toBeInTheDocument();
 });

@@ -1,12 +1,10 @@
 import 'baileys';
-import { WASocket, proto } from 'baileys';
+import { WASocket, proto, type BaileysEventMap } from 'baileys';
 import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import {
     CALIBRATING_STATE,
-    getScopedPresenceEntries,
     isNoAckState,
-    isTechnicalLidJid,
     jidBelongsToTarget,
     NO_ACK_STATE,
     ONLINE_STATE,
@@ -134,22 +132,15 @@ export class WhatsAppTracker {
     private globalRttHistory: number[] = []; // For threshold calculation
     private probeStartTimes: Map<string, number> = new Map();
     private probeTimeouts: Map<string, NodeJS.Timeout> = new Map();
-    private lastPresence: string | null = null;
     private probeMethod: ProbeMethod = 'passive';
     private readonly probeIntervalMs: number;
     private readonly probeTimeoutMs: number;
     private readonly maxProbeBackoffMs: number;
     private consecutiveNoAck: number = 0;
     private readonly trackerRef = randomUUID().slice(0, 8);
-    private knownDeviceJids: Set<string> = new Set(); // Track known device JIDs for alerts
-    private messagesUpdateHandler: ((updates: any[]) => void) | null = null;
-    private rawReceiptHandler: ((node: any) => void) | null = null;
-    private presenceUpdateHandler: ((update: any) => void) | null = null;
     private probeLoopTimer: NodeJS.Timeout | null = null;
     private probeLoopWake: (() => void) | null = null;
     public onUpdate?: (data: TrackerUpdate) => void;
-    public onPresenceChange?: (data: { jid: string; presence: string; timestamp: number }) => void;
-    public onNewDevice?: (data: { deviceJid: string; targetJid: string; totalDevices: number; timestamp: number }) => void;
 
     constructor(
         sock: WASocket,
@@ -160,7 +151,6 @@ export class WhatsAppTracker {
         this.sock = sock;
         this.targetJid = targetJid;
         this.trackedJids.add(targetJid);
-        this.knownDeviceJids.add(targetJid);
         this.probeIntervalMs = boundedInteger(probeOptions.intervalMs, 30_000, 10_000, 10 * 60_000);
         this.probeTimeoutMs = boundedInteger(probeOptions.timeoutMs, 10_000, 3_000, 60_000);
         this.maxProbeBackoffMs = boundedInteger(probeOptions.maxBackoffMs, 5 * 60_000, this.probeIntervalMs, 30 * 60_000);
@@ -178,9 +168,13 @@ export class WhatsAppTracker {
         return this.probeMethod;
     }
 
+    public addTrackedJid(jid: string): void {
+        if (jid.trim()) this.trackedJids.add(jid);
+    }
+
     /**
-     * Start tracking the target user's activity
-     * Sets up event listeners for message receipts and presence updates
+     * Start the technical RTT tracker. Passive presence is owned by the
+     * process-wide BaileysObservationHub.
      */
     public async startTracking() {
         if (this.isTracking) return;
@@ -188,85 +182,13 @@ export class WhatsAppTracker {
         trackerLogger.info(`\n✅ Tracking started [${this.trackerRef}]`);
         trackerLogger.info(`Tracking mode: ${this.probeMethod === 'passive' ? 'Passive' : `Experimental ${this.probeMethod}`}\n`);
 
-        // Listen for message updates (receipts)
-        this.messagesUpdateHandler = (updates: any[]) => {
-            for (const update of updates) {
-                // Check if update is from any of the tracked JIDs (multi-device support)
-                if (update.key.remoteJid
-                    && jidBelongsToTarget(update.key.remoteJid, this.targetJid, this.trackedJids)
-                    && update.key.fromMe) {
-                    this.analyzeUpdate(update);
-                }
-            }
-        };
-        this.sock.ev.on('messages.update', this.messagesUpdateHandler);
-
-        // Listen for raw receipts to catch 'inactive' type which are ignored by Baileys
-        this.rawReceiptHandler = (node: any) => {
-            this.handleRawReceipt(node);
-        };
-        this.sock.ws.on('CB:receipt', this.rawReceiptHandler);
-
-        // Listen for presence updates
-        this.presenceUpdateHandler = (update: any) => {
-            trackerLogger.debug(`[PRESENCE] Update received [${this.trackerRef}]`);
-
-            const scopedPresences = getScopedPresenceEntries(update, this.targetJid, this.trackedJids);
-            for (const [jid, presenceData] of scopedPresences) {
-                // Baileys may emit @lid identifiers for the same account/session.
-                // They are useful internally but should not be shown as physical devices.
-                const isDisplayableDevice = !isTechnicalLidJid(jid);
-
-                if (isDisplayableDevice && !this.knownDeviceJids.has(jid)) {
-                    this.knownDeviceJids.add(jid);
-                    trackerLogger.info(`[TRACKING] Additional technical destination observed [${this.trackerRef}]`);
-                    if (this.onNewDevice) {
-                        this.onNewDevice({
-                            deviceJid: jid,
-                            targetJid: this.targetJid,
-                            totalDevices: this.knownDeviceJids.size,
-                            timestamp: Date.now()
-                        });
-                    }
-                }
-
-                // Track technical JIDs internally so presence/receipts remain correlated.
-                this.trackedJids.add(jid);
-                trackerLogger.debug(`[TRACKING] Technical destination correlated [${this.trackerRef}]`);
-
-                const newPresence = presenceData.lastKnownPresence;
-                const prevPresence = this.lastPresence;
-                this.lastPresence = newPresence;
-                trackerLogger.debug(`[PRESENCE] State stored [${this.trackerRef}]: ${this.lastPresence}`);
-
-                // Emit presence change for composing/recording/available/unavailable
-                if (this.onPresenceChange && newPresence !== prevPresence) {
-                    this.onPresenceChange({
-                        jid: this.targetJid,
-                        presence: newPresence,
-                        timestamp: Date.now()
-                    });
-                }
-                break;
-            }
-        };
-        this.sock.ev.on('presence.update', this.presenceUpdateHandler);
-
-        // Subscribe to presence updates
-        try {
-            await this.sock.presenceSubscribe(this.targetJid);
-            trackerLogger.debug(`[PRESENCE] Subscription active [${this.trackerRef}]`);
-        } catch (err) {
-            trackerLogger.debug('[PRESENCE] Error subscribing to presence:', err);
-        }
-
         // Send initial state update
         if (this.onUpdate) {
             this.onUpdate({
                 sampleKind: 'initial',
                 devices: [],
                 deviceCount: this.deviceMetrics.size,
-                presence: this.lastPresence,
+                presence: null,
                 connectionType: null,
                 median: 0,
                 threshold: 0
@@ -475,7 +397,7 @@ export class WhatsAppTracker {
      * Handle raw receipt nodes directly from the websocket
      * This is necessary because Baileys ignores receipts with type="inactive"
      */
-    private handleRawReceipt(node: any) {
+    public handleRawReceipt(node: any): void {
         try {
             const { attrs } = node;
             // We only care about 'inactive' receipts here
@@ -497,6 +419,20 @@ export class WhatsAppTracker {
             }
         } catch (err) {
             trackerLogger.debug(`[RAW RECEIPT] Error handling receipt: ${err}`);
+        }
+    }
+
+    /**
+     * Consume technical probe receipts routed by the process-wide observation
+     * hub. The tracker no longer owns a Baileys event listener per contact.
+     */
+    public handleMessageUpdates(updates: BaileysEventMap['messages.update']): void {
+        for (const update of updates) {
+            if (update.key.remoteJid
+                && jidBelongsToTarget(update.key.remoteJid, this.targetJid, this.trackedJids)
+                && update.key.fromMe) {
+                this.analyzeUpdate(update);
+            }
         }
     }
 
@@ -717,7 +653,7 @@ export class WhatsAppTracker {
             sampleKind: 'probe' as const,
             devices,
             deviceCount: devices.length,
-            presence: this.lastPresence,
+            presence: null,
             connectionType: this.inferConnectionType(),
             // Global stats for charts
             median: globalMedian,
@@ -778,19 +714,6 @@ export class WhatsAppTracker {
     public stopTracking() {
         this.isTracking = false;
         this.wakeProbeLoop();
-
-        if (this.messagesUpdateHandler) {
-            (this.sock.ev as any).off?.('messages.update', this.messagesUpdateHandler);
-            this.messagesUpdateHandler = null;
-        }
-        if (this.rawReceiptHandler) {
-            (this.sock.ws as any).off?.('CB:receipt', this.rawReceiptHandler);
-            this.rawReceiptHandler = null;
-        }
-        if (this.presenceUpdateHandler) {
-            (this.sock.ev as any).off?.('presence.update', this.presenceUpdateHandler);
-            this.presenceUpdateHandler = null;
-        }
 
         // Clear all pending timeouts
         this.clearPendingProbes();

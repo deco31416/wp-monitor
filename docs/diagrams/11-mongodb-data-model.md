@@ -21,6 +21,7 @@ erDiagram
     CASE_RECORD ||--o{ TRACKING_SESSION : caseId
     TRACKING_SESSION ||--o{ MEASUREMENT : trackingSessionId
     TRACKING_SESSION ||--o{ ACTIVITY_EVENT : trackingSessionId
+    TRACKING_SESSION ||--o{ PRESENCE_COVERAGE_WINDOW : trackingSessionId
     CONTACT ||--o{ TRACKING_SESSION : jid
     CONTACT ||--o{ MEASUREMENT : jid
     CONTACT ||--o{ ACTIVITY_EVENT : jid
@@ -68,6 +69,16 @@ erDiagram
       string type
       date timestamp
     }
+    PRESENCE_COVERAGE_WINDOW {
+      string trackingSessionId
+      string caseId
+      string jid
+      string openReason
+      date startedAt
+      date lastConfirmedAt
+      date endedAt
+      string closeReason
+    }
     CALL_ANALYSIS {
       string callId
       string caseId
@@ -99,4 +110,4 @@ erDiagram
 
 ## Retencion
 
-Mediciones tienen TTL de 30 dias; actividad y analisis de llamada, 90 dias. Operador, casos, sesiones de tracking, auditoria, contactos, enlaces y Check-Ins requieren politica explicita de retencion. Solo existe `primary-operator`; `normalizedUsername` tambien es unico y `passwordHash` nunca contiene texto plano. Los documentos historicos previos al modelo por caso pueden no contener `caseId` o `trackingSessionId` y se excluyen de evidencia por caso.
+Mediciones tienen TTL de 30 dias; actividad y analisis de llamada, 90 dias. Operador, casos, sesiones de tracking, ventanas de cobertura, auditoria, contactos, enlaces y Check-Ins requieren politica explicita de retencion. Solo existe `primary-operator`; `normalizedUsername` tambien es unico y `passwordHash` nunca contiene texto plano. Los documentos historicos previos al modelo por caso pueden no contener `caseId` o `trackingSessionId` y se excluyen de evidencia por caso. Una ventana de cobertura mide disponibilidad del canal de observacion y no representa estado online del contacto.
