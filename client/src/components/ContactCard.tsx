@@ -383,6 +383,7 @@ export function ContactCard({
         }
         try {
             setCallAnalysis(null);
+            setCallEvent(null);
             const response = await authFetch(`${API_URL}/api/call-capture/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

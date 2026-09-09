@@ -5,6 +5,7 @@ import {
     observeCallCapturePhase,
     startCallCapture,
     stopCallCapture,
+    waitForCallCaptureClose,
 } from './call-analyzer.js';
 import { hasDedicatedCapturePrivileges } from './capture-permissions.js';
 import { listInterfaces } from './packet-capture.js';
@@ -32,6 +33,7 @@ const app = createCaptureAgentApp({
         ),
         observeCallCapturePhase,
         stopCallCapture,
+        waitForCallCaptureClose,
     },
 });
 const server = createServer(app);

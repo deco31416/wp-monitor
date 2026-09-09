@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { expect, test, vi } from 'vitest';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
-import type { CallAnalysisResult } from '../types';
+import type { CallAnalysisResult, CallRouteAssessment } from '../types';
 
 function analysis(capturePhases?: CallAnalysisResult['capturePhases']): CallAnalysisResult {
     return {
@@ -20,7 +22,7 @@ function analysis(capturePhases?: CallAnalysisResult['capturePhases']): CallAnal
     };
 }
 
-function panel(callAnalysis: CallAnalysisResult) {
+function panel(callAnalysis: CallAnalysisResult | null, overrides: Partial<ComponentProps<typeof CallAnalysisPanel>> = {}) {
     return (
         <CallAnalysisPanel
             callAnalysis={callAnalysis}
@@ -39,8 +41,26 @@ function panel(callAnalysis: CallAnalysisResult) {
             onStartManualCapture={vi.fn()}
             onStopManualCapture={vi.fn()}
             onSelectAnalysis={vi.fn()}
+            {...overrides}
         />
     );
+}
+
+function routeAssessment(
+    classification: CallRouteAssessment['classification'],
+    overrides: Partial<CallRouteAssessment> = {},
+): CallRouteAssessment {
+    return {
+        assessmentVersion: 2,
+        classification,
+        confidenceScore: classification === 'direct_confirmed' ? 88 : 52,
+        evidenceSources: ['packet_flow', 'baileys_transport'],
+        independentDirectEvidenceCount: classification === 'direct_confirmed' ? 2 : 1,
+        primaryCandidateIp: classification === 'relay_confirmed' || classification === 'unresolved' ? null : '203.0.113.10',
+        reasonCodes: ['STRONG_DIRECT_PACKET_PATTERN'],
+        limitations: [],
+        ...overrides,
+    };
 }
 
 test('explains when a result has no prior baseline', () => {
@@ -146,4 +166,73 @@ test('shows the registry version and freshness that support an infrastructure cl
     render(panel(result));
 
     expect(screen.getByText(/Registro 2026\.09\.08\.1 · vigente · Google Public DNS endpoints/)).toBeInTheDocument();
+});
+
+test.each([
+    ['direct_confirmed', 'Ruta directa confirmada'],
+    ['direct_probable', 'Ruta directa probable'],
+    ['relay_confirmed', 'Conexión mediante infraestructura de WhatsApp'],
+    ['mixed', 'Ruta mixta observada'],
+    ['unresolved', 'Ruta no determinada'],
+] as const)('presents the %s route state with commercial copy', (classification, label) => {
+    const result = analysis();
+    result.routeAssessment = routeAssessment(classification);
+
+    render(panel(result));
+
+    expect(screen.getByRole('heading', { name: label })).toBeInTheDocument();
+    expect(screen.getByText(/Flujo de red observado · Señalización de llamada/)).toBeInTheDocument();
+    expect(screen.getByText(/no prueban identidad, ubicación exacta ni titularidad/i)).toBeInTheDocument();
+    expect(screen.queryByText('STRONG_DIRECT_PACKET_PATTERN')).not.toBeInTheDocument();
+});
+
+test('marks a bounded result as partial and explains its limitations', () => {
+    const result = analysis();
+    result.routeAssessment = routeAssessment('direct_probable', {
+        limitations: ['packet_capture_truncated', 'stun_peer_is_not_independent_confirmation'],
+    });
+
+    render(panel(result));
+
+    expect(screen.getByRole('status')).toHaveTextContent('La captura alcanzó su límite');
+    expect(screen.getByText('Resultado parcial')).toBeInTheDocument();
+    expect(screen.getByText(/no constituye una segunda confirmación independiente/)).toBeInTheDocument();
+});
+
+test('announces loading, calibration, capture, processing and errors accessibly', () => {
+    const { rerender } = render(panel(null, { casesLoading: true }));
+    expect(screen.getByRole('status')).toHaveTextContent('Cargando configuración de captura');
+
+    rerender(panel(null, { callCapturing: true, callPacketCount: 4 }));
+    expect(screen.getByRole('status')).toHaveTextContent('Calibrando línea base');
+
+    rerender(panel(null, {
+        callCapturing: true,
+        callPacketCount: 9,
+        callEvent: { callId: 'CALL-001', from: '573001112233@s.whatsapp.net', status: 'offer', isVideo: false },
+    }));
+    expect(screen.getByRole('status')).toHaveTextContent('Captura de llamada en curso');
+
+    rerender(panel(null, { callCapturing: true, callStopping: true, callPacketCount: 12 }));
+    expect(screen.getByRole('status')).toHaveTextContent('Analizando captura');
+
+    rerender(panel(null, { callCaptureError: 'Agente no disponible' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Agente no disponible');
+});
+
+test('opens a historical analysis with keyboard navigation', async () => {
+    const user = userEvent.setup();
+    const historical = analysis();
+    const onSelectAnalysis = vi.fn();
+
+    render(panel(null, { callHistory: [historical], onSelectAnalysis }));
+
+    const openButton = screen.getByRole('button', { name: /Abrir análisis CALL-001/i });
+    expect(openButton).toHaveProperty('tabIndex', 0);
+    openButton.focus();
+    expect(openButton).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(onSelectAnalysis).toHaveBeenCalledOnce();
+    expect(onSelectAnalysis).toHaveBeenCalledWith(historical);
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 import { ExternalLink, Globe, History, Monitor, Phone, Shield, Square, Target, Wifi } from 'lucide-react';
-import { CallAnalysisResult, CallEvent, CandidateIP, type CallCapturePhases, type CaseRecord } from '../types';
+import { CallAnalysisResult, CallEvent, CandidateIP, type CallCapturePhases, type CallRouteAssessment, type CaseRecord } from '../types';
 
 interface CallAnalysisPanelProps {
     callAnalysis: CallAnalysisResult | null;
@@ -109,24 +109,38 @@ export function CallAnalysisPanel({
                 </p>
 
                 {callCaptureError && (
-                    <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
-                        <p className="text-xs font-bold text-red-300">No se pudo iniciar la captura</p>
+                    <div role="alert" className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
+                        <p className="text-xs font-bold text-red-300">No se pudo completar la operación de captura</p>
                         <p className="text-[11px] text-red-100/80">{callCaptureError}</p>
                     </div>
                 )}
 
                 {callCapturing && (
-                    <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 flex items-center gap-3">
+                    <div role="status" aria-live="polite" className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 flex items-center gap-3">
                         <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
                         <div>
                             <p className="text-xs font-bold text-red-400">
-                                {callStopping ? 'Cerrando y analizando captura' : 'Captura en curso'}
+                                {callStopping
+                                    ? 'Analizando captura'
+                                    : callEvent
+                                        ? 'Captura de llamada en curso'
+                                        : 'Calibrando línea base'}
                             </p>
                             <p className="text-[10px] text-txt-dim">
-                                {callPacketCount} paquetes de red capturados · {callStopping ? 'Procesando resultado, GeoIP y auditoria' : 'Haz la llamada desde este equipo local'}
+                                {callPacketCount} paquetes de red capturados · {callStopping
+                                    ? 'Procesando ruta, contexto de red y auditoría'
+                                    : callEvent
+                                        ? 'La observación continuará hasta que detengas la captura'
+                                        : 'Espera unos segundos y luego inicia la llamada desde este equipo'}
                             </p>
                         </div>
                     </div>
+                )}
+
+                {casesLoading && !callCapturing && (
+                    <p role="status" aria-live="polite" className="mt-3 text-[11px] text-txt-secondary">
+                        Cargando configuración de captura…
+                    </p>
                 )}
 
                 {callEvent && (
@@ -156,26 +170,36 @@ export function CallAnalysisPanel({
                                     <th className="text-left py-2 px-2">Veredicto</th>
                                     <th className="text-right py-2 px-2">Candidatas</th>
                                     <th className="text-right py-2 px-2">Paquetes</th>
+                                    <th className="text-right py-2 px-2">Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {callHistory.map((historyItem, index) => (
                                     <tr
                                         key={index}
-                                        className="border-b border-surface-border/50 hover:bg-surface-hover cursor-pointer transition-colors"
-                                        onClick={() => onSelectAnalysis(historyItem)}
+                                        className="border-b border-surface-border/50 hover:bg-surface-hover transition-colors"
                                     >
                                         <td className="py-2 px-2 text-txt-secondary font-mono">
                                             {new Date(historyItem.startTime).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </td>
                                         <td className="py-2 px-2 text-txt-primary">{historyItem.durationSec}s</td>
                                         <td className="py-2 px-2">
-                                            <VerdictBadge verdict={historyItem.verdict} compact />
+                                            <RouteBadge analysis={historyItem} compact />
                                         </td>
                                         <td className="py-2 px-2 text-right text-accent font-bold">
                                             {historyItem.candidateIps.filter(candidate => candidate.isP2P).length}
                                         </td>
                                         <td className="py-2 px-2 text-right text-txt-dim">{historyItem.totalPackets}</td>
+                                        <td className="py-1 px-1 text-right">
+                                            <button
+                                                type="button"
+                                                className="rounded px-2 py-1 font-semibold text-accent hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                                                onClick={() => onSelectAnalysis(historyItem)}
+                                                aria-label={`Abrir análisis ${historyItem.callId} del ${new Date(historyItem.startTime).toLocaleString('es-ES')}`}
+                                            >
+                                                Abrir
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -213,7 +237,7 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                 <h5 className="text-xs font-semibold text-txt-muted uppercase tracking-wider flex items-center gap-2">
                     <Target size={14} className="text-success" /> Resultado del Analisis
                 </h5>
-                <VerdictBadge verdict={analysis.verdict} />
+                <RouteBadge analysis={analysis} />
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
@@ -230,6 +254,8 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
             )}
 
             {analysis.capturePhases && <CapturePhaseSummary phases={analysis.capturePhases} />}
+
+            <RouteAssessmentSummary analysis={analysis} />
 
             <CallTrafficMap analysis={analysis} />
 
@@ -339,6 +365,158 @@ function CapturePhaseSummary({ phases }: { phases: CallCapturePhases }) {
                 Se separaron {baselineDuration}s de actividad previa para reducir el peso del tráfico que ya existía antes de la llamada.
             </p>
         </div>
+    );
+}
+
+const ROUTE_LABELS: Record<CallRouteAssessment['classification'], string> = {
+    direct_confirmed: 'Ruta directa confirmada',
+    direct_probable: 'Ruta directa probable',
+    relay_confirmed: 'Conexión mediante infraestructura de WhatsApp',
+    mixed: 'Ruta mixta observada',
+    unresolved: 'Ruta no determinada',
+};
+
+const ROUTE_DESCRIPTIONS: Record<CallRouteAssessment['classification'], string> = {
+    direct_confirmed: 'Dos fuentes independientes coinciden con una ruta directa observada durante la llamada.',
+    direct_probable: 'El tráfico observado es compatible con una ruta directa, pero falta una segunda fuente independiente para confirmarla.',
+    relay_confirmed: 'La llamada utilizó infraestructura de WhatsApp/Meta y no expuso una ruta directa verificable.',
+    mixed: 'Se observaron simultáneamente una ruta directa sustentada e infraestructura de WhatsApp/Meta.',
+    unresolved: 'La evidencia disponible no permite distinguir de forma responsable entre una ruta directa y una conexión por relay.',
+};
+
+const ROUTE_SOURCE_LABELS: Record<CallRouteAssessment['evidenceSources'][number], string> = {
+    baileys_transport: 'Señalización de llamada',
+    packet_flow: 'Flujo de red observado',
+    stun: 'Negociación STUN',
+    baseline: 'Línea base previa',
+    infrastructure_registry: 'Registro de infraestructura',
+    ip_enrichment: 'Contexto de red y GeoIP',
+};
+
+const ROUTE_REASON_LABELS: Record<string, string> = {
+    PACKET_FLOW_MATCHES_BAILEYS_PEER: 'El flujo de red coincide con el endpoint señalado durante la llamada.',
+    STRONG_DIRECT_PACKET_PATTERN: 'Se observó un patrón bidireccional fuerte compatible con tráfico directo.',
+    PACKET_FLOW_MATCHES_STUN_PEER_ONLY: 'El flujo coincide únicamente con una referencia STUN y requiere corroboración independiente.',
+    DIRECT_CONFIRMED_WITH_RELAY: 'La ruta directa confirmada coexistió con tráfico de relay.',
+    DIRECT_PROBABLE_WITH_RELAY: 'La ruta directa probable coexistió con tráfico de relay.',
+    BAILEYS_RELAY_OBSERVED: 'La señalización indicó el uso de infraestructura relay.',
+    RELAY_PACKET_FLOW_OBSERVED: 'El flujo de paquetes confirmó tráfico mediante infraestructura relay.',
+    NO_CONCLUSIVE_ROUTE_EVIDENCE: 'No se reunieron evidencias suficientes para determinar la ruta.',
+    DNS_EXCLUDED_FROM_DIRECT_EVIDENCE: 'El tráfico DNS fue excluido de la evidencia de ruta directa.',
+    STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
+};
+
+const ROUTE_LIMITATION_LABELS: Record<string, string> = {
+    peer_signaling_without_attributable_endpoint: 'La señalización de pares no expuso un endpoint atribuible.',
+    stun_peer_is_not_independent_confirmation: 'La referencia STUN no constituye una segunda confirmación independiente.',
+    baseline_unavailable: 'No hubo una línea base previa separable.',
+    packet_capture_truncated: 'La captura alcanzó su límite y el análisis utiliza una muestra parcial.',
+    infrastructure_registry_degraded: 'El registro de infraestructura no estaba completamente disponible.',
+    no_eligible_direct_candidate: 'No apareció una IP elegible como candidata directa.',
+    unknown_transport_message_type: 'Se observó señalización de transporte todavía no clasificada.',
+    peer_candidate_payload_not_decoded: 'La señalización del candidato no pudo interpretarse como endpoint atribuible.',
+    node_traversal_truncated: 'La inspección de señalización alcanzó su límite de seguridad.',
+    sensitive_fields_excluded: 'Los campos sensibles fueron excluidos de la evidencia almacenada.',
+    endpoint_list_truncated: 'La lista de endpoints fue acotada por seguridad.',
+    malformed_endpoint_skipped: 'Se descartó un endpoint con formato inválido.',
+    stored_observation_invalid: 'Una observación almacenada no superó la validación del contrato.',
+};
+
+function routeConfidenceLabel(score: number): string {
+    if (score >= 75) return 'Alta';
+    if (score >= 45) return 'Media';
+    return 'Baja';
+}
+
+function humanizeRouteCode(value: string): string {
+    return value
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^./, character => character.toUpperCase());
+}
+
+function RouteAssessmentSummary({ analysis }: { analysis: CallAnalysisResult }) {
+    const assessment = analysis.routeAssessment;
+    if (!assessment) {
+        return (
+            <div role="status" className="mb-4 rounded-lg border border-surface-border bg-surface-hover px-4 py-3">
+                <p className="text-xs font-semibold text-txt-primary">Resultado histórico con detalle limitado</p>
+                <p className="mt-1 text-[11px] text-txt-secondary">
+                    Esta captura conserva el análisis anterior, pero no incluye el modelo de correlación de ruta actual.
+                </p>
+            </div>
+        );
+    }
+
+    const tone = assessment.classification === 'direct_confirmed'
+        ? 'border-emerald-500/30 bg-emerald-500/10'
+        : assessment.classification === 'direct_probable' || assessment.classification === 'mixed'
+            ? 'border-amber-500/30 bg-amber-500/10'
+            : assessment.classification === 'relay_confirmed'
+                ? 'border-sky-500/30 bg-sky-500/10'
+                : 'border-surface-border bg-surface-hover';
+    const limitations = assessment.limitations.map(item => ROUTE_LIMITATION_LABELS[item] || humanizeRouteCode(item));
+    const reasons = assessment.reasonCodes.map(item => ROUTE_REASON_LABELS[item] || humanizeRouteCode(item));
+
+    return (
+        <section aria-labelledby={`route-assessment-${analysis.callId}`} className={clsx('mb-4 rounded-lg border px-4 py-4', tone)}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-txt-muted">Conclusión de ruta observada</p>
+                    <h6 id={`route-assessment-${analysis.callId}`} className="mt-1 text-sm font-bold text-txt-primary">
+                        {ROUTE_LABELS[assessment.classification]}
+                    </h6>
+                    <p className="mt-1 max-w-2xl text-[11px] text-txt-secondary">
+                        {ROUTE_DESCRIPTIONS[assessment.classification]}
+                    </p>
+                </div>
+                <span className="shrink-0 rounded-full border border-current/20 bg-surface-overlay/60 px-3 py-1 text-[11px] font-bold text-txt-primary">
+                    Confianza {routeConfidenceLabel(assessment.confidenceScore)} · {assessment.confidenceScore}/100
+                </span>
+            </div>
+
+            <dl className="mt-3 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
+                <div>
+                    <dt className="text-txt-dim">Evidencia utilizada</dt>
+                    <dd className="mt-1 text-txt-primary">
+                        {assessment.evidenceSources.length
+                            ? assessment.evidenceSources.map(source => ROUTE_SOURCE_LABELS[source]).join(' · ')
+                            : 'Sin fuentes concluyentes'}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="text-txt-dim">Candidato principal</dt>
+                    <dd className="mt-1 font-mono text-txt-primary">{assessment.primaryCandidateIp || 'No identificado'}</dd>
+                </div>
+            </dl>
+
+            {reasons.length > 0 && (
+                <div className="mt-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-txt-muted">Por qué se obtuvo este resultado</p>
+                    <ul className="mt-1 space-y-1 text-[11px] text-txt-secondary">
+                        {reasons.map(reason => <li key={reason}>• {reason}</li>)}
+                    </ul>
+                </div>
+            )}
+
+            {limitations.length > 0 && (
+                <div role="status" className="mt-3 rounded-md border border-amber-500/20 bg-surface-overlay/40 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                        {assessment.limitations.includes('packet_capture_truncated')
+                            ? 'Resultado parcial'
+                            : 'Alcance y limitaciones'}
+                    </p>
+                    <ul className="mt-1 space-y-1 text-[11px] text-txt-secondary">
+                        {limitations.map(limitation => <li key={limitation}>• {limitation}</li>)}
+                    </ul>
+                </div>
+            )}
+
+            <p className="mt-3 text-[10px] text-txt-dim">
+                La ruta e IP observadas describen conectividad de red durante esta captura; no prueban identidad, ubicación exacta ni titularidad del contacto.
+            </p>
+        </section>
     );
 }
 
@@ -554,12 +732,10 @@ function formatEnrichmentSource(provider: string): string {
 }
 
 function VerdictBadge({ verdict, compact = false }: { verdict: CallAnalysisResult['verdict']; compact?: boolean }) {
-    const label = compact
-        ? verdict
-        : verdict === 'p2p' ? 'Trafico directo candidato' :
-          verdict === 'mixed' ? 'Mixto (candidato + relay)' :
-          verdict === 'relay' ? 'Solo Relay (Meta)' :
-          'Datos Insuficientes';
+    const label = verdict === 'p2p' ? 'Tráfico directo candidato' :
+        verdict === 'mixed' ? 'Ruta mixta observada' :
+        verdict === 'relay' ? 'Conexión mediante infraestructura de WhatsApp' :
+        'Datos insuficientes';
 
     return (
         <span className={clsx(
@@ -571,6 +747,23 @@ function VerdictBadge({ verdict, compact = false }: { verdict: CallAnalysisResul
             "bg-slate-500/20 text-slate-400"
         )}>
             {label}
+        </span>
+    );
+}
+
+function RouteBadge({ analysis, compact = false }: { analysis: CallAnalysisResult; compact?: boolean }) {
+    if (!analysis.routeAssessment) return <VerdictBadge verdict={analysis.verdict} compact={compact} />;
+    const { classification } = analysis.routeAssessment;
+    return (
+        <span className={clsx(
+            'font-bold px-3 py-1 rounded-full',
+            compact ? 'text-[10px]' : 'text-xs',
+            classification === 'direct_confirmed' ? 'bg-emerald-500/20 text-emerald-400' :
+            classification === 'direct_probable' || classification === 'mixed' ? 'bg-amber-500/20 text-amber-400' :
+            classification === 'relay_confirmed' ? 'bg-sky-500/20 text-sky-300' :
+            'bg-slate-500/20 text-slate-400',
+        )}>
+            {ROUTE_LABELS[classification]}
         </span>
     );
 }
@@ -637,7 +830,17 @@ function CallTrafficMap({ analysis }: { analysis: CallAnalysisResult }) {
         <div className="mb-4 bg-surface-hover rounded-lg border border-surface-border p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
                 <h6 className="text-[11px] font-semibold text-txt-muted uppercase tracking-wider">Mapa visual de ruta observada</h6>
-                <span className="text-[10px] text-txt-dim font-mono">{analysis.verdict || 'unknown'}</span>
+                <span className="text-[10px] text-txt-dim">
+                    {analysis.routeAssessment
+                        ? ROUTE_LABELS[analysis.routeAssessment.classification]
+                        : analysis.verdict === 'p2p'
+                            ? 'Tráfico directo candidato'
+                            : analysis.verdict === 'mixed'
+                                ? 'Ruta mixta observada'
+                                : analysis.verdict === 'relay'
+                                    ? 'Conexión mediante infraestructura de WhatsApp'
+                                    : 'Ruta no determinada'}
+                </span>
             </div>
 
             <div className="flex flex-col lg:flex-row lg:items-stretch gap-2">

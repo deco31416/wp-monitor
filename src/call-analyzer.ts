@@ -34,7 +34,7 @@ import {
     lookupNetworkIntelligence,
     scoreCandidate,
 } from './call-scoring.js';
-import { closeCaptureSessionIfOpened } from './capture-lifecycle.js';
+import { NativeCaptureCloseBarrier } from './capture-lifecycle.js';
 import { hasPacketCapturePrivileges } from './capture-permissions.js';
 import type {
     CandidateConfidence,
@@ -231,6 +231,7 @@ privateIpBlockList.addAddress('::', 'ipv6');
 
 // Callback for real-time packet streaming
 let onCallPacket: ((packet: RawCallPacket & { isMetaIP: boolean }) => void) | null = null;
+const nativeCaptureCloseBarrier = new NativeCaptureCloseBarrier();
 
 // Store completed analyses
 const analysisHistory: Map<string, CallAnalysisResult[]> = new Map(); // jid -> results
@@ -335,6 +336,10 @@ export function startCallCapture(
         console.log('[CALL-ANALYZER] Already capturing, stop first');
         return false;
     }
+    if (nativeCaptureCloseBarrier.isPending) {
+        console.log('[CALL-ANALYZER] Previous native capture is still closing');
+        return false;
+    }
     if (!hasPacketCapturePrivileges()) {
         console.error('[CALL-ANALYZER] Capture requires CAP_NET_RAW on Linux');
         return false;
@@ -432,7 +437,7 @@ export function startCallCapture(
         return true;
     } catch (err) {
         console.error('[CALL-ANALYZER] Failed to start capture:', err);
-        closeCaptureSessionIfOpened(capSession, captureOpened);
+        nativeCaptureCloseBarrier.close(capSession, captureOpened);
         resetCaptureState();
         return false;
     }
@@ -452,11 +457,11 @@ export function stopCallCapture(): CallAnalysisResult | null {
         return null;
     }
 
-    try {
-        capSession.close();
-    } catch (err) {
-        console.error('[CALL-ANALYZER] Error closing capture session:', err);
-    }
+    nativeCaptureCloseBarrier.close(
+        capSession,
+        true,
+        err => console.error('[CALL-ANALYZER] Error closing capture session:', err),
+    );
     capSession = null;
     isCapturing = false;
     onCallPacket = null;
@@ -500,6 +505,10 @@ export function stopCallCapture(): CallAnalysisResult | null {
     resetCaptureState();
 
     return result;
+}
+
+export async function waitForCallCaptureClose(): Promise<void> {
+    await nativeCaptureCloseBarrier.wait();
 }
 
 /**

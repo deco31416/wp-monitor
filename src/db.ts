@@ -8,6 +8,7 @@
 import { MongoClient, Db, Collection } from 'mongodb';
 import 'dotenv/config';
 import type { CallAnalysisResult } from './call-analyzer.js';
+import { normalizeStoredRouteAssessment } from './call-route-assessment.js';
 import type { ObservationPersistenceResult } from './observation-dedupe.js';
 import { PRIMARY_OPERATOR_ID } from './operator-auth.js';
 import type { OperatorUserDoc } from './operator-auth.js';
@@ -40,6 +41,21 @@ import {
     summarizeObservedPresenceGroups,
     type ObservedPresenceCounts,
 } from './presence-semantics.js';
+
+export interface DbReadOptions {
+    failClosed?: boolean;
+}
+
+function unavailableRead<T>(operation: string, fallback: T, options: DbReadOptions): T {
+    if (options.failClosed) throw new Error(`Database is unavailable while ${operation}`);
+    return fallback;
+}
+
+function failedRead<T>(operation: string, error: unknown, fallback: T, options: DbReadOptions): T {
+    if (options.failClosed) throw error;
+    console.error(`[DB] Error ${operation}:`, error);
+    return fallback;
+}
 
 // Types
 export interface MeasurementDoc {
@@ -976,8 +992,9 @@ export async function closePresenceCoverageWindow(
 export async function getPresenceCoverageSummary(
     trackingSessionId: string,
     evaluatedAt: Date = new Date(),
+    options: DbReadOptions = {},
 ): Promise<PresenceCoverageSummary | null> {
-    if (!db) return null;
+    if (!db) return unavailableRead('calculating presence coverage', null, options);
     try {
         const trackingSession = await trackingSessions.findOne({ trackingSessionId });
         if (!trackingSession) return null;
@@ -993,8 +1010,7 @@ export async function getPresenceCoverageSummary(
             ? summary
             : { ...summary, currentState: 'interrupted' };
     } catch (err) {
-        console.error('[DB] Error calculating presence coverage:', err);
-        return null;
+        return failedRead('calculating presence coverage', err, null, options);
     }
 }
 
@@ -1278,8 +1294,9 @@ export async function getObservedActivityEventsForCase(
     jid: string,
     caseId: string,
     limit: number = 5000,
+    options: DbReadOptions = {},
 ): Promise<ObservedActivityListItem[]> {
-    if (!db) return [];
+    if (!db) return unavailableRead('fetching case observed activity events', [], options);
     try {
         return await activityEvents
             .find(buildObservedActivityScope(jid, caseId), {
@@ -1297,8 +1314,7 @@ export async function getObservedActivityEventsForCase(
             .limit(limit)
             .toArray() as ObservedActivityListItem[];
     } catch (err) {
-        console.error('[DB] Error fetching case observed activity events:', err);
-        return [];
+        return failedRead('fetching case observed activity events', err, [], options);
     }
 }
 
@@ -1306,15 +1322,15 @@ export async function countObservedActivityEvents(
     jid: string,
     caseId?: string,
     trackingSessionId?: string,
+    options: DbReadOptions = {},
 ): Promise<number> {
-    if (!db) return 0;
+    if (!db) return unavailableRead('counting observed activity events', 0, options);
     try {
         return await activityEvents.countDocuments(
             buildObservedActivityScope(jid, caseId, trackingSessionId),
         );
     } catch (err) {
-        console.error('[DB] Error counting observed activity events:', err);
-        return 0;
+        return failedRead('counting observed activity events', err, 0, options);
     }
 }
 
@@ -1402,6 +1418,7 @@ export async function getObservedActivitySummary(
     days: number = 30,
     caseId?: string,
     trackingSessionId?: string,
+    options: DbReadOptions = {},
 ): Promise<{
     totalEvents: number;
     activeEvents: number;
@@ -1440,7 +1457,7 @@ export async function getObservedActivitySummary(
         activeDays: 0,
         windowDays: days,
     };
-    if (!db) return empty;
+    if (!db) return unavailableRead('fetching observed activity summary', empty, options);
     try {
         const since = new Date(Date.now() - days * 86_400_000);
         const match = {
@@ -1606,8 +1623,7 @@ export async function getObservedActivitySummary(
             windowDays: days,
         };
     } catch (err) {
-        console.error('[DB] Error fetching observed activity summary:', err);
-        return empty;
+        return failedRead('fetching observed activity summary', err, empty, options);
     }
 }
 
@@ -1618,6 +1634,7 @@ export async function getStateDistribution(
     jid: string,
     caseId?: string,
     trackingSessionId?: string,
+    options: DbReadOptions = {},
 ): Promise<{
     online: number;
     standby: number;
@@ -1677,7 +1694,7 @@ export async function getStateDistribution(
             windowDays: 30,
         },
     };
-    if (!db) return empty;
+    if (!db) return unavailableRead('fetching state distribution', empty, options);
     try {
         const measurementMatch = buildObservationScope(jid, caseId, trackingSessionId);
         const pipeline = [
@@ -1701,8 +1718,8 @@ export async function getStateDistribution(
         const [r] = result;
         if (!r) {
             const [observedActivity, presenceCoverage] = await Promise.all([
-                getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
-                trackingSessionId ? getPresenceCoverageSummary(trackingSessionId) : Promise.resolve(null),
+                getObservedActivitySummary(jid, 30, caseId, trackingSessionId, options),
+                trackingSessionId ? getPresenceCoverageSummary(trackingSessionId, new Date(), options) : Promise.resolve(null),
             ]);
             return {
                 ...empty,
@@ -1741,8 +1758,8 @@ export async function getStateDistribution(
             .toArray();
 
         const [observedActivity, presenceCoverage] = await Promise.all([
-            getObservedActivitySummary(jid, 30, caseId, trackingSessionId),
-            trackingSessionId ? getPresenceCoverageSummary(trackingSessionId) : Promise.resolve(null),
+            getObservedActivitySummary(jid, 30, caseId, trackingSessionId, options),
+            trackingSessionId ? getPresenceCoverageSummary(trackingSessionId, new Date(), options) : Promise.resolve(null),
         ]);
 
         const [lastOnline] = lastOnlineDoc;
@@ -1772,8 +1789,7 @@ export async function getStateDistribution(
             presenceCoverage,
         };
     } catch (err) {
-        console.error('[DB] Error fetching state distribution:', err);
-        return empty;
+        return failedRead('fetching state distribution', err, empty, options);
     }
 }
 
@@ -1916,6 +1932,13 @@ export function buildCallAnalysisScope(jid: string, caseId?: string): Record<str
     return { targetJid: jid, ...(caseId ? { caseId } : {}) };
 }
 
+function normalizePersistedCallAnalysis(result: CallAnalysisResult): CallAnalysisResult {
+    const routeAssessment = normalizeStoredRouteAssessment(result.routeAssessment);
+    if (routeAssessment) return { ...result, routeAssessment };
+    const { routeAssessment: _legacyRouteAssessment, ...legacyResult } = result;
+    return legacyResult;
+}
+
 export async function getCallAnalyses(
     jid: string,
     limit: number = 20,
@@ -1923,11 +1946,12 @@ export async function getCallAnalyses(
 ): Promise<CallAnalysisResult[]> {
     if (!db) return [];
     try {
-        return await callAnalyses
+        const results = await callAnalyses
             .find(buildCallAnalysisScope(jid, caseId))
             .sort({ startTime: -1 })
             .limit(limit)
             .toArray();
+        return results.map(normalizePersistedCallAnalysis);
     } catch (err) {
         console.error('[DB] Error fetching call analyses:', err);
         return [];
@@ -1994,13 +2018,12 @@ export async function createCase(input: CaseInput): Promise<CaseDoc | null> {
     }
 }
 
-export async function getCase(caseId: string): Promise<CaseDoc | null> {
-    if (!db) return null;
+export async function getCase(caseId: string, options: DbReadOptions = {}): Promise<CaseDoc | null> {
+    if (!db) return unavailableRead('fetching case', null, options);
     try {
         return await caseRecords.findOne({ caseId });
     } catch (err) {
-        console.error('[DB] Error fetching case:', err);
-        return null;
+        return failedRead('fetching case', err, null, options);
     }
 }
 
@@ -2019,19 +2042,28 @@ export async function listCases(limit: number = 50, status?: CaseStatus): Promis
     }
 }
 
-export async function getCallAnalysesByCallIds(callIds: string[], caseId?: string): Promise<CallAnalysisResult[]> {
-    if (!db || callIds.length === 0) return [];
+export async function getCallAnalysesByCallIds(
+    callIds: string[],
+    caseId?: string,
+    limit: number = 5000,
+    options: DbReadOptions = {},
+): Promise<CallAnalysisResult[]> {
+    if (callIds.length === 0) return [];
+    if (!db) return unavailableRead('fetching call analyses by callId', [], options);
     try {
-        return await callAnalyses
+        const boundedLimit = Math.max(1, Math.min(5000, Math.trunc(limit) || 5000));
+        const boundedCallIds = Array.from(new Set(callIds)).slice(0, boundedLimit);
+        const results = await callAnalyses
             .find({
-                callId: { $in: Array.from(new Set(callIds)) },
+                callId: { $in: boundedCallIds },
                 ...(caseId ? { caseId } : {}),
             })
             .sort({ startTime: -1 })
+            .limit(boundedLimit)
             .toArray();
+        return results.map(normalizePersistedCallAnalysis);
     } catch (err) {
-        console.error('[DB] Error fetching call analyses by callId:', err);
-        return [];
+        return failedRead('fetching call analyses by callId', err, [], options);
     }
 }
 
@@ -2088,16 +2120,25 @@ export async function saveCaseEvidenceLink(link: Omit<CaseEvidenceLinkDoc, 'crea
     }
 }
 
-export async function getCaseEvidenceLinks(caseId: string): Promise<CaseEvidenceLinkDoc[]> {
-    if (!db) return [];
+export async function getCaseEvidenceLinks(caseId: string, limit?: number, options: DbReadOptions = {}): Promise<CaseEvidenceLinkDoc[]> {
+    if (!db) return unavailableRead('fetching case evidence links', [], options);
     try {
-        return await caseEvidenceLinks
+        const cursor = caseEvidenceLinks
             .find({ caseId })
-            .sort({ updatedAt: -1 })
-            .toArray();
+            .sort({ updatedAt: -1 });
+        if (limit !== undefined) cursor.limit(Math.max(1, Math.min(5000, Math.trunc(limit) || 5000)));
+        return await cursor.toArray();
     } catch (err) {
-        console.error('[DB] Error fetching case evidence links:', err);
-        return [];
+        return failedRead('fetching case evidence links', err, [], options);
+    }
+}
+
+export async function countCaseEvidenceLinks(caseId: string, options: DbReadOptions = {}): Promise<number> {
+    if (!db) return unavailableRead('counting case evidence links', 0, options);
+    try {
+        return await caseEvidenceLinks.countDocuments({ caseId });
+    } catch (err) {
+        return failedRead('counting case evidence links', err, 0, options);
     }
 }
 
@@ -2150,8 +2191,8 @@ export async function saveAuditEvent(event: Omit<AuditEventDoc, 'timestamp' | 't
     }
 }
 
-export async function getAuditEvents(caseId: string, limit: number = 100): Promise<AuditEventDoc[]> {
-    if (!db) return [];
+export async function getAuditEvents(caseId: string, limit: number = 100, options: DbReadOptions = {}): Promise<AuditEventDoc[]> {
+    if (!db) return unavailableRead('fetching audit events', [], options);
     try {
         return await auditEvents
             .find({ caseId })
@@ -2159,8 +2200,16 @@ export async function getAuditEvents(caseId: string, limit: number = 100): Promi
             .limit(limit)
             .toArray();
     } catch (err) {
-        console.error('[DB] Error fetching audit events:', err);
-        return [];
+        return failedRead('fetching audit events', err, [], options);
+    }
+}
+
+export async function countAuditEvents(caseId: string, options: DbReadOptions = {}): Promise<number> {
+    if (!db) return unavailableRead('counting audit events', 0, options);
+    try {
+        return await auditEvents.countDocuments({ caseId });
+    } catch (err) {
+        return failedRead('counting audit events', err, 0, options);
     }
 }
 

@@ -652,7 +652,11 @@ function buildOpenApiDocument() {
                 post: {
                     tags: ['Call Capture'],
                     summary: 'Start manual authorized call capture',
-                    responses: { '200': { description: 'Capture started' }, '409': { description: 'Case closed or archived' } },
+                    responses: {
+                        '200': { description: 'Capture started' },
+                        '400': { description: 'Invalid or missing authorized contact JID' },
+                        '409': { description: 'Case closed or archived' },
+                    },
                 },
             },
             '/api/call-capture/stop': {
@@ -1620,7 +1624,7 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
     if (!stoppedCallAuditContext) return;
     let rawResult: Awaited<ReturnType<typeof callCaptureService.stop>>;
     try {
-        rawResult = await callCaptureService.stop();
+        rawResult = await callCaptureService.stop(stoppedCallAuditContext.callId);
     } catch {
         console.warn('[CALL] Auto-stop failed: capture service unavailable');
         return;
@@ -3609,7 +3613,7 @@ app.post('/api/call-capture/start', async (req, res) => {
     }
     if (!await ensureCaseCanCapture(auditContext, res)) return;
     const { interfaceAddr, targetJid, callId, isVideo } = req.body || {};
-    const targetResult = normalizeOptionalJid(targetJid, 'manual');
+    const targetResult = validateJid(targetJid, 'targetJid');
     if (!targetResult.ok) {
         validationError(res, targetResult.errors || []);
         return;
@@ -3664,7 +3668,7 @@ app.post('/api/call-capture/stop', async (_req, res) => {
     const stoppedCallAuditContext = activeCallAuditContext;
     let rawResult;
     try {
-        rawResult = await callCaptureService.stop();
+        rawResult = await callCaptureService.stop(stoppedCallAuditContext?.callId);
     } catch (error) {
         respondCallCaptureError(res, error);
         return;
@@ -4175,7 +4179,7 @@ io.on('connection', (socket) => {
             socket.emit('error', { status: caseCheck.status, ...caseCheck.payload });
             return;
         }
-        const targetResult = normalizeOptionalJid(data.targetJid, 'manual');
+        const targetResult = validateJid(data.targetJid, 'targetJid');
         if (!targetResult.ok) {
             socketValidationError(socket, targetResult.errors || []);
             return;
@@ -4231,7 +4235,7 @@ io.on('connection', (socket) => {
         const stoppedCallAuditContext = activeCallAuditContext;
         let rawResult;
         try {
-            rawResult = await callCaptureService.stop();
+            rawResult = await callCaptureService.stop(stoppedCallAuditContext?.callId);
         } catch (error) {
             const code = error instanceof CaptureAgentClientError ? error.code : 'call_capture_failed';
             socket.emit('error', { message: 'Failed to stop call capture', code });

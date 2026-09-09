@@ -1,10 +1,10 @@
 # Especificacion Verificable: Actividad Pasiva e Informes
 
-Estado: publicada en `3.0.0`
+Estado: vigente en `3.1.0`
 
-Version de contrato Evidence Package: `1.1`
+Version de contrato Evidence Package: `1.2`
 
-Ultima revision: `2026-08-21`
+Ultima revision: `2026-09-08`
 
 ## Objetivo
 
@@ -84,7 +84,7 @@ El limite ampliado actual es 5000 eventos por sesion. Si se supera, el reporte d
 
 ## Contrato de evidencia por caso
 
-Evidence Package `1.1` incorpora:
+Evidence Package `1.2` incorpora:
 
 - seccion canonica `observedActivity` con eventos y metadata de pagina por target;
 - `observed-activity.json` dentro del ZIP;
@@ -92,6 +92,8 @@ Evidence Package `1.1` incorpora:
 - SHA-256 de la seccion y de cada anexo;
 - `observedActivityEventCount`, `observedActivityTotalAvailable` y `observedActivityTruncated` en el informe final;
 - valores `—` en HTML/PDF cuando no hay RTT concluyente.
+- cobertura agregada acotada a 5000 eventos observados y 250 targets, con
+  indicacion explicita cuando el total conocido es solo un limite inferior.
 
 ## Matriz requisito-prueba
 

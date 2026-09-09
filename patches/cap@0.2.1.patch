@@ -1,71 +1,117 @@
 diff --git a/src/binding.cc b/src/binding.cc
-index 04f3d4b0b1c840340c6cef5aab3ba7721d29b3c8..69f6dee255b45d04a1173d361da6ec2198ded305 100644
+index 04f3d4b..a69938d 100644
 --- a/src/binding.cc
 +++ b/src/binding.cc
-@@ -68,6 +68,8 @@ class Pcap : public Nan::ObjectWrap {
-     Nan::AsyncResource async_res;
-     bool closing;
-     bool handling_packets;
+@@ -70,0 +71,2 @@ class Pcap : public Nan::ObjectWrap {
 +    bool watcher_initialized;
 +    bool referenced;
- #ifdef _WIN32
-     HANDLE wait;
-     uv_async_t async;
-@@ -86,6 +88,8 @@ class Pcap : public Nan::ObjectWrap {
-       buffer_length = 0;
-       closing = false;
-       handling_packets = false;
+@@ -88,0 +91,2 @@ class Pcap : public Nan::ObjectWrap {
 +      watcher_initialized = false;
 +      referenced = false;
- #ifdef _WIN32
-       wait = nullptr;
- #endif
-@@ -103,10 +107,13 @@ class Pcap : public Nan::ObjectWrap {
-           UnregisterWait(wait);
-           wait = nullptr;
-         }
+@@ -100 +104,3 @@ class Pcap : public Nan::ObjectWrap {
+-      if (pcap_handle && !closing) {
++      if (pcap_handle && !closing) {
++        bool watcher_close_pending = false;
++        closing = true;
+@@ -106 +112,4 @@ class Pcap : public Nan::ObjectWrap {
 -        uv_close((uv_handle_t*)&async, cb_close);
-+        if (watcher_initialized)
++        if (watcher_initialized) {
 +          uv_close((uv_handle_t*)&async, cb_close);
- #else
++          watcher_close_pending = true;
++        }
+@@ -108 +117,5 @@ class Pcap : public Nan::ObjectWrap {
 -        uv_poll_stop(&poll_handle);
-+        if (watcher_initialized)
++        if (watcher_initialized) {
 +          uv_poll_stop(&poll_handle);
- #endif
++          uv_close((uv_handle_t*)&poll_handle, cb_close);
++          watcher_close_pending = true;
++        }
+@@ -110,2 +123,3 @@ class Pcap : public Nan::ObjectWrap {
+-        closing = true;
+-        cleanup();
 +        watcher_initialized = false;
-         closing = true;
-         cleanup();
-         return true;
-@@ -120,6 +127,9 @@ class Pcap : public Nan::ObjectWrap {
-         pcap_handle = nullptr;
-         buffer_data = nullptr;
-         buffer_length = 0;
++        if (!watcher_close_pending)
++          cleanup();
+@@ -123 +137,4 @@ class Pcap : public Nan::ObjectWrap {
 -        Unref();
 +        if (referenced) {
 +          Unref();
 +          referenced = false;
 +        }
-       }
+@@ -186,2 +202,14 @@ class Pcap : public Nan::ObjectWrap {
+     static void cb_close(uv_handle_t* handle) {
++      Pcap *obj = (Pcap*)handle->data;
++      Nan::HandleScope scope;
++      Local<Value> emit_argv[1] = {
++        Nan::New<String>("close").ToLocalChecked()
++      };
++      obj->async_res.runInAsyncScope(
++        Nan::New<Object>(obj->persistent()),
++        Nan::New<Function>(obj->Emit),
++        1,
++        emit_argv
++      );
++      obj->cleanup();
      }
-@@ -401,6 +411,7 @@ class Pcap : public Nan::ObjectWrap {
+@@ -212,0 +228,14 @@ class Pcap : public Nan::ObjectWrap {
++    static void cb_close(uv_handle_t* handle) {
++      Pcap *obj = (Pcap*)handle->data;
++      Nan::HandleScope scope;
++      Local<Value> emit_argv[1] = {
++        Nan::New<String>("close").ToLocalChecked()
++      };
++      obj->async_res.runInAsyncScope(
++        Nan::New<Object>(obj->persistent()),
++        Nan::New<Function>(obj->Emit),
++        1,
++        emit_argv
++      );
++      obj->cleanup();
++    }
+@@ -402,7 +430,13 @@ class Pcap : public Nan::ObjectWrap {
                          &obj->async,
                          (uv_async_cb)cb_packets);
-       assert(r == 0);
+-      assert(r == 0);
++      if (r != 0) {
++        obj->cleanup();
++        return Nan::ThrowError(uv_strerror(r));
++      }
 +      obj->watcher_initialized = true;
        obj->async.data = obj;
++      obj->Ref();
++      obj->referenced = true;
        r = RegisterWaitForSingleObject(
          &obj->wait,
-@@ -427,7 +438,8 @@ class Pcap : public Nan::ObjectWrap {
-       obj->fd = pcap_get_selectable_fd(obj->pcap_handle);
-       r = uv_poll_init(uv_default_loop(), &obj->poll_handle, obj->fd);
-       assert(r == 0);
+         pcap_getevent(obj->pcap_handle),
+@@ -423,5 +461,10 @@ class Pcap : public Nan::ObjectWrap {
+                       0,
+                       nullptr);
++        Local<Value> error = Nan::Error(
++          errmsg ? errmsg : "RegisterWaitForSingleObject failed"
++        );
++        if (errmsg) LocalFree(errmsg);
++        obj->close();
+-        return Nan::ThrowError(errmsg);
++        return Nan::ThrowError(error);
+       }
+ #else
+@@ -429,7 +468,14 @@ class Pcap : public Nan::ObjectWrap {
+-      assert(r == 0);
+-      r = uv_poll_start(&obj->poll_handle, UV_READABLE, cb_packets);
+-      assert(r == 0);
++      if (r != 0) {
++        obj->cleanup();
++        return Nan::ThrowError(uv_strerror(r));
++      }
 +      obj->watcher_initialized = true;
-       r = uv_poll_start(&obj->poll_handle, UV_READABLE, cb_packets);
-       assert(r == 0);
        obj->poll_handle.data = obj;
- #endif
-@@ -435,3 +447,4 @@ class Pcap : public Nan::ObjectWrap {
-       obj->Ref();
++      obj->Ref();
 +      obj->referenced = true;
-       info.GetReturnValue().Set(ret);
-     }
++      r = uv_poll_start(&obj->poll_handle, UV_READABLE, cb_packets);
++      if (r != 0) {
++        obj->close();
++        return Nan::ThrowError(uv_strerror(r));
++      }
+ #endif
+-
+-      obj->Ref();

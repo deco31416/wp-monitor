@@ -20,7 +20,7 @@ import {
     type NetworkIntelligenceCategory,
 } from './call-scoring.js';
 import type { InfrastructureRegistryEvidence } from './network-infrastructure-registry.js';
-import { closeCaptureSessionIfOpened } from './capture-lifecycle.js';
+import { NativeCaptureCloseBarrier } from './capture-lifecycle.js';
 import { hasPacketCapturePrivileges } from './capture-permissions.js';
 
 const geoip = (geoipModule as any)?.default ?? geoipModule as any;
@@ -118,9 +118,10 @@ const dstIpCounts = new Map<string, number>();
 
 // Callback for emitting packets
 let onPacket: ((packet: PacketMeta) => void) | null = null;
+const nativeCaptureCloseBarrier = new NativeCaptureCloseBarrier();
 
 function resetCaptureState(closeOpenedSession = true) {
-    closeCaptureSessionIfOpened(
+    nativeCaptureCloseBarrier.close(
         capSession,
         closeOpenedSession,
         err => console.error('[CAPTURE] Error closing capture session:', err),
@@ -367,6 +368,10 @@ export function startCapture(
 ): boolean {
     if (isCapturing) {
         console.log('[CAPTURE] Already capturing, stop first');
+        return false;
+    }
+    if (nativeCaptureCloseBarrier.isPending) {
+        console.log('[CAPTURE] Previous native capture is still closing');
         return false;
     }
     if (!hasPacketCapturePrivileges()) {

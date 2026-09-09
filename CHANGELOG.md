@@ -53,10 +53,17 @@ Maintainer guidance:
 - Separated general host Network Monitor privileges from isolated browser call capture; the backend no longer needs packet-capture capabilities for the sidecar flow.
 - Backups now pause application writers, encrypt every data stream before writing its final filename, include the browser profile, and remove incomplete timestamp directories after producer/encryption failure.
 - Final HTML/PDF reports now localize presentation labels while preserving raw JSON/CSV evidence contracts.
+- The existing Call tab now presents the backend route assessment as a customer-facing conclusion with confidence, provenance, candidate, reasons and explicit limitations; loading, baseline calibration, capture, processing, partial and error states are announced accessibly.
+- Final JSON/HTML/PDF/ZIP reports now carry the same route conclusion and provenance, while legacy call records remain explicitly identified as limited instead of receiving invented v2 evidence.
+- Evidence Package and final-report contracts are now versioned `1.2`; bounded collections and route summaries expose explicit coverage metadata instead of allowing unbounded in-memory report rendering.
 - Docker base images and Redis now use immutable multi-architecture digests; Dependabot targets `develop` for reviewed update proposals.
 
 ### Fixed
 
+- Pinned `sharp@0.35.4` for the Baileys multimedia peer contract, closing the high-severity libheif advisory affecting earlier `sharp` releases; the corresponding libvips license inventory is updated to `1.3.3`.
+- Call-capture starts over REST and Socket.IO now reject a missing contact JID with a controlled validation error instead of forwarding the placeholder `manual` to the capture agent.
+- Replaced the retired Selkies browser-base digest with the official `main-debiantrixie` multi-architecture digest after a clean Docker build exposed the unavailable upstream manifest; the browser image again builds reproducibly without reverting to a mutable tag.
+- Closed the native libpcap poll handle before releasing its `cap` wrapper and added an event-loop close barrier, preventing capture-agent `SIGSEGV`/descriptor-reuse failures across consecutive stop/start cycles.
 - Recovered stale Chromium `Singleton*` markers only while holding an exclusive profile-volume lock, preventing restart loops without allowing concurrent profile use.
 - Prevented malformed, oversized or semantically invalid capture-agent responses from reaching persistence.
 - Reconstructed nested capture-agent candidate data from a bounded typed contract instead of propagating unchecked response fields into persistence and reports.
@@ -67,6 +74,9 @@ Maintainer guidance:
 - Prevented localized IP categories from overlapping adjacent PDF columns and kept report table headers with their first row across page breaks.
 - Prevented Dokploy project-name drift from attaching empty application volumes by requiring exact external names for Baileys auth, uploads and the Chromium profile, with an executable rendered-Compose contract gate.
 - Updated the rendered-Compose gate for the dual noVNC/Selkies browser contract and added negative coverage for public binds, wrong targets, extra ports, missing networks and alias drift.
+- Kept each route conclusion, scope notice and limitations together across native PDF page breaks, preventing orphaned report context.
+- Made historical call analyses keyboard-operable with native button semantics and visible focus, and changed relay copy to identify WhatsApp infrastructure explicitly.
+- Normalized persisted route assessments at the database/report boundary so malformed or oversized historical fields degrade to an unresolved result instead of breaking UI and report exports.
 
 ### Security
 
@@ -75,17 +85,20 @@ Maintainer guidance:
 - The capture-agent control port is not published, and every non-health route requires an HMAC signature tied to method, path, timestamp, nonce and body hash.
 - Browser and capture-agent secrets, Chromium profiles, Baileys sessions, captures, reports, uploads and backups remain excluded from Git/Docker build context.
 - All four application images now carry the project license and third-party notices; backend/capture-agent images also retain dependency licenses, and commercial distribution claims distinguish MIT-owned code from transitive obligations.
+- Pinned the transitive Express query parser to `qs 6.16.0`, resolving the two moderate denial-of-service advisories reported against `6.15.3`.
 
 ### Verification
 
-- `pnpm run qa`: 171 backend/contract tests and 17 frontend tests passed with lint, TypeScript checks and production builds.
-- `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-08-25.
-- `pnpm run docs:check`, `pnpm run containers:check`, `pnpm run compose:dokploy:check -- --require-existing-volumes` and `pnpm run licenses:check`: 65 Markdown files, 139 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts, three existing external volumes and 218 production packages passed their release gates.
-- Report fixture: JSON/HTML/PDF/ZIP generation and ZIP integrity passed; the localized two-page A4 PDF was visually reviewed without clipping, overlap or orphan table headers.
+- Selkies supply-chain recovery: the replacement digest resolved from the official GHCR manifest, the browser image built successfully, and an isolated non-root/read-only smoke returned `200` from both loopback noVNC and authenticated Selkies while the container remained healthy.
+- `pnpm run qa`: 323 backend/contract tests and 38 frontend tests passed with lint, TypeScript checks and production builds on 2026-09-08.
+- `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-09-08.
+- `pnpm run docs:check`, `pnpm run containers:check`, synthetic `pnpm run compose:dokploy:check` and `pnpm run licenses:check`: 69 Markdown files, 149 relative links, 35 Mermaid blocks, four Dockerfiles, two Compose contracts and 218 production packages passed their local release gates. Existing-volume verification remains an environment-specific release step.
+- Report fixture: route conclusions have JSON/HTML/PDF/ZIP parity and ZIP integrity passed; the localized two-page A4 PDF was visually reviewed without clipping, overlap, orphan table headers or detached route limitations.
 - Docker build gate: backend, client, capture agent and WhatsApp browser images built from immutable base digests; backend/agent artifacts retained project and reviewed dependency license files.
 - Docker E3 smoke: Chromium, virtual audio, loopback noVNC and capture agent became healthy; PID 1 ran non-root with the intended capability set; a signed synthetic capture observed 10/10 UDP packets and produced a classified result.
 - Full-stack Docker E3 smoke: backend, client, Redis, MongoDB, Chromium and capture agent were healthy; public liveness/capabilities, login/session/logout, same-stack dependencies and loopback bindings passed without touching the native QA instance.
 - Dokploy-override E3 smoke: the four application services were healthy against temporary MongoDB/Redis services on an external network; runtime reported `server-full`, backend/client had no host publications, agent readiness passed, and secure-cookie login/session/logout/revocation returned `200/200/204/401`.
+- Consecutive-capture E3 regression: two authorized synthetic cycles on the final images observed 77 and 41 packets, each start/stop returned 200, the native libpcap close event completed before reuse, and the capture agent remained healthy with zero restarts. Evidence JSON/ZIP and final JSON/HTML/PDF exports passed, then remained available with the authenticated session after a backend restart.
 
 ---
 

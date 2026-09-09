@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEvidenceZip, buildFinalCaseReport, renderFinalCaseReportHtml, renderFinalCaseReportPdf } from '../src/evidence-package.js';
+import { allocateEvidenceRecordLimits, buildEvidencePackage, buildEvidenceZip, buildFinalCaseReport, renderFinalCaseReportHtml, renderFinalCaseReportPdf } from '../src/evidence-package.js';
 
 function sampleEvidencePackage(): any {
     return {
         manifest: {
             packageType: 'evidence-package',
-            version: '1.1',
+            version: '1.2',
             software: {
                 name: 'WP MONITOR',
                 version: '2.6.0',
@@ -233,6 +233,7 @@ function sampleEvidencePackage(): any {
 test('builds final reports with candidate IP limitations and integrity', () => {
     const report = buildFinalCaseReport(sampleEvidencePackage());
 
+    assert.equal(report.version, '1.2');
     assert.equal(report.summary.caseId, 'CASE-UNIT-001');
     assert.equal(report.summary.candidateIpCount, 1);
     assert.equal(report.summary.nonConclusiveIpObservationCount, 1);
@@ -244,6 +245,13 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(report.summary.routeAssessmentCount, 1);
     assert.equal(report.findings.callRoutes[0]?.classification, 'mixed');
     assert.equal(report.findings.callRoutes[0]?.independentDirectEvidenceCount, 2);
+    assert.deepEqual(report.findings.callRoutes[0]?.presentation, {
+        classificationLabel: 'Ruta mixta observada',
+        confidenceLabel: 'Alta',
+        evidenceLabels: ['Flujo de red observado', 'Señalización de llamada'],
+        reasonLabels: ['La ruta directa confirmada coexistió con tráfico de relay.'],
+        limitationLabels: ['Synthetic limitation'],
+    });
     const [activityStats] = report.findings.activityStats;
     const [candidateIp] = report.findings.candidateIps;
     const [nonConclusiveIp] = report.findings.nonConclusiveIpObservations;
@@ -281,6 +289,10 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.match(html, /Alta/);
     assert.match(html, /Captura de llamada finalizada/);
     assert.match(html, /Fuerte/);
+    assert.match(html, /Ruta de Llamada Observada/);
+    assert.match(html, /Ruta mixta observada/);
+    assert.match(html, /Flujo de red observado · Señalización de llamada/);
+    assert.match(html, /La ruta directa confirmada coexistió con tráfico de relay/);
     assert.doesNotMatch(html, />authorized</);
     assert.doesNotMatch(html, />consumer_isp_or_unknown</);
     assert.doesNotMatch(html, />Scope</);
@@ -292,11 +304,30 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.match(pdfText, /Estado: Autorizado/);
     assert.match(pdfText, /Puntaje maximo/);
     assert.match(pdfText, /Captura de llamada finalizada/);
+    assert.match(pdfText, /Ruta mixta observada - Alta 82\/100/);
+    assert.match(pdfText, /Procedencia: Flujo de red observado, Senalizacion de llamada/);
+    const routePage = pdfText.split('endstream').find(page => page.includes('Ruta mixta observada'));
+    assert.ok(routePage);
+    assert.match(routePage, /RUTA DE LLAMADA OBSERVADA/);
+    assert.match(routePage, /Alcance: Synthetic limitation/);
     assert.match(pdfText, /\(Red de acceso o proveedor\) Tj/);
     assert.match(pdfText, /\(no confirmado\) Tj/);
     assert.doesNotMatch(pdfText, /\(Red de acceso o proveedor no confirmado\) Tj/);
     assert.doesNotMatch(pdfText, /consumer_isp_or_unknown/);
     assert.doesNotMatch(pdfText, /Timeline de auditoria/);
+});
+
+test('bounds aggregate evidence allocation across all referenced targets', () => {
+    assert.deepEqual(allocateEvidenceRecordLimits([3000, 3000, 50], 5000), [3000, 2000, 0]);
+    assert.deepEqual(allocateEvidenceRecordLimits([2, Number.NaN, -4, 3], 10), [2, 0, 0, 3]);
+    assert.deepEqual(allocateEvidenceRecordLimits([3, 4], 0), [0, 0]);
+});
+
+test('fails evidence export closed when its database snapshot cannot be read', async () => {
+    await assert.rejects(
+        buildEvidencePackage('CASE-DATABASE-UNAVAILABLE'),
+        /Database is unavailable while/,
+    );
 });
 
 test('declares when passive activity is truncated instead of presenting a partial export as complete', () => {
@@ -338,4 +369,127 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
     }
     assert.match(zipText, /routeClassification/);
     assert.match(zipText, /DIRECT_CONFIRMED_WITH_RELAY/);
+    assert.match(zipText, /Ruta mixta observada/);
+    assert.match(zipText, /Flujo de red observado/);
+});
+
+test('keeps route conclusions commercially equivalent across JSON, HTML and PDF', () => {
+    const expected = [
+        [{ classification: 'direct_confirmed', confidenceScore: 82, independentDirectEvidenceCount: 2, primaryCandidateIp: '203.0.113.50', evidenceSources: ['packet_flow', 'baileys_transport'] }, 'Ruta directa confirmada'],
+        [{ classification: 'direct_probable', confidenceScore: 68, independentDirectEvidenceCount: 1, primaryCandidateIp: '203.0.113.50', evidenceSources: ['packet_flow'] }, 'Ruta directa probable'],
+        [{ classification: 'relay_confirmed', confidenceScore: 78, independentDirectEvidenceCount: 0, primaryCandidateIp: null, evidenceSources: ['packet_flow'] }, 'Conexion mediante infraestructura de WhatsApp'],
+        [{ classification: 'mixed', confidenceScore: 82, independentDirectEvidenceCount: 2, primaryCandidateIp: '203.0.113.50', evidenceSources: ['packet_flow', 'baileys_transport'] }, 'Ruta mixta observada'],
+        [{ classification: 'unresolved', confidenceScore: 20, independentDirectEvidenceCount: 0, primaryCandidateIp: null, evidenceSources: ['packet_flow'] }, 'Ruta no determinada'],
+    ] as const;
+
+    for (const [routeFields, pdfLabel] of expected) {
+        const evidencePackage = sampleEvidencePackage();
+        Object.assign(evidencePackage.sections.callAnalysis[0].routeAssessment, routeFields);
+        const report = buildFinalCaseReport(evidencePackage);
+        const html = renderFinalCaseReportHtml(report);
+        const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+        const [route] = report.findings.callRoutes;
+        assert.ok(route);
+        const jsonLabel = route.presentation.classificationLabel;
+
+        assert.match(html, new RegExp(jsonLabel));
+        assert.match(pdf, new RegExp(pdfLabel));
+    }
+});
+
+test('labels legacy analyses without inventing v2 route evidence', () => {
+    const evidencePackage = sampleEvidencePackage();
+    delete evidencePackage.sections.callAnalysis[0].routeAssessment;
+
+    const report = buildFinalCaseReport(evidencePackage);
+    const [route] = report.findings.callRoutes;
+
+    assert.ok(route);
+    assert.equal(route.classification, 'unresolved');
+    assert.deepEqual(route.reasonCodes, []);
+    assert.deepEqual(route.limitations, ['legacy_route_assessment_unavailable']);
+    assert.match(renderFinalCaseReportHtml(report), /captura es histórica y no contiene una evaluación de ruta v2/i);
+});
+
+test('bounds route conclusions and declares partial coverage in every final report format', () => {
+    const evidencePackage = sampleEvidencePackage();
+    const template = evidencePackage.sections.callAnalysis[0];
+    evidencePackage.sections.callAnalysis = Array.from({ length: 251 }, (_, index) => ({
+        ...template,
+        callId: `CALL-${String(index + 1).padStart(3, '0')}`,
+    }));
+
+    const report = buildFinalCaseReport(evidencePackage);
+    const html = renderFinalCaseReportHtml(report);
+    const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+
+    assert.equal(report.version, '1.2');
+    assert.equal(report.findings.callRoutes.length, 250);
+    assert.deepEqual(report.findings.callRouteCoverage, {
+        returned: 250,
+        knownTotal: 251,
+        limit: 250,
+        truncated: true,
+        sourceTruncated: false,
+        sourceIncomplete: false,
+        totalIsLowerBound: false,
+    });
+    assert.match(html, /presenta 250 de 251 evaluaciones/);
+    assert.match(pdf, /Cobertura parcial: se presentan 250 de 251 evaluaciones/);
+    assert.match(pdf, /CALL-250/);
+    assert.doesNotMatch(pdf, /CALL-251/);
+});
+
+test('degrades malformed stored route assessments without breaking exports', () => {
+    const evidencePackage = sampleEvidencePackage();
+    evidencePackage.sections.callAnalysis[0].routeAssessment = {
+        assessmentVersion: 2,
+        classification: 'direct_confirmed',
+        confidenceScore: 100,
+        evidenceSources: 'packet_flow',
+        independentDirectEvidenceCount: 2,
+        primaryCandidateIp: '203.0.113.50',
+        reasonCodes: [],
+        limitations: [],
+    };
+
+    const report = buildFinalCaseReport(evidencePackage);
+    const [route] = report.findings.callRoutes;
+
+    assert.ok(route);
+    assert.equal(route.classification, 'unresolved');
+    assert.equal(route.confidenceScore, 0);
+    assert.deepEqual(route.evidenceSources, []);
+    assert.deepEqual(route.limitations, ['stored_observation_invalid']);
+    assert.match(renderFinalCaseReportHtml(report), /observación almacenada no superó la validación/i);
+    assert.match(renderFinalCaseReportPdf(report).toString('ascii'), /observacion almacenada no supero la validacion/i);
+});
+
+test('propagates partial source coverage even when the rendered route page is short', () => {
+    const evidencePackage = sampleEvidencePackage();
+    evidencePackage.manifest.coverage = {
+        audit: { returned: 5000, total: 5100, truncated: true, limit: 5000 },
+        evidenceLinks: { returned: 1, total: 1, truncated: false, limit: 5000 },
+        callAnalysis: {
+            returned: 1,
+            referenced: 1,
+            missingReferences: 0,
+            limit: 5000,
+            truncated: true,
+            referenceTotalIsLowerBound: true,
+        },
+    };
+
+    const report = buildFinalCaseReport(evidencePackage);
+
+    assert.deepEqual(report.findings.callRouteCoverage, {
+        returned: 1,
+        knownTotal: 1,
+        limit: 250,
+        truncated: true,
+        sourceTruncated: true,
+        sourceIncomplete: true,
+        totalIsLowerBound: true,
+    });
+    assert.match(renderFinalCaseReportHtml(report), /Evidence Package fuente declara cobertura parcial/);
 });

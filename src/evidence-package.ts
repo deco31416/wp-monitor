@@ -1,7 +1,44 @@
 import { createHash } from 'crypto';
-import { countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
+import { countAuditEvents, countCaseEvidenceLinks, countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
+import { normalizeStoredRouteAssessment } from './call-route-assessment.js';
 import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
+
+const EVIDENCE_SECTION_LIMIT = 5000;
+const EVIDENCE_TARGET_LIMIT = 250;
+const EVIDENCE_QUERY_CONCURRENCY = 8;
+const OBSERVED_ACTIVITY_TOTAL_LIMIT = 5000;
+const FINAL_REPORT_ROUTE_LIMIT = 250;
+
+async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const worker = async (): Promise<void> => {
+        while (nextIndex < items.length) {
+            const index = nextIndex++;
+            results[index] = await mapper(items[index]!, index);
+        }
+    };
+    await Promise.all(Array.from(
+        { length: Math.min(concurrency, items.length) },
+        () => worker(),
+    ));
+    return results;
+}
+
+export function allocateEvidenceRecordLimits(totals: readonly number[], aggregateLimit: number): number[] {
+    let remaining = Math.max(0, Math.trunc(aggregateLimit));
+    return totals.map(total => {
+        const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
+        const allocated = Math.min(safeTotal, remaining);
+        remaining -= allocated;
+        return allocated;
+    });
+}
 
 export function hashJson(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(value, null, 2)).digest('hex');
@@ -50,10 +87,13 @@ function extractTargetJids(
 }
 
 export async function buildEvidencePackage(caseId: string) {
-    const [caseRecord, auditEvents, evidenceLinks] = await Promise.all([
-        getCase(caseId),
-        getAuditEvents(caseId, 5000),
-        getCaseEvidenceLinks(caseId),
+    const strictRead = { failClosed: true } as const;
+    const [caseRecord, auditEvents, auditEventTotal, evidenceLinks, evidenceLinkTotal] = await Promise.all([
+        getCase(caseId, strictRead),
+        getAuditEvents(caseId, EVIDENCE_SECTION_LIMIT, strictRead),
+        countAuditEvents(caseId, strictRead),
+        getCaseEvidenceLinks(caseId, EVIDENCE_SECTION_LIMIT, strictRead),
+        countCaseEvidenceLinks(caseId, strictRead),
     ]);
 
     if (!caseRecord && auditEvents.length === 0 && evidenceLinks.length === 0) return null;
@@ -61,27 +101,63 @@ export async function buildEvidencePackage(caseId: string) {
     const directCallIds = evidenceLinks
         .filter(link => link.type === 'call_analysis')
         .map(link => link.refId);
-    const callIds = Array.from(new Set([...extractCallIdsFromAudit(auditEvents), ...directCallIds]));
-    const callAnalyses = await getCallAnalysesByCallIds(callIds, caseId);
-    const targetJids = extractTargetJids(auditEvents, evidenceLinks);
-    const activityStats = await Promise.all(targetJids.map(async targetJid => ({
+    const referencedCallIds = Array.from(new Set([...extractCallIdsFromAudit(auditEvents), ...directCallIds]));
+    const callIds = referencedCallIds.slice(0, EVIDENCE_SECTION_LIMIT);
+    const callAnalyses = await getCallAnalysesByCallIds(callIds, caseId, EVIDENCE_SECTION_LIMIT, strictRead);
+    const referencedTargetJids = extractTargetJids(auditEvents, evidenceLinks);
+    const targetJids = referencedTargetJids.slice(0, EVIDENCE_TARGET_LIMIT);
+    const activityStats = await mapWithConcurrency(targetJids, EVIDENCE_QUERY_CONCURRENCY, async targetJid => ({
         targetJid,
-        stats: await getStateDistribution(targetJid, caseId),
-    })));
-    const observedActivity = await Promise.all(targetJids.map(async targetJid => {
-        const limit = 5000;
-        const [events, total] = await Promise.all([
-            getObservedActivityEventsForCase(targetJid, caseId, limit),
-            countObservedActivityEvents(targetJid, caseId),
-        ]);
+        stats: await getStateDistribution(targetJid, caseId, undefined, strictRead),
+    }));
+    const observedActivityTotals = await mapWithConcurrency(
+        targetJids,
+        EVIDENCE_QUERY_CONCURRENCY,
+        targetJid => countObservedActivityEvents(targetJid, caseId, undefined, strictRead),
+    );
+    const observedActivityLimits = allocateEvidenceRecordLimits(
+        observedActivityTotals,
+        OBSERVED_ACTIVITY_TOTAL_LIMIT,
+    );
+    const observedActivity = await mapWithConcurrency(targetJids, EVIDENCE_QUERY_CONCURRENCY, async (targetJid, index) => {
+        const limit = observedActivityLimits[index]!;
+        const total = observedActivityTotals[index]!;
+        const events = limit > 0
+            ? await getObservedActivityEventsForCase(targetJid, caseId, limit, strictRead)
+            : [];
         return {
             targetJid,
             events,
             page: buildPageMetadata(events.length, total, limit),
         };
-    }));
+    });
     const networkSummary = buildNetworkSummary(auditEvents);
     const generatedAt = new Date().toISOString();
+    const auditPage = buildPageMetadata(auditEvents.length, auditEventTotal, EVIDENCE_SECTION_LIMIT);
+    const evidenceLinkPage = buildPageMetadata(evidenceLinks.length, evidenceLinkTotal, EVIDENCE_SECTION_LIMIT);
+    const returnedObservedActivity = observedActivity.reduce((sum, item) => sum + item.events.length, 0);
+    const knownObservedActivityTotal = observedActivityTotals.reduce((sum, total) => sum + total, 0);
+    const targetCoverage = {
+        returned: targetJids.length,
+        referenced: referencedTargetJids.length,
+        truncated: targetJids.length < referencedTargetJids.length,
+        limit: EVIDENCE_TARGET_LIMIT,
+    };
+    const observedActivityCoverage = {
+        returned: returnedObservedActivity,
+        total: knownObservedActivityTotal,
+        truncated: returnedObservedActivity < knownObservedActivityTotal || targetCoverage.truncated,
+        limit: OBSERVED_ACTIVITY_TOTAL_LIMIT,
+        totalIsLowerBound: targetCoverage.truncated,
+    };
+    const callAnalysisCoverage = {
+        returned: callAnalyses.length,
+        referenced: referencedCallIds.length,
+        missingReferences: Math.max(0, Math.min(referencedCallIds.length, EVIDENCE_SECTION_LIMIT) - callAnalyses.length),
+        limit: EVIDENCE_SECTION_LIMIT,
+        truncated: referencedCallIds.length > EVIDENCE_SECTION_LIMIT || evidenceLinkPage.truncated || auditPage.truncated,
+        referenceTotalIsLowerBound: evidenceLinkPage.truncated || auditPage.truncated,
+    };
 
     const sections = {
         case: caseRecord,
@@ -105,7 +181,7 @@ export async function buildEvidencePackage(caseId: string) {
 
     const manifest = {
         packageType: 'evidence-package',
-        version: '1.1',
+        version: '1.2',
         software: {
             name: 'WP MONITOR',
             version: SOFTWARE_VERSION,
@@ -123,16 +199,26 @@ export async function buildEvidencePackage(caseId: string) {
                 name: 'observedActivity',
                 format: 'json',
                 sha256: sectionHashes.observedActivity,
-                count: observedActivity.reduce((sum, item) => sum + item.events.length, 0),
-                totalAvailable: observedActivity.reduce((sum, item) => sum + item.page.total, 0),
-                truncated: observedActivity.some(item => item.page.truncated),
+                count: returnedObservedActivity,
+                totalAvailable: knownObservedActivityTotal,
+                truncated: observedActivityCoverage.truncated,
             },
             { name: 'networkSummary', format: 'json', sha256: sectionHashes.networkSummary },
         ],
+        coverage: {
+            audit: auditPage,
+            evidenceLinks: evidenceLinkPage,
+            callAnalysis: callAnalysisCoverage,
+            targets: targetCoverage,
+            observedActivity: observedActivityCoverage,
+        },
         limitations: [
             'Traffic analysis is based on observed metadata only.',
             'Candidate IPs do not prove identity, exact location, or ownership by a person.',
             'WhatsApp/WebRTC traffic may use relays, NAT, VPNs, CGNAT, or provider infrastructure.',
+            ...(targetCoverage.truncated || observedActivityCoverage.truncated
+                ? ['Evidence package coverage is bounded; consult manifest.coverage before interpreting totals.']
+                : []),
         ],
     };
 
@@ -268,10 +354,90 @@ const REPORT_LIMITATION_LABELS: Record<string, string> = {
     'WhatsApp/WebRTC traffic may use relays, NAT, VPNs, CGNAT, or provider infrastructure.': 'El tráfico de WhatsApp/WebRTC puede utilizar relays, NAT, VPN, CGNAT o infraestructura del proveedor.',
 };
 
+const REPORT_ROUTE_CLASSIFICATION_LABELS: Record<string, string> = {
+    direct_confirmed: 'Ruta directa confirmada',
+    direct_probable: 'Ruta directa probable',
+    relay_confirmed: 'Conexión mediante infraestructura de WhatsApp',
+    mixed: 'Ruta mixta observada',
+    unresolved: 'Ruta no determinada',
+};
+
+const REPORT_ROUTE_SOURCE_LABELS: Record<string, string> = {
+    baileys_transport: 'Señalización de llamada',
+    packet_flow: 'Flujo de red observado',
+    stun: 'Negociación STUN',
+    baseline: 'Línea base previa',
+    infrastructure_registry: 'Registro de infraestructura',
+    ip_enrichment: 'Contexto de red y GeoIP',
+};
+
+const REPORT_ROUTE_REASON_LABELS: Record<string, string> = {
+    PACKET_FLOW_MATCHES_BAILEYS_PEER: 'El flujo de red coincide con el endpoint señalado durante la llamada.',
+    STRONG_DIRECT_PACKET_PATTERN: 'Se observó un patrón bidireccional fuerte compatible con tráfico directo.',
+    PACKET_FLOW_MATCHES_STUN_PEER_ONLY: 'El flujo coincide únicamente con una referencia STUN y requiere corroboración independiente.',
+    DIRECT_CONFIRMED_WITH_RELAY: 'La ruta directa confirmada coexistió con tráfico de relay.',
+    DIRECT_PROBABLE_WITH_RELAY: 'La ruta directa probable coexistió con tráfico de relay.',
+    BAILEYS_RELAY_OBSERVED: 'La señalización indicó el uso de infraestructura relay.',
+    RELAY_PACKET_FLOW_OBSERVED: 'El flujo de paquetes confirmó tráfico mediante infraestructura relay.',
+    NO_CONCLUSIVE_ROUTE_EVIDENCE: 'No se reunieron evidencias suficientes para determinar la ruta.',
+    DNS_EXCLUDED_FROM_DIRECT_EVIDENCE: 'El tráfico DNS fue excluido de la evidencia de ruta directa.',
+    STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
+};
+
+const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
+    peer_signaling_without_attributable_endpoint: 'La señalización de pares no expuso un endpoint atribuible.',
+    stun_peer_is_not_independent_confirmation: 'La referencia STUN no constituye una segunda confirmación independiente.',
+    baseline_unavailable: 'No hubo una línea base previa separable.',
+    packet_capture_truncated: 'La captura alcanzó su límite y el análisis utiliza una muestra parcial.',
+    infrastructure_registry_degraded: 'El registro de infraestructura no estaba completamente disponible.',
+    no_eligible_direct_candidate: 'No apareció una IP elegible como candidata directa.',
+    unknown_transport_message_type: 'Se observó señalización de transporte todavía no clasificada.',
+    peer_candidate_payload_not_decoded: 'La señalización del candidato no pudo interpretarse como endpoint atribuible.',
+    node_traversal_truncated: 'La inspección de señalización alcanzó su límite de seguridad.',
+    sensitive_fields_excluded: 'Los campos sensibles fueron excluidos de la evidencia almacenada.',
+    endpoint_list_truncated: 'La lista de endpoints fue acotada por seguridad.',
+    malformed_endpoint_skipped: 'Se descartó un endpoint con formato inválido.',
+    stored_observation_invalid: 'Una observación almacenada no superó la validación del contrato.',
+    legacy_route_assessment_unavailable: 'La captura es histórica y no contiene una evaluación de ruta v2.',
+};
+
 function reportLabel(value: unknown, labels: Record<string, string>): string {
     const normalized = String(value ?? '').trim();
     if (!normalized) return 'No disponible';
     return labels[normalized] || normalized;
+}
+
+function reportConfidenceFromScore(value: unknown): string {
+    const score = Math.max(0, Math.min(100, Number(value) || 0));
+    if (score >= 75) return 'Alta';
+    if (score >= 45) return 'Media';
+    return 'Baja';
+}
+
+function reportRouteFallback(value: unknown): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return 'No disponible';
+    return normalized
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^./, character => character.toUpperCase());
+}
+
+function buildRoutePresentation(route: {
+    classification: string;
+    confidenceScore: number;
+    evidenceSources: string[];
+    reasonCodes: string[];
+    limitations: string[];
+}) {
+    return {
+        classificationLabel: reportLabel(route.classification, REPORT_ROUTE_CLASSIFICATION_LABELS),
+        confidenceLabel: reportConfidenceFromScore(route.confidenceScore),
+        evidenceLabels: route.evidenceSources.map(item => REPORT_ROUTE_SOURCE_LABELS[item] || reportRouteFallback(item)),
+        reasonLabels: route.reasonCodes.map(item => REPORT_ROUTE_REASON_LABELS[item] || reportRouteFallback(item)),
+        limitationLabels: route.limitations.map(item => REPORT_ROUTE_LIMITATION_LABELS[item] || reportRouteFallback(item)),
+    };
 }
 
 function reportObservedLabel(value: unknown): string {
@@ -409,17 +575,38 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         .sort((a: any, b: any) => b.score - a.score || b.packets - a.packets);
     const candidateIps = observedCallIps.filter((candidate: any) => candidate.isP2P);
     const nonConclusiveIpObservations = observedCallIps.filter((candidate: any) => !candidate.isP2P);
-    const callRoutes = callAnalysis.map((analysis: any) => ({
-        callId: analysis.callId,
-        targetJid: analysis.targetJid,
-        classification: analysis.routeAssessment?.classification || 'unresolved',
-        confidenceScore: analysis.routeAssessment?.confidenceScore || 0,
-        evidenceSources: analysis.routeAssessment?.evidenceSources || [],
-        independentDirectEvidenceCount: analysis.routeAssessment?.independentDirectEvidenceCount || 0,
-        primaryCandidateIp: analysis.routeAssessment?.primaryCandidateIp || null,
-        reasonCodes: analysis.routeAssessment?.reasonCodes || [],
-        limitations: analysis.routeAssessment?.limitations || [],
-    }));
+    const allCallRoutes = callAnalysis.map((analysis: any) => {
+        const normalizedAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment);
+        const route = {
+            callId: analysis.callId,
+            targetJid: analysis.targetJid,
+            classification: normalizedAssessment?.classification || 'unresolved',
+            confidenceScore: normalizedAssessment?.confidenceScore || 0,
+            evidenceSources: normalizedAssessment?.evidenceSources || [],
+            independentDirectEvidenceCount: normalizedAssessment?.independentDirectEvidenceCount || 0,
+            primaryCandidateIp: normalizedAssessment?.primaryCandidateIp || null,
+            reasonCodes: normalizedAssessment?.reasonCodes || [],
+            limitations: normalizedAssessment?.limitations || ['legacy_route_assessment_unavailable'],
+        };
+        return {
+            ...route,
+            presentation: buildRoutePresentation(route),
+        };
+    });
+    const callRoutes = allCallRoutes.slice(0, FINAL_REPORT_ROUTE_LIMIT);
+    const sourceCallCoverage = evidencePackage.manifest.coverage?.callAnalysis;
+    const sourceIncomplete = sourceCallCoverage
+        ? sourceCallCoverage.truncated || sourceCallCoverage.missingReferences > 0
+        : false;
+    const callRouteCoverage = {
+        returned: callRoutes.length,
+        knownTotal: allCallRoutes.length,
+        limit: FINAL_REPORT_ROUTE_LIMIT,
+        truncated: allCallRoutes.length > FINAL_REPORT_ROUTE_LIMIT || sourceIncomplete,
+        sourceTruncated: sourceCallCoverage?.truncated === true,
+        sourceIncomplete,
+        totalIsLowerBound: sourceCallCoverage?.referenceTotalIsLowerBound === true,
+    };
 
     const timeline = auditEvents
         .slice()
@@ -453,6 +640,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         nonConclusiveIpObservationCount: nonConclusiveIpObservations.length,
         highestCandidateScore: candidateIps[0]?.score || 0,
         routeAssessmentCount: callRoutes.filter((route: any) => route.classification !== 'unresolved').length,
+        callRouteTruncated: callRouteCoverage.truncated,
     };
 
     const findings = {
@@ -467,12 +655,13 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         candidateIps,
         nonConclusiveIpObservations,
         callRoutes,
+        callRouteCoverage,
         limitations: evidencePackage.manifest.limitations,
     };
 
     const reportWithoutIntegrity = {
         reportType: 'final-case-report',
-        version: '1.1',
+        version: '1.2',
         software: evidencePackage.manifest.software,
         summary,
         authorization: {
@@ -510,6 +699,33 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         : report.summary.highestCandidateScore >= 45
             ? 'medium'
             : 'low';
+    const routeCoverageUnit = report.findings.callRouteCoverage.knownTotal === 1 ? 'evaluación' : 'evaluaciones';
+    const routeReturnedUnit = report.findings.callRouteCoverage.returned === 1 ? 'evaluación' : 'evaluaciones';
+    const routeAvailableAdjective = report.findings.callRouteCoverage.returned === 1 ? 'disponible' : 'disponibles';
+    const routeCoverageNotice = report.findings.callRouteCoverage.truncated
+        ? report.findings.callRouteCoverage.sourceIncomplete
+            ? `<div class="notice">El informe presenta ${escapeHtml(report.findings.callRouteCoverage.returned)} ${routeReturnedUnit} de ruta ${routeAvailableAdjective}. El Evidence Package fuente declara cobertura parcial o referencias sin resultado; consulta su metadata de cobertura antes de interpretar el conjunto.</div>`
+            : `<div class="notice">El informe presenta ${escapeHtml(report.findings.callRouteCoverage.returned)} de ${escapeHtml(report.findings.callRouteCoverage.knownTotal)} ${routeCoverageUnit} de ruta. Consulta el Evidence Package para revisar los anexos disponibles.</div>`
+        : '';
+    const routeRows = report.findings.callRoutes.length
+        ? report.findings.callRoutes.map((route: any) => {
+            const presentation = route.presentation || buildRoutePresentation(route);
+            const routeTone = route.classification === 'direct_confirmed'
+                ? 'strong'
+                : route.classification === 'direct_probable' || route.classification === 'mixed'
+                    ? 'medium'
+                    : 'low';
+            return `
+            <tr>
+                <td><code>${escapeHtml(route.callId)}</code><br><span class="muted">${escapeHtml(route.targetJid)}</span></td>
+                <td><strong>${escapeHtml(presentation.classificationLabel)}</strong></td>
+                <td><span class="score ${routeTone}">${escapeHtml(presentation.confidenceLabel)} · ${escapeHtml(route.confidenceScore)}/100</span></td>
+                <td>${escapeHtml(presentation.evidenceLabels.join(' · ') || 'Sin fuentes concluyentes')}</td>
+                <td><code>${escapeHtml(route.primaryCandidateIp || 'No identificado')}</code><br><span class="muted">${escapeHtml(route.independentDirectEvidenceCount)} fuente(s) directa(s) independiente(s)</span></td>
+                <td>${escapeHtml(presentation.reasonLabels.join(' ') || 'Sin razones concluyentes')}<br><span class="muted">${escapeHtml(presentation.limitationLabels.join(' ') || 'Sin limitaciones adicionales registradas')}</span></td>
+            </tr>`;
+        }).join('')
+        : '<tr><td colspan="6" class="muted">No se registraron evaluaciones de ruta en los análisis vinculados.</td></tr>';
 
     const candidateRows = topCandidates.length
         ? topCandidates.map((candidate: any) => `
@@ -811,6 +1027,20 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
   </section>
 
   <section>
+    <h2>Ruta de Llamada Observada</h2>
+    <div class="notice">
+      Esta conclusión correlaciona señalización y tráfico de red observado durante la captura. No prueba identidad, ubicación exacta ni titularidad del contacto.
+    </div>
+    ${routeCoverageNotice}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Llamada</th><th>Conclusión</th><th>Confianza</th><th>Procedencia</th><th>Candidato principal</th><th>Evidencia y alcance</th></tr></thead>
+        <tbody>${routeRows}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
     <h2>Hallazgos de IP Candidata</h2>
     <div class="notice">
       Las IPs listadas son observaciones tecnicas dentro de una ventana autorizada. No prueban identidad, ubicacion exacta ni titularidad de una persona.
@@ -1107,6 +1337,45 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
         }
     }
 
+    // Keep the section heading, scope notice and first route together. The
+    // individual route block below performs its own exact pagination check.
+    pdf.ensure(report.findings.callRouteCoverage.truncated ? 240 : 190);
+    pdf.heading('Ruta de llamada observada');
+    pdf.paragraph('La conclusion correlaciona senalizacion y trafico de red observado durante la captura. No prueba identidad, ubicacion exacta ni titularidad del contacto.', 92, 8, '9A3412');
+    if (report.findings.callRouteCoverage.truncated) {
+        const unit = report.findings.callRouteCoverage.knownTotal === 1 ? 'evaluacion' : 'evaluaciones';
+        const returnedUnit = report.findings.callRouteCoverage.returned === 1 ? 'evaluacion' : 'evaluaciones';
+        const availableAdjective = report.findings.callRouteCoverage.returned === 1 ? 'disponible' : 'disponibles';
+        const coverageText = report.findings.callRouteCoverage.sourceIncomplete
+            ? `Cobertura parcial: se presentan ${report.findings.callRouteCoverage.returned} ${returnedUnit} de ruta ${availableAdjective}. El Evidence Package fuente declara cobertura parcial o referencias sin resultado.`
+            : `Cobertura parcial: se presentan ${report.findings.callRouteCoverage.returned} de ${report.findings.callRouteCoverage.knownTotal} ${unit} de ruta. El Evidence Package conserva la metadata de cobertura.`;
+        pdf.paragraph(coverageText, 92, 8, '9A3412');
+    }
+    if (report.findings.callRoutes.length === 0) {
+        pdf.paragraph('No se registraron evaluaciones de ruta en los analisis vinculados.');
+    } else {
+        for (const route of report.findings.callRoutes) {
+            const presentation = route.presentation || buildRoutePresentation(route);
+            const provenanceText = `Llamada ${route.callId}. Procedencia: ${presentation.evidenceLabels.join(', ') || 'Sin fuentes concluyentes'}. Candidato principal: ${route.primaryCandidateIp || 'No identificado'}. Fuentes directas independientes: ${route.independentDirectEvidenceCount}.`;
+            const reasonText = presentation.reasonLabels.length > 0
+                ? `Evidencia: ${presentation.reasonLabels.join(' ')}`
+                : null;
+            const limitationText = presentation.limitationLabels.length > 0
+                ? `Alcance: ${presentation.limitationLabels.join(' ')}`
+                : null;
+            const routeBlockHeight = 17
+                + (wrapPdfText(provenanceText, 92).length * 13 + 4)
+                + (reasonText ? wrapPdfText(reasonText, 92).length * 13 + 4 : 0)
+                + (limitationText ? wrapPdfText(limitationText, 92).length * 13 + 4 : 0);
+            pdf.ensure(routeBlockHeight);
+            pdf.text(pdf.margin, pdf.y, `${presentation.classificationLabel} - ${presentation.confidenceLabel} ${route.confidenceScore}/100`, 9, 'F2', route.classification === 'direct_confirmed' ? '166534' : route.classification === 'relay_confirmed' ? '0369A1' : '92400E');
+            pdf.y -= 13;
+            pdf.paragraph(provenanceText, 92, 8, '334155');
+            if (reasonText) pdf.paragraph(reasonText, 92, 8, '334155');
+            if (limitationText) pdf.paragraph(limitationText, 92, 8, '9A3412');
+        }
+    }
+
     pdf.heading('Hallazgos de IP candidata');
     pdf.rect(pdf.margin, pdf.y - 38, usable, 36, 'FFF7ED', 'FDBA74');
     pdf.text(pdf.margin + 10, pdf.y - 15, 'Nota tecnica', 8, 'F2', '9A3412');
@@ -1362,6 +1631,8 @@ function buildCsvAnnexes(
 
     const callRows = (evidencePackage.sections.callAnalysis || []).map((analysis: any) => {
         const candidates = Array.isArray(analysis.candidateIps) ? analysis.candidateIps : [];
+        const routeAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment);
+        const routeLimitations = routeAssessment?.limitations || ['legacy_route_assessment_unavailable'];
         const highestScore = candidates
             .map((candidate: any) => getCandidateScore(candidate))
             .sort((a: number, b: number) => b - a)[0] || 0;
@@ -1378,13 +1649,13 @@ function buildCsvAnnexes(
             candidates.length,
             highestScore,
             Array.isArray(analysis.metaIps) ? analysis.metaIps.length : 0,
-            analysis.routeAssessment?.classification || 'unresolved',
-            analysis.routeAssessment?.confidenceScore || 0,
-            analysis.routeAssessment?.independentDirectEvidenceCount || 0,
-            analysis.routeAssessment?.primaryCandidateIp || '',
-            analysis.routeAssessment?.evidenceSources || [],
-            analysis.routeAssessment?.reasonCodes || [],
-            analysis.routeAssessment?.limitations || [],
+            routeAssessment?.classification || 'unresolved',
+            routeAssessment?.confidenceScore || 0,
+            routeAssessment?.independentDirectEvidenceCount || 0,
+            routeAssessment?.primaryCandidateIp || '',
+            routeAssessment?.evidenceSources || [],
+            routeAssessment?.reasonCodes || [],
+            routeLimitations,
         ];
     });
 

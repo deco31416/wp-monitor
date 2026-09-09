@@ -18,10 +18,10 @@ El inventario local del `2026-08-25`, generado con `pnpm licenses list --prod`, 
 
 Una entrega de código, imagen o instalación autocontenida que incluya este componente debe conservar el texto de licencia y ofrecer el código fuente correspondiente requerido por GPLv3. WP MONITOR no debe venderse como distribución exclusivamente propietaria mientras esta dependencia forme parte del artefacto, salvo una revisión jurídica específica que autorice otro modelo.
 
-### `@img/sharp-libvips-linux-x64` `1.3.2`
+### `@img/sharp-libvips-linux-x64` `1.3.3`
 
 - licencia declarada por el paquete: `LGPL-3.0-or-later`;
-- procedencia: `sharp@0.35.3`, dependencia transitiva de `baileys@7.0.0-rc14`;
+- procedencia: `sharp@0.35.4`, dependencia multimedia de `baileys@7.0.0-rc14`;
 - código fuente y scripts de compilación: <https://github.com/lovell/sharp-libvips>;
 - avisos incluidos por el paquete: `node_modules/@img/sharp-libvips-linux-x64/README.md`;
 - uso: binarios precompilados de libvips y bibliotecas asociadas para procesamiento multimedia.

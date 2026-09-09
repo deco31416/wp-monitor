@@ -91,6 +91,9 @@ function createAdapter(): CaptureAgentAdapter {
                 ...(capturePhases ? { schemaVersion: 2, capturePhases } : {}),
             };
             status.isCapturing = false;
+            status.targetJid = null;
+            status.callId = null;
+            status.startTime = null;
             return result;
         },
     };
@@ -143,7 +146,7 @@ test('capture agent client completes the authenticated lifecycle and restores Da
             status: 'offer',
         }), true);
 
-        const result = await client.stopCallCapture();
+        const result = await client.stopCallCapture('CALL-REMOTE-001');
         assert.equal(result.callId, 'CALL-REMOTE-001');
         assert.equal(result.verdict, 'relay');
         assert.ok(result.startTime instanceof Date);
@@ -329,7 +332,7 @@ test('capture agent client rejects oversized and semantically invalid responses'
         }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
     });
     await assert.rejects(
-        invalidAnalysis.stopCallCapture(),
+        invalidAnalysis.stopCallCapture('CALL-001'),
         (error: unknown) => error instanceof CaptureAgentClientError
             && error.code === 'invalid_agent_response',
     );
@@ -377,7 +380,7 @@ test('capture agent client rejects oversized and semantically invalid responses'
         }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
     });
     await assert.rejects(
-        invalidNestedCandidate.stopCallCapture(),
+        invalidNestedCandidate.stopCallCapture('CALL-002'),
         (error: unknown) => error instanceof CaptureAgentClientError
             && error.code === 'invalid_agent_response',
     );
@@ -482,7 +485,7 @@ test('capture agent client accepts the additive v2 packet contract without requi
         })) as typeof fetch,
     });
 
-    const result = await client.stopCallCapture();
+    const result = await client.stopCallCapture('CALL-V2-001');
     assert.equal(result.schemaVersion, 2);
     assert.equal(result.candidateIps[0]?.addressFamily, 6);
     assert.equal(result.candidateIps[0]?.endpointRole, 'unknown');
@@ -512,7 +515,7 @@ test('capture agent client accepts the additive v2 packet contract without requi
             })) as typeof fetch,
         });
         await assert.rejects(
-            invalidClient.stopCallCapture(),
+            invalidClient.stopCallCapture('CALL-V2-001'),
             (error: unknown) => error instanceof CaptureAgentClientError
                 && error.code === 'invalid_agent_response',
         );
@@ -636,7 +639,7 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
             })) as typeof fetch,
         });
         await assert.rejects(
-            client.stopCallCapture(),
+            client.stopCallCapture('CALL-V2-002'),
             (error: unknown) => error instanceof CaptureAgentClientError
                 && error.code === 'invalid_agent_response',
         );

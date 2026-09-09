@@ -687,8 +687,10 @@ export class CaptureAgentClient {
         return true;
     }
 
-    async stopCallCapture(): Promise<CallAnalysisResult> {
-        return parseAnalysis(await this.request('POST', '/v1/call/stop', {}));
+    async stopCallCapture(callId: string): Promise<CallAnalysisResult> {
+        return parseAnalysis(await this.request('POST', '/v1/call/stop', {
+            callId: requireCallId(callId, 'callId'),
+        }));
     }
 
     private async request(method: 'GET' | 'POST', path: string, payload?: JsonObject): Promise<unknown> {

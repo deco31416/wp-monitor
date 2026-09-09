@@ -153,7 +153,8 @@ Para esa prueba:
 
 1. confirma que `7900` y `7901` escuchan solo en `127.0.0.1`, mientras `8080` es interno a la red de tunel;
 2. entra por el acceso/tunel protegido y la autenticación Selkies, enlaza WhatsApp Web y confirma que el perfil sobrevive a una recreacion sin `-v`; usa noVNC por SSH solo como contingencia;
-3. valida una captura corta de trafico UDP sintetico mediante el agente y el contador de paquetes;
+3. valida dos ciclos consecutivos de inicio, trafico UDP sintetico y parada;
+   ambos deben devolver paquetes y el agente debe permanecer `healthy`, sin reinicios;
 4. inicia manualmente la ventana de captura ligada a un caso activo;
 5. realiza una llamada entre cuentas propias/autorizadas;
 6. detiene la captura y revisa relays, infraestructura y candidatas sin afirmar identidad.

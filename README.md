@@ -308,6 +308,8 @@ The call-analysis view can include:
 - Backend-owned route assessment that separates confirmed direct, probable
   direct, relay, mixed, and unresolved outcomes with explicit evidence sources
   and limitations
+- Customer-facing route conclusions in the existing Call tab, with accessible
+  calibration, capture, processing, partial-result, and error states
 
 Candidate scoring is deliberately limited by sample size, directionality, infrastructure detection, and other correlation constraints. An observed address must never be presented as a verified person’s IP or exact location.
 
@@ -773,6 +775,7 @@ Only packet metadata is analyzed by this module; payload/content inspection is o
 A case evidence package can include:
 
 - Manifest with software version, generation timestamp, case identifier, and limitations
+- Explicit collection coverage metadata; audit events, evidence links, and linked call analyses are bounded to 5,000 records and declare partial source coverage
 - Case record and direct evidence links
 - Audit events
 - Call analyses linked through audited `callId` values
@@ -780,6 +783,7 @@ A case evidence package can include:
 - Session/case-scoped passive activity events without message content or raw message IDs
 - Network summary derived from capture audit events
 - Final report artifacts
+- Final report `1.2` with up to 250 call-route conclusions and explicit truncation metadata in JSON, HTML, and PDF
 - SHA-256 hash per section and package-level integrity hash
 - CSV annexes for audit events, evidence links, call analyses, passive activity, candidate IP observations, activity statistics, and network captures
 
@@ -818,8 +822,8 @@ The fixture checks required report sections, PDF generation, ZIP contents, integ
 |---|---|---|---|
 | Activity Bitácora JSON/HTML/PDF | One active tracking session | Passive signals, confidence, local/UTC timestamps, technical state changes and RTT when available | Fast chronological review without conflating passive activity and RTT |
 | Full Contact Report | One active tracking session/contact | Case/session scope, passive events, profile, RTT statistics, state distribution, behavior patterns, history, measurements and executive summary | Complete technical contact-level review |
-| Call Analysis History | One contact | Capture windows, route view, packet counts, infrastructure, candidate scoring, GeoIP/provider hints, limitations | Review of authorized local call/interaction captures |
-| Final Case Report JSON/HTML/PDF | Entire case | Case record, authorization, passive activity timeline, technical statistics, audit, evidence links, call analyses, IP observations, hashes and limitations | Formal case-level reporting |
+| Call Analysis History | One contact | Capture windows, commercial route conclusion, confidence, provenance, packet counts, infrastructure, candidate scoring, GeoIP/provider hints and limitations | Review of authorized local call/interaction captures |
+| Final Case Report JSON/HTML/PDF | Entire case | Case record, authorization, passive activity timeline, technical statistics, audit, evidence links, route conclusions, call analyses, IP observations, hashes and limitations | Formal case-level reporting |
 | Evidence Package JSON/ZIP | Entire case and archival artifacts | Manifest, case, audit, passive activity JSON/CSV, evidence links, analyses, reports, CSV annexes and SHA-256 integrity metadata | Chain-of-custody archive and external review |
 
 The Full Contact Report and Final Case Report are different products. The contact report summarizes one authorized contact inside the tracker; the final case report consolidates the broader case, including audit events, check-ins, local captures, call analyses, evidence links, and integrity metadata.

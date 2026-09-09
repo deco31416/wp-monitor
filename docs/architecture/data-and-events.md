@@ -130,6 +130,6 @@ sequenceDiagram
 - Los detalles persistidos de mensajes/receipts pueden incluir `messageIdHash`, pero no el ID crudo ni contenido del mensaje.
 - El reporte de contacto conserva `caseId`, `trackingSessionId`, la lista pasiva atribuible y la duracion calculada con señales pasivas aunque no exista RTT.
 - La API de actividad y los reportes declaran `returned`, `total`, `truncated` y `limit`; el total no se infiere del tamano de una pagina acotada.
-- El Evidence Package 1.1 incorpora `observedActivity`; el ZIP materializa `observed-activity.json` y `annexes/observed-activity.csv`, ambos cubiertos por hashes de integridad.
+- El Evidence Package 1.2 incorpora `observedActivity` y metadata de cobertura para auditoria, enlaces y analisis de llamada; el ZIP materializa `observed-activity.json` y `annexes/observed-activity.csv`, ambos cubiertos por hashes de integridad.
 - Un hash se calcula sobre una representacion canonica o archivo concreto; cualquier regeneracion produce un nuevo hash.
 - La procedencia debe viajar con el dato, no depender de memoria del operador.

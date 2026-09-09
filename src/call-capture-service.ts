@@ -132,16 +132,29 @@ export class CallCaptureService {
         });
     }
 
-    async stop(): Promise<CallAnalysisResult | null> {
+    async stop(expectedCallId?: string): Promise<CallAnalysisResult | null> {
         if (this.mode === 'local') return stopCallCapture();
         if (this.mode === 'agent') {
+            let callId = expectedCallId ?? this.activeAgentCapture?.callId;
+            if (!callId) {
+                const status = await this.getStatus();
+                callId = status.isCapturing ? status.callId ?? undefined : undefined;
+            }
+            if (!callId) return null;
             try {
-                const result = await this.agent!.stopCallCapture();
-                this.activeAgentCapture = null;
+                const result = await this.agent!.stopCallCapture(callId);
+                if (result.callId !== callId) {
+                    throw new CaptureAgentClientError(
+                        'Capture agent returned an analysis for a different call',
+                        502,
+                        'invalid_agent_response',
+                    );
+                }
+                if (this.activeAgentCapture?.callId === callId) this.activeAgentCapture = null;
                 return result;
             } catch (error) {
                 if (error instanceof CaptureAgentClientError && error.code === 'capture_not_active') {
-                    this.activeAgentCapture = null;
+                    if (this.activeAgentCapture?.callId === callId) this.activeAgentCapture = null;
                     return null;
                 }
                 throw error;

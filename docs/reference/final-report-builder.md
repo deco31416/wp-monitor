@@ -1,6 +1,6 @@
 # Final Report Builder
 
-Ultima actualizacion: 2026-08-21
+Ultima actualizacion: 2026-09-08
 
 ## Objetivo
 
@@ -12,7 +12,8 @@ El informe no reemplaza el `Evidence Package`; lo resume y referencia sus hashes
 
 - `GET /api/reports/:caseId/final`
   - Exporta `final-report.json`.
-  - Incluye resumen, alcance, señales pasivas observadas, estadisticas tecnicas, hallazgos, timeline, evidencia e integridad.
+  - Incluye resumen, alcance, señales pasivas observadas, estadisticas tecnicas,
+    conclusiones de ruta de llamada, hallazgos, timeline, evidencia e integridad.
 
 - `GET /api/reports/:caseId/final.html`
   - Exporta `final-report.html`.
@@ -28,7 +29,18 @@ El informe no reemplaza el `Evidence Package`; lo resume y referencia sus hashes
   - Incluye anexos CSV en `annexes/` para auditoria, evidencias, actividad pasiva, estadisticas tecnicas, analisis de llamada, IPs candidatas y capturas de red.
   - Incluye `annexes/csv-integrity.json` con SHA-256 por CSV.
 
-Los reportes conservan metadata `returned`, `total`, `truncated` y `limit` por target. El JSON y las representaciones humanas deben advertir cuando el limite de 5000 eventos deja un anexo parcial; el conteo total nunca se deriva solo del numero de filas exportadas.
+El Evidence Package `1.2` conserva metadata de cobertura para auditoria, enlaces
+de evidencia y referencias de analisis de llamada. Auditoria, enlaces y analisis
+se acotan a 5000 registros por seccion. La actividad observada se acota a 5000
+eventos en total para todo el paquete y a 250 targets referenciados; no se aplica
+el limite de 5000 de forma independiente a cada target. El manifiesto declara
+`returned`, totales conocidos, `truncated`, `limit` y si el total es un limite
+inferior por targets omitidos.
+
+El informe final `1.2` presenta como maximo 250 conclusiones de ruta. JSON,
+HTML y PDF incluyen `callRouteCoverage` y advierten si existen mas resultados o
+si la fuente ya estaba truncada. El conteo total nunca se deriva silenciosamente
+del numero de filas exportadas.
 
 ## Estructura UX del HTML
 
@@ -38,16 +50,19 @@ Los reportes conservan metadata `returned`, `total`, `truncated` y `limit` por t
 4. Alcance autorizado.
 5. Timeline de señales pasivas con fuente y confianza.
 6. Actividad pasiva y medicion RTT separadas; valores RTT no disponibles se muestran como `—`.
-7. Hallazgos de IP candidata con score y nota tecnica.
-8. Timeline de auditoria.
-9. Hashes de integridad.
-10. Limitaciones tecnicas.
+7. Ruta de llamada observada con conclusion comercial, confianza, procedencia,
+   candidato principal, razones y limitaciones.
+8. Hallazgos de IP candidata con score y nota tecnica.
+9. Timeline de auditoria.
+10. Hashes de integridad.
+11. Limitaciones tecnicas.
 
 ## Anexos CSV del ZIP
 
 - `annexes/audit-events.csv`: timeline tabular de eventos por caso.
 - `annexes/evidence-links.csv`: evidencias vinculadas y metadata.
-- `annexes/call-analysis.csv`: resumen por analisis de llamada.
+- `annexes/call-analysis.csv`: resumen por analisis de llamada con clasificacion
+  de ruta, score, fuentes, razones y limitaciones.
 - `annexes/activity-stats.csv`: resumen por contacto con conteos pasivos por fuente y metricas RTT separadas.
 - `annexes/observed-activity.csv`: eventos pasivos atribuibles al caso con UTC, target, fuente, tipo, etiqueta y confianza; no contiene contenido ni IDs crudos de mensajes.
 - `annexes/candidate-ips.csv`: IPs candidatas con score, categoria, ASN/ORG heuristico, puertos, GeoIP y nota tecnica.
@@ -62,6 +77,12 @@ Las celdas se exportan entre comillas y los valores que empiezan como formula de
 - Usar `trafico observado`, `relays`, `infraestructura` y `ruta observada`.
 - No afirmar identidad, ubicacion exacta ni titularidad.
 - GeoIP se presenta como pista tecnica aproximada, no como ubicacion verificada.
+- Traducir la clasificacion v2 a `Ruta directa confirmada`, `Ruta directa
+  probable`, `Conexion mediante infraestructura de WhatsApp`, `Ruta mixta
+  observada` o `Ruta no determinada`; los codigos tecnicos permanecen en anexos
+  para auditoria.
+- Una conclusion confirmada exige la evidencia definida por el correlador; la
+  capa de presentacion nunca eleva la confianza ni rellena datos historicos.
 
 ## Auditoria
 
@@ -90,11 +111,13 @@ El script `pnpm run qa:report-fixture` genera artefactos estables en `.runtime-l
 Validaciones actuales:
 
 - PDF multipagina.
-- Secciones HTML requeridas: señales observadas, actividad/medicion tecnica, hallazgos de IP candidata e integridad.
+- Secciones HTML requeridas: señales observadas, actividad/medicion tecnica,
+  ruta de llamada observada, hallazgos de IP candidata e integridad.
 - ZIP con `activity-stats.json`, `observed-activity.json`, `annexes/activity-stats.csv` y `annexes/observed-activity.csv`.
 - Marca de producto `WP MONITOR`.
 - Limitaciones tecnicas presentes.
-- Texto clave presente dentro del PDF: titulo, estadisticas, hallazgos, integridad, limitaciones y marca de desarrollo.
+- Texto clave presente dentro del PDF: titulo, estadisticas, conclusion de ruta,
+  procedencia, hallazgos, integridad, limitaciones y marca de desarrollo.
 - Ausencia de placeholders visibles: `undefined`, `null`, `NaN`, `[object Object]`.
 
 ## QA Visual

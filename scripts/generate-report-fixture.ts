@@ -17,7 +17,7 @@ function syntheticEvidencePackage(): any {
     return {
         manifest: {
             packageType: 'evidence-package',
-            version: '1.1',
+            version: '1.2',
             software: {
                 name: 'WP MONITOR',
                 version: SOFTWARE_VERSION,
@@ -26,6 +26,11 @@ function syntheticEvidencePackage(): any {
             caseId,
             generatedAt: '2026-06-18T00:00:00.000Z',
             contents: [],
+            coverage: {
+                audit: { returned: 1, total: 1, truncated: false, limit: 5000 },
+                evidenceLinks: { returned: 1, total: 1, truncated: false, limit: 5000 },
+                callAnalysis: { returned: 1, referenced: 1, missingReferences: 0, limit: 5000, truncated: false, referenceTotalIsLowerBound: false },
+            },
             limitations: [
                 'Fixture sintético de QA; no contiene datos de clientes ni de producción.',
                 'Las IP candidatas no prueban identidad, ubicación exacta ni titularidad de una persona.',
@@ -98,6 +103,16 @@ function syntheticEvidencePackage(): any {
                 metaIps: ['192.0.2.50'],
                 verdict: 'mixed',
                 captureInterface: 'fixture0',
+                routeAssessment: {
+                    assessmentVersion: 2,
+                    classification: 'mixed',
+                    confidenceScore: 88,
+                    evidenceSources: ['packet_flow', 'baileys_transport'],
+                    independentDirectEvidenceCount: 2,
+                    primaryCandidateIp: '203.0.113.50',
+                    reasonCodes: ['DIRECT_CONFIRMED_WITH_RELAY'],
+                    limitations: ['baseline_unavailable'],
+                },
             }],
             activityStats: [{
                 targetJid,
@@ -201,7 +216,9 @@ async function main(): Promise<void> {
     const reportJson = JSON.stringify(finalReport, null, 2);
 
     if (!html.includes('CASE-FIXTURE-001')) throw new Error('HTML fixture is missing the case ID');
+    if (!html.includes('Ruta mixta observada')) throw new Error('HTML fixture is missing the commercial route conclusion');
     if (pdf.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('PDF fixture has an invalid header');
+    if (!pdf.toString('ascii').includes('Ruta mixta observada')) throw new Error('PDF fixture is missing the commercial route conclusion');
     for (const expectedEntry of ['manifest.json', 'observed-activity.json', 'final-report.html', 'final-report.pdf', 'annexes/observed-activity.csv', 'annexes/csv-integrity.json']) {
         if (!zip.toString('latin1').includes(expectedEntry)) throw new Error(`ZIP fixture is missing ${expectedEntry}`);
     }

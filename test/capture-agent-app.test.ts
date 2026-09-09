@@ -31,7 +31,11 @@ async function withServer(
     }
 }
 
-function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boolean } {
+function buildAdapter(privileges = true): CaptureAgentAdapter & {
+    started: boolean;
+    stopCount: number;
+    waitedForClose: boolean;
+} {
     const phaseLifecycle = new CallCapturePhaseLifecycle(() => new Date(NOW));
     const state: CallCaptureStatus = {
         isCapturing: false,
@@ -41,8 +45,10 @@ function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boole
         packetsCollected: 0,
         elapsed: 0,
     };
-    const adapter: CaptureAgentAdapter & { started: boolean } = {
+    const adapter: CaptureAgentAdapter & { started: boolean; stopCount: number; waitedForClose: boolean } = {
         started: false,
+        stopCount: 0,
+        waitedForClose: false,
         capturePrivilegesAvailable: () => privileges,
         listInterfaces: () => [{ name: 'eth-test', address: '192.0.2.10', description: 'Synthetic interface' }],
         getCallCaptureStatus: () => ({ ...state }),
@@ -60,6 +66,7 @@ function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boole
         ),
         stopCallCapture: () => {
             if (!state.isCapturing) return null;
+            adapter.stopCount += 1;
             const result: CallAnalysisResult = {
                 callId: state.callId!,
                 targetJid: state.targetJid!,
@@ -74,7 +81,14 @@ function buildAdapter(privileges = true): CaptureAgentAdapter & { started: boole
                 captureInterface: '192.0.2.10',
             };
             state.isCapturing = false;
+            state.targetJid = null;
+            state.callId = null;
+            state.startTime = null;
             return result;
+        },
+        waitForCallCaptureClose: async () => {
+            await Promise.resolve();
+            adapter.waitedForClose = true;
         },
     };
     return adapter;
@@ -150,7 +164,17 @@ test('starts and stops one authenticated capture while rejecting replay', async 
         assert.equal((await replay.json()).code, 'replayed_request');
 
         const stopPath = '/v1/call/stop';
-        const stopBody = '{}';
+        const mismatchedStopBody = JSON.stringify({ callId: 'CALL-OTHER-001' });
+        const mismatchedStop = await fetch(`${baseUrl}${stopPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', stopPath, mismatchedStopBody, 'nonce_stop_mismatch_01'),
+            body: mismatchedStopBody,
+        });
+        assert.equal(mismatchedStop.status, 409);
+        assert.equal((await mismatchedStop.json()).code, 'capture_stop_mismatch');
+        assert.equal(adapter.stopCount, 0);
+
+        const stopBody = JSON.stringify({ callId: 'CALL-001' });
         const stop = await fetch(`${baseUrl}${stopPath}`, {
             method: 'POST',
             headers: signedHeaders('POST', stopPath, stopBody, 'nonce_stop_12345678901'),
@@ -158,8 +182,73 @@ test('starts and stops one authenticated capture while rejecting replay', async 
         });
         const result = await stop.json();
         assert.equal(stop.status, 200);
+        assert.equal(adapter.waitedForClose, true);
+        assert.equal(adapter.stopCount, 1);
         assert.equal(result.callId, 'CALL-001');
         assert.equal(result.verdict, 'insufficient_data');
+
+        const retry = await fetch(`${baseUrl}${stopPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', stopPath, stopBody, 'nonce_stop_retry_000001'),
+            body: stopBody,
+        });
+        assert.equal(retry.status, 200);
+        assert.deepEqual(await retry.json(), result);
+        assert.equal(adapter.stopCount, 1);
+    });
+});
+
+test('retries a stop by call ID after the original HTTP response is lost', async () => {
+    const adapter = buildAdapter();
+    let releaseClose!: () => void;
+    let reportCloseWaitStarted!: () => void;
+    const closeGate = new Promise<void>(resolve => { releaseClose = resolve; });
+    const closeWaitStarted = new Promise<void>(resolve => { reportCloseWaitStarted = resolve; });
+    adapter.waitForCallCaptureClose = async () => {
+        reportCloseWaitStarted();
+        await closeGate;
+        adapter.waitedForClose = true;
+    };
+
+    await withServer(adapter, async baseUrl => {
+        const startPath = '/v1/call/start';
+        const startBody = JSON.stringify({
+            interfaceAddr: '192.0.2.10',
+            targetJid: '573001112233@s.whatsapp.net',
+            callId: 'CALL-RETRY-001',
+            isVideo: false,
+        });
+        const start = await fetch(`${baseUrl}${startPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', startPath, startBody, 'nonce_retry_start_0001'),
+            body: startBody,
+        });
+        assert.equal(start.status, 201);
+
+        const stopPath = '/v1/call/stop';
+        const stopBody = JSON.stringify({ callId: 'CALL-RETRY-001' });
+        const controller = new AbortController();
+        const lostResponse = fetch(`${baseUrl}${stopPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', stopPath, stopBody, 'nonce_retry_stop_00001'),
+            body: stopBody,
+            signal: controller.signal,
+        });
+        await closeWaitStarted;
+        controller.abort();
+        await assert.rejects(lostResponse, error => error instanceof Error && error.name === 'AbortError');
+
+        releaseClose();
+        const retry = await fetch(`${baseUrl}${stopPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', stopPath, stopBody, 'nonce_retry_stop_00002'),
+            body: stopBody,
+        });
+        const result = await retry.json();
+        assert.equal(retry.status, 200);
+        assert.equal(result.callId, 'CALL-RETRY-001');
+        assert.equal(adapter.stopCount, 1);
+        assert.equal(adapter.waitedForClose, true);
     });
 });
 

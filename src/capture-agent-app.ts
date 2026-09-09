@@ -34,6 +34,7 @@ export interface CaptureAgentAdapter {
     ): boolean;
     observeCallCapturePhase(targetJid: string, observedCallId: string, status: CallCapturePhaseStatus): boolean;
     stopCallCapture(): CallAnalysisResult | null;
+    waitForCallCaptureClose?(): Promise<void>;
 }
 
 export interface CaptureAgentAppOptions {
@@ -47,6 +48,14 @@ interface RawBodyRequest extends Request {
 }
 
 const CALL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{2,119}$/;
+const COMPLETED_CAPTURE_TTL_MS = 60 * 60 * 1_000;
+const COMPLETED_CAPTURE_LIMIT = 32;
+
+interface CompletedCapture {
+    result: CallAnalysisResult;
+    closePromise: Promise<void>;
+    completedAt: number;
+}
 
 function parseJsonObject(req: RawBodyRequest, res: Response): Record<string, unknown> | null {
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
@@ -87,10 +96,24 @@ function buildAgentAuthMiddleware(verifier: CaptureAgentRequestVerifier): Reques
 
 export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express {
     const app = express();
+    const now = options.now ?? Date.now;
+    const completedCaptures = new Map<string, CompletedCapture>();
     const verifier = new CaptureAgentRequestVerifier(
         options.sharedSecret,
         options.now ? { now: options.now } : {},
     );
+
+    const pruneCompletedCaptures = (): void => {
+        const expiresBefore = now() - COMPLETED_CAPTURE_TTL_MS;
+        for (const [callId, completed] of completedCaptures) {
+            if (completed.completedAt < expiresBefore) completedCaptures.delete(callId);
+        }
+        while (completedCaptures.size > COMPLETED_CAPTURE_LIMIT) {
+            const oldestCallId = completedCaptures.keys().next().value as string | undefined;
+            if (!oldestCallId) break;
+            completedCaptures.delete(oldestCallId);
+        }
+    };
 
     app.disable('x-powered-by');
     app.use((_req, res, next) => {
@@ -180,6 +203,14 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             res.status(400).json({ error: 'Capture request validation failed', details: validationErrors });
             return;
         }
+        pruneCompletedCaptures();
+        if (completedCaptures.has(callId)) {
+            res.status(409).json({
+                error: 'The call ID was already completed recently',
+                code: 'capture_call_id_reused',
+            });
+            return;
+        }
 
         const started = options.adapter.startCallCapture(interfaceAddr, target.value!, callId, isVideo, {
             trigger: trigger as CallCaptureTrigger,
@@ -238,12 +269,50 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
         res.json({ ok: true, captureCallId, observedCallId, status });
     });
 
-    app.post('/v1/call/stop', (_req, res) => {
+    app.post('/v1/call/stop', async (request, res) => {
+        const body = parseJsonObject(request as RawBodyRequest, res);
+        if (!body) return;
+        const callId = cleanText(body.callId, 120);
+        if (!CALL_ID_PATTERN.test(callId)) {
+            res.status(400).json({
+                error: 'Stop request validation failed',
+                details: ['callId must be 3-120 safe characters'],
+            });
+            return;
+        }
+
+        pruneCompletedCaptures();
+        const completed = completedCaptures.get(callId);
+        if (completed) {
+            await completed.closePromise;
+            res.json(completed.result);
+            return;
+        }
+
+        const active = options.adapter.getCallCaptureStatus();
+        if (active.isCapturing && active.callId !== callId) {
+            res.status(409).json({
+                error: 'Stop request does not match the active capture',
+                code: 'capture_stop_mismatch',
+            });
+            return;
+        }
         const result = options.adapter.stopCallCapture();
         if (!result) {
             res.status(409).json({ error: 'No active call capture exists', code: 'capture_not_active' });
             return;
         }
+        if (result.callId !== callId) {
+            res.status(500).json({
+                error: 'Capture result does not match the requested call',
+                code: 'capture_result_mismatch',
+            });
+            return;
+        }
+        const closePromise = options.adapter.waitForCallCaptureClose?.() ?? Promise.resolve();
+        completedCaptures.set(callId, { result, closePromise, completedAt: now() });
+        pruneCompletedCaptures();
+        await closePromise;
         res.json(result);
     });
 

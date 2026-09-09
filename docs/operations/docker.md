@@ -80,7 +80,8 @@ Comprueba ademas:
 5. PID 1 del agente con UID/GID 1000, `NoNewPrivs=1` y capabilities efectivas `NET_RAW/NET_ADMIN` solamente;
 6. PID 1 de Redis con UID 999/GID 1000, `NoNewPrivs=1` y `CapEff/CapBnd=0`;
 7. `7900/7901` enlazados únicamente a `127.0.0.1`, `8080` accesible solo desde la red de tunel, y backend/cliente sin publicaciones host en Dokploy;
-8. una captura UDP sintetica antes de utilizar una llamada real autorizada;
+8. dos ciclos consecutivos de inicio, captura UDP sintetica y parada; ambos
+   deben devolver resultado y el agente debe permanecer `healthy`, sin reinicios;
 9. caso, llamada, persistencia, informe y auditoria con datos de prueba.
 
 `docker exec capture-agent id` abre por defecto un proceso auxiliar como root y no demuestra el usuario del servicio. Consulta `/proc/1/status` para auditar PID 1.

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 const REVIEWED_COPYLEFT = new Map([
     ['GPL-3.0:libsignal@6.0.0', 'Baileys runtime dependency; see THIRD_PARTY_NOTICES.md'],
-    ['LGPL-3.0-or-later:@img/sharp-libvips-linux-x64@1.3.2', 'Sharp/Baileys image runtime; see THIRD_PARTY_NOTICES.md'],
+    ['LGPL-3.0-or-later:@img/sharp-libvips-linux-x64@1.3.3', 'Sharp/Baileys image runtime; see THIRD_PARTY_NOTICES.md'],
 ]);
 const REVIEW_REQUIRED = /AGPL|GPL|LGPL|UNKNOWN|UNLICENSED|SEE LICENSE/i;
 

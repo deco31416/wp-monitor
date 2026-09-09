@@ -485,7 +485,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     probable; no se fabrica una confirmacion. No se tocaron produccion, Docker
     runtime, volumenes ni datos persistentes.
 
-- [ ] **OBS-20.11 — Experiencia comercial en Llamada y reportes** — `TODO`
+- [x] **OBS-20.11 — Experiencia comercial en Llamada y reportes** — `DONE (E2 LOCAL)`
   - Alcance: presentar ruta observada, confianza, evidencias, limitaciones y
     procedencia dentro de la pestaña actual, sin añadir vistas principales.
   - Aceptacion: loading, calibrando, capturando, parcial, error, relay, probable
@@ -494,8 +494,22 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     Patrones ni Perfil.
   - Evidencia requerida: pruebas de componente, accesibilidad, snapshots y
     paridad de exportaciones.
+  - Evidencia: la pestaña existente presenta `routeAssessment` v2 con etiquetas
+    comerciales, confianza, procedencia, candidato principal, razones y limites;
+    historicos sin v2 quedan identificados sin fabricar evidencia. Estados de
+    carga, calibracion, captura, procesamiento, parcial y error usan regiones
+    accesibles. JSON incorpora una presentacion aditiva y HTML/PDF/ZIP conservan
+    la misma conclusion. Specs dirigidos cubren cinco clasificaciones y el
+    snapshot semantico; la regresion evita separar encabezado, evidencia y
+    limitaciones entre paginas. La revision severa posterior cerro navegacion
+    por teclado, normalizacion defensiva de historicos, limites de colecciones y
+    cobertura explicita en los contratos Evidence Package/informe final `1.2`.
+    QA completa del 2026-09-08: 323 backend y 38 frontend, typechecks, lint,
+    builds, documentos y ambos audits en verde. La fixture A4 de dos paginas fue
+    regenerada e inspeccionada visualmente. No se tocaron produccion ni Docker
+    runtime; E3/E4 quedan para `OBS-20.12`.
 
-- [ ] **OBS-20.12 — Regresion, runtime y cierre operacional** — `TODO`
+- [ ] **OBS-20.12 — Regresion, runtime y cierre operacional** — `IN PROGRESS (E3 LOCAL)`
   - Alcance: completar documentacion, matriz automatizada, smoke local, staging,
     rollback y una validacion VPS autorizada.
   - Aceptacion: sin regresiones en sesiones Baileys, captura manual/automatica,
@@ -504,6 +518,18 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
   - Afecta: `OBS-25`, `OBS-26`, `OBS-27` y `OBS-28`.
   - Evidencia requerida: E2 completa, E3 local/staging y E4 solo con autorizacion
     explicita.
+  - Evidencia local: stack Docker completamente aislado con MongoDB, Redis y
+    volumenes sinteticos; backend, frontend, navegador y agente saludables. Dos
+    ciclos consecutivos sobre los artefactos finales registraron 77 y 41
+    paquetes sin reinicios del agente. El cierre nativo de libpcap se confirma
+    mediante su callback real antes de permitir reutilizacion; el JID ausente
+    falla con 400.
+    JSON, ZIP, HTML y PDF se generaron, el ZIP valido integridad y el caso,
+    sesion e informe sobrevivieron al reinicio del backend. noVNC y Selkies
+    autenticado respondieron 200 en loopback. El readiness general quedo 503
+    solo por la sesion WhatsApp sintetica no enlazada, condicion esperada en
+    este harness. Produccion, sesiones y volumenes reales no se tocaron.
+    Quedan staging y E4 autorizada antes de marcar la tarea como terminada.
 
 ### F. Experiencia comercial unificada
 

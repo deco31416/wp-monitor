@@ -29,7 +29,9 @@ flowchart TD
     Geo[DB-IP principal e ip-api complementario]
     Consistency[Contexto de prefijo y contradicciones]
     Correlator[Correlador de ruta v2 en backend]
-    Result[Resultado, auditoria y reporte]
+    Presentation[Presentacion comercial accesible]
+    Exports[JSON, HTML, PDF y ZIP]
+    Result[Resultado y auditoria]
 
     Backend -->|start/phase/status/stop firmado| Agent
     Backend --> Local
@@ -47,6 +49,8 @@ flowchart TD
     Packets --> Stun --> Correlator
     Backend --> Transport --> Correlator
     Correlator --> Result
+    Result --> Presentation
+    Result --> Exports
 ```
 
 ## Decisiones
@@ -69,3 +73,8 @@ El contrato v2 usa `direct_confirmed`, `direct_probable`, `relay_confirmed`,
 `mixed` o `unresolved`. Los valores historicos `p2p`, `relay`, `mixed` e
 `insufficient_data` se conservan como alias compatibles. Ninguno confirma por
 si solo identidad, dispositivo o ubicacion fisica.
+
+La pestaña Llamada consume la conclusion v2 sin crear otra vista. Presenta
+confianza, procedencia, candidato principal, razones y alcance con lenguaje
+comercial; una captura historica sin `routeAssessment` se identifica como tal.
+Los reportes JSON, HTML, PDF y ZIP conservan la misma conclusion.
