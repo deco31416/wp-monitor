@@ -80,3 +80,19 @@ test('detach is idempotent and prevents later raw dispatch', () => {
     assert.deepEqual(receipts, []);
     assert.deepEqual(errors, []);
 });
+
+test('reports asynchronous handler rejection without creating an unhandled rejection', async () => {
+    const errors: string[] = [];
+    const hub = new BaileysRawNodeHub({
+        onCallNode: async () => { throw new Error('synthetic rejection'); },
+        onReceiptNode: async () => {},
+        onError: (_error, context) => { errors.push(`${context.operation}:${context.event}`); },
+    });
+    const emitter = new FakeEmitter();
+    hub.attach(emitter);
+
+    emitter.emit('CB:call', {});
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.deepEqual(errors, ['dispatch:CB:call']);
+});

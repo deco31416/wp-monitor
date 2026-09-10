@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "scenario": "manual_web_call_without_correlated_start",
+  "provenance": "sanitized_from_authorized_vps_e4_2026_09_09",
+  "capture": {
+    "captureCallId": "E4-CAPTURE-SYNTHETIC",
+    "targetJid": "573001112233@s.whatsapp.net",
+    "startedAt": "2026-09-09T12:16:01.000Z",
+    "endedAt": "2026-09-09T12:21:00.000Z",
+    "durationSec": 299,
+    "totalPackets": 5197
+  },
+  "observations": {
+    "operatorObservedWebCall": true,
+    "backendCallStatuses": [],
+    "correlatedCallStart": false
+  },
+  "endpoints": [
+    { "ip": "192.0.2.11", "provider": "meta", "category": "meta", "role": "relay", "packets": 3244 },
+    { "ip": "192.0.2.12", "provider": "meta", "category": "meta", "role": "relay", "packets": 1450 },
+    { "ip": "192.0.2.13", "provider": "meta", "category": "meta", "role": "relay", "packets": 215 },
+    { "ip": "192.0.2.14", "provider": "meta", "category": "meta", "role": "relay", "packets": 214 },
+    { "ip": "192.0.2.15", "provider": "meta", "category": "meta", "role": "relay", "packets": 14 },
+    { "ip": "198.51.100.21", "provider": "google", "category": "stun_turn", "role": "stun_turn", "packets": 24 },
+    { "ip": "198.51.100.22", "provider": "google", "category": "stun_turn", "role": "stun_turn", "packets": 22 },
+    { "ip": "198.51.100.23", "provider": "google", "category": "stun_turn", "role": "stun_turn", "packets": 14 }
+  ],
+  "expected": {
+    "metaEndpointCount": 5,
+    "otherInfrastructureEndpointCount": 3,
+    "baselinePackets": 5197,
+    "activeCallPackets": 0,
+    "classification": "unresolved",
+    "confidenceScore": 0,
+    "primaryCandidateIp": null
+  }
+}

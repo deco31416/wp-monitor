@@ -118,6 +118,11 @@ temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla
 llamada, contacto, caso y sesion; una operacion Lua deduplica, limita y renueva
 el TTL. En captura manual, el `callId` real solo se vincula cuando el ciclo de
 fases acepta la llamada observada; una llamada concurrente no puede reemplazarlo.
+Los nodos raw `transport` y `relaylatency` atraviesan el mismo contrato de fases
+que el evento normalizado `call`. Este fallback cierra la linea base cuando
+WhatsApp Web entrega señalizacion de transporte sin una oferta normalizada; no
+inicia capturas, no atribuye endpoints y conserva idempotencia si luego llega el
+evento normalizado.
 Al terminar cualquier captura, el backend consume el estado correspondiente de
 forma atomica y lo agrega como `transportEvidence` v2. Una caida de Redis
 degrada esa evidencia secundaria, no la actividad de llamada.

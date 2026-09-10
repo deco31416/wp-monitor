@@ -4,7 +4,7 @@ Estado del plan: `EN EJECUCION`
 
 Rama de trabajo: `develop`
 
-Ultima revision: `2026-09-07`
+Ultima revision: `2026-09-09`
 
 Este archivo es un tablero de ingenieria, no una declaracion de funcionalidad
 publicada. Una tarea solo cambia a `DONE` cuando su criterio de aceptacion tiene
@@ -270,7 +270,7 @@ de comportamiento y proceso de release autorizado.
     estados incompletos quedan como no concluyentes.
   - Afecta: Actividad, Resumen y Llamada.
 
-- [ ] **OBS-20 — Correlacion Baileys, navegador y captura** — `TODO`
+- [ ] **OBS-20 — Correlacion Baileys, navegador y captura** — `IN PROGRESS`
   - Aceptacion: IDs y ventanas relacionan eventos sin presentar IP de relay como
     IP confirmada del contacto.
   - Afecta: Llamada, Informes y Auditoria.
@@ -530,6 +530,94 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     solo por la sesion WhatsApp sintetica no enlazada, condicion esperada en
     este harness. Produccion, sesiones y volumenes reales no se tocaron.
     Quedan staging y E4 autorizada antes de marcar la tarea como terminada.
+  - Evidencia VPS parcial del 2026-09-09: captura manual e informes operaron con
+    5.197 paquetes y el registro de infraestructura separo cinco endpoints Meta
+    y tres endpoints Google/STUN/cloud. La llamada iniciada desde WhatsApp Web no
+    produjo `correlatedCallStart`; por ello no existio una subventana activa
+    atribuible y la conclusion responsable fue `unresolved`. El hallazgo no
+    demuestra una IP candidata descartada, pero obliga a auditar correlacion y
+    falsos negativos antes de promocionar.
+
+##### Desglose correctivo aprobado para OBS-20.12
+
+- [x] **OBS-20.12A — Cronologia y reproduccion sanitizada** — `DONE (E2 LOCAL)`
+  - Reconstruir captura, eventos Baileys/raw, IDs opacos, fases y timestamps sin
+    contenido ni identificadores crudos.
+  - Cierre: una fixture reproduce `baseline disponible`, ausencia de inicio
+    correlacionado y cero paquetes activos sin depender del VPS.
+  - Evidencia: `test/fixtures/e4-web-call-without-correlated-start.json` conserva
+    solo direcciones reservadas de documentacion, un JID sintetico y los conteos
+    agregados autorizados. `test/e4-call-correlation-regression.test.ts`
+    reconstruye la captura manual sin estados backend, confirma 5.197 paquetes
+    de baseline, cero activos, cinco endpoints Meta, tres Google/STUN y resultado
+    `unresolved` 0/100 sin candidata. Pruebas dirigidas 15/15 y typecheck de tests
+    pasan el 2026-09-09.
+
+- [ ] **OBS-20.12B — Correlacion WhatsApp Web/Baileys/captura** — `IN PROGRESS (E2 LOCAL)`
+  - Determinar si el evento falta, llega con PN/LID distinto, usa otro `callId`,
+    llega fuera de ventana o solo aparece como nodo raw.
+  - Cierre: llamadas entrantes y salientes autorizadas vinculan una unica llamada
+    sin mezclar contactos, casos, duplicados, reconexiones o eventos tardios.
+  - Evidencia local: la causa estatica era una divergencia entre rutas: el evento
+    normalizado `call` actualizaba el ciclo de fases, mientras `CB:call`
+    `transport/relaylatency` solo persistia evidencia de transporte. Ambas rutas
+    usan ahora `call-capture-correlation`, que valida el mismo vocabulario,
+    conserva la primera transicion, rechaza otra llamada/contacto y no inicia una
+    captura ni promueve IPs. El hub raw captura tambien rechazos asincronos sin
+    producir promesas no manejadas. Pruebas dirigidas 19/19 y typecheck pasan.
+    Falta E3/E4 con llamadas Web entrante y saliente autorizadas para cerrar.
+
+- [ ] **OBS-20.12C — Ventana diferencial confiable** — `TODO`
+  - Separar de forma verificable linea base, negociacion, llamada activa y cierre.
+  - Cierre: una llamada correlacionada produce paquetes activos; una captura sin
+    correlacion permanece no atribuible y nunca fabrica una ruta.
+
+- [ ] **OBS-20.12D — Libro completo de endpoints** — `TODO`
+  - Conservar para cada IP publica conteos totales/base/llamada, bytes, direccion,
+    puertos, protocolo, tiempos, inteligencia de red y decision explicable.
+  - Cierre: ninguna IP publica desaparece silenciosamente entre captura,
+    analisis, persistencia, interfaz e informes.
+
+- [ ] **OBS-20.12E — Auditoria de falsos negativos** — `TODO`
+  - Separar exclusiones fuertes de clasificaciones contextuales y revisar rangos
+    amplios, coincidencias ASN y reglas textuales de cloud/CDN/hosting.
+  - Cierre: Meta, DNS exacto y salida propia permanecen excluidos; Google/cloud y
+    observaciones ambiguas se conservan visibles con procedencia y motivo, sin
+    promoverlas automaticamente como contacto.
+
+- [ ] **OBS-20.12F — Scoring de ruta y contexto de red v3** — `TODO`
+  - Separar probabilidad de ruta directa de estimacion geografica de la red.
+    Aplicar delta frente a baseline, inicio temporal, bidireccionalidad,
+    densidad, ICE/Baileys/STUN y tipo de ASN antes del contexto geografico.
+  - El pais telefonico se obtiene dinamicamente del numero objetivo canonico
+    guardado en la sesion (`targetJid`/PN), mediante resolucion E.164 mantenible.
+    `+57`, `+52` y `+58` son solo ejemplos: no se mantiene una lista comercial
+    limitada a esos prefijos ni se infiere el prefijo desde paquetes o GeoIP.
+  - El numero objetivo aporta un unico prior contextual por evaluacion; no se
+    cuenta como evidencia nueva en cada captura. Coincidencia, divergencia o
+    roaming no sustituyen evidencia de ruta.
+  - Cierre: modelo determinista, versionado, explicable y calibrado con fixtures
+    autorizadas antes de considerar aprendizaje estadistico.
+
+- [ ] **OBS-20.12G — Experiencia comercial e informes** — `TODO`
+  - Integrar conclusion, candidatas, infraestructura, observaciones, razones,
+    radio de incertidumbre y contradicciones en `Llamada`, sin pestana nueva.
+  - Cierre: paridad semantica y de limites en JSON, HTML, PDF, ZIP y Evidence
+    Package.
+
+- [ ] **OBS-20.12H — Matriz automatizada de regresion** — `TODO`
+  - Cubrir relay, directa probable/confirmada, mixta, sin correlacion, trafico de
+    fondo, ASN residencial/movil, cloud ambiguo, roaming, IPv4/IPv6, historicos,
+    duplicados, eventos fuera de orden e informes.
+  - Cierre: QA completa y contratos afectados en verde, sin secretos ni contenido
+    privado en logs o artefactos.
+
+- [ ] **OBS-20.12I — Runtime, E4 y cierre** — `TODO`
+  - Repetir ciclos sinteticos, stop idempotente, staging aislado, persistencia y
+    una llamada VPS autorizada; revisar tambien deriva Compose antes de promover.
+  - Cierre: evidencia E4 coherente con la ruta realmente observada. Un resultado
+    solo relay es valido; una candidata directa no es requisito ni puede
+    fabricarse.
 
 ### F. Experiencia comercial unificada
 

@@ -80,6 +80,12 @@ import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
 import { CallCaptureService } from './call-capture-service.js';
+import {
+    canBindObservedCall,
+    correlateCallCapturePhase,
+    type CallCaptureCorrelationResult,
+    type CallCaptureCorrelationSource,
+} from './call-capture-correlation.js';
 import { quarantineAuthStateContents } from './auth-state-rotation.js';
 
 const originalConsoleLog = console.log.bind(console);
@@ -1529,23 +1535,7 @@ async function publishCallLiveState(
 async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<void> {
     const { call, jid } = event;
     await publishCallLiveState(call, 'baileys', jid);
-    let phaseObserved = false;
-    try {
-        phaseObserved = await callCaptureService.observeCallEvent(jid, call.id, call.status);
-    } catch (error) {
-        const code = error instanceof CaptureAgentClientError ? error.code : 'capture_phase_failed';
-        console.warn(`[CALL] Capture phase update failed (${code}); call activity remains available`);
-    }
-    if (
-        phaseObserved
-        && activeCallAuditContext
-        && activeCallAuditContext.targetJid === jid
-        && activeCallAuditContext.callId !== call.id
-        && !activeCallAuditContext.observedCallId
-        && (call.status === 'offer' || call.status === 'accept')
-    ) {
-        activeCallAuditContext.observedCallId = call.id;
-    }
+    await observeCorrelatedCallPhase(jid, call.id, call.status, 'baileys');
 
     // Auto-start only when a default case context is configured and the call
     // belongs to an explicitly active tracking session.
@@ -1652,7 +1642,50 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
     }, result.targetJid);
 }
 
-function handleRawCallNode(value: unknown): void {
+function bindObservedCallToManualCapture(
+    result: CallCaptureCorrelationResult,
+    targetJid: string,
+    observedCallId: string,
+): boolean {
+    if (!canBindObservedCall(result, activeCallAuditContext
+        ? {
+            targetJid: activeCallAuditContext.targetJid,
+            captureCallId: activeCallAuditContext.callId,
+            ...(activeCallAuditContext.observedCallId
+                ? { observedCallId: activeCallAuditContext.observedCallId }
+                : {}),
+        }
+        : null, targetJid, observedCallId)) {
+        return false;
+    }
+
+    if (!activeCallAuditContext) return false;
+    activeCallAuditContext.observedCallId = observedCallId;
+    console.log(`[CALL] Manual capture correlated | source: ${result.source} | phase: ${result.status}`);
+    return true;
+}
+
+async function observeCorrelatedCallPhase(
+    targetJid: string,
+    observedCallId: string,
+    status: string,
+    source: CallCaptureCorrelationSource,
+): Promise<boolean> {
+    try {
+        const result = await correlateCallCapturePhase(
+            (jid, callId, phaseStatus) => callCaptureService.observeCallEvent(jid, callId, phaseStatus),
+            { source, targetJid, observedCallId, status },
+        );
+        bindObservedCallToManualCapture(result, targetJid, observedCallId);
+        return result.accepted;
+    } catch (error) {
+        const code = error instanceof CaptureAgentClientError ? error.code : 'capture_phase_failed';
+        console.warn(`[CALL] Capture phase update failed (${code}); call activity remains available`);
+        return false;
+    }
+}
+
+async function handleRawCallNode(value: unknown): Promise<void> {
     try {
         const node = value as BinaryNode;
         const [infoChild] = getAllBinaryNodeChildren(node);
@@ -1686,6 +1719,14 @@ function handleRawCallNode(value: unknown): void {
                     pendingCallTransportWrites.add(pending);
                     void pending.finally(() => pendingCallTransportWrites.delete(pending));
                 }
+            }
+            if (jid) {
+                await observeCorrelatedCallPhase(
+                    jid,
+                    transportObservation.callId,
+                    transportObservation.action,
+                    'raw_transport',
+                );
             }
         }
         const reason = infoChild.attrs?.reason || infoChild.attrs?.status || '';

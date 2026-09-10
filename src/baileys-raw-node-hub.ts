@@ -4,8 +4,8 @@ export interface BaileysRawNodeEmitter {
 }
 
 export interface BaileysRawNodeHubOptions {
-    onCallNode: (node: unknown) => void;
-    onReceiptNode: (node: unknown) => void;
+    onCallNode: (node: unknown) => void | Promise<void>;
+    onReceiptNode: (node: unknown) => void | Promise<void>;
     onError: (error: unknown, context: { operation: 'dispatch' | 'detach'; event: 'CB:call' | 'CB:receipt' }) => void;
 }
 
@@ -61,10 +61,13 @@ export class BaileysRawNodeHub {
     private dispatch(
         event: 'CB:call' | 'CB:receipt',
         node: unknown,
-        handler: (value: unknown) => void,
+        handler: (value: unknown) => void | Promise<void>,
     ): void {
         try {
-            handler(node);
+            const result = handler(node);
+            void Promise.resolve(result).catch(error => {
+                this.options.onError(error, { operation: 'dispatch', event });
+            });
         } catch (error) {
             this.options.onError(error, { operation: 'dispatch', event });
         }
