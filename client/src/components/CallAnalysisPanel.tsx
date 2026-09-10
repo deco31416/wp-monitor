@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 import { ExternalLink, Globe, History, Monitor, Phone, Shield, Square, Target, Wifi } from 'lucide-react';
-import { CallAnalysisResult, CallEvent, CandidateIP, type CallCapturePhases, type CallRouteAssessment, type CaseRecord } from '../types';
+import { CallAnalysisResult, CallEvent, CandidateIP, type CallCapturePhases, type CallRouteAssessment, type CaseRecord, type OperatorCallMarker } from '../types';
 
 interface CallAnalysisPanelProps {
     callAnalysis: CallAnalysisResult | null;
@@ -10,6 +10,9 @@ interface CallAnalysisPanelProps {
     callEvent: CallEvent | null;
     callPacketCount: number;
     callStopping: boolean;
+    callOperatorMarker: OperatorCallMarker | null;
+    callMarkerPending: boolean;
+    operatorMarkerAvailable: boolean;
     callCaseId: string;
     callOperatorName: string;
     callAuthorizationNote: string;
@@ -19,6 +22,7 @@ interface CallAnalysisPanelProps {
     onCaseIdChange: (value: string) => void;
     onStartManualCapture: () => void;
     onStopManualCapture: () => void;
+    onOperatorCallMarker: (marker: OperatorCallMarker) => void;
     onSelectAnalysis: (analysis: CallAnalysisResult) => void;
 }
 
@@ -29,6 +33,9 @@ export function CallAnalysisPanel({
     callEvent,
     callPacketCount,
     callStopping,
+    callOperatorMarker,
+    callMarkerPending,
+    operatorMarkerAvailable,
     callCaseId,
     callOperatorName,
     callAuthorizationNote,
@@ -38,6 +45,7 @@ export function CallAnalysisPanel({
     onCaseIdChange,
     onStartManualCapture,
     onStopManualCapture,
+    onOperatorCallMarker,
     onSelectAnalysis,
 }: CallAnalysisPanelProps) {
     return (
@@ -84,7 +92,7 @@ export function CallAnalysisPanel({
                     />
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                     {!callCapturing ? (
                         <button
                             onClick={onStartManualCapture}
@@ -96,16 +104,51 @@ export function CallAnalysisPanel({
                     ) : (
                         <button
                             onClick={onStopManualCapture}
-                            disabled={callStopping}
+                            disabled={callStopping || callMarkerPending}
                             className="btn-danger flex items-center gap-2 !text-xs !py-2 !px-4 animate-pulse disabled:opacity-60 disabled:cursor-wait"
                         >
                             <Square size={14} /> {callStopping ? 'Analizando captura...' : `Detener Captura (${callPacketCount} paquetes)`}
                         </button>
                     )}
+                    {callCapturing && operatorMarkerAvailable && callOperatorMarker !== 'call_ended' && (
+                        <button
+                            type="button"
+                            disabled={callStopping || callMarkerPending}
+                            onClick={() => onOperatorCallMarker(
+                                callOperatorMarker === 'call_connected' ? 'call_ended'
+                                    : callOperatorMarker === 'call_started' ? 'call_connected'
+                                        : 'call_started',
+                            )}
+                            className="btn-primary flex items-center gap-2 !text-xs !py-2 !px-4 disabled:opacity-60 disabled:cursor-wait"
+                        >
+                            <Target size={14} />
+                            {callMarkerPending
+                                ? 'Registrando marcador...'
+                                : callOperatorMarker === 'call_connected'
+                                    ? 'Marcar fin de llamada'
+                                    : callOperatorMarker === 'call_started'
+                                        ? 'Marcar llamada conectada'
+                                        : 'Marcar inicio de llamada'}
+                        </button>
+                    )}
+                    {callCapturing && operatorMarkerAvailable && callOperatorMarker === 'call_started' && (
+                        <button
+                            type="button"
+                            disabled={callStopping || callMarkerPending}
+                            onClick={() => onOperatorCallMarker('call_ended')}
+                            className="btn-secondary flex items-center gap-2 !text-xs !py-2 !px-4 disabled:opacity-60 disabled:cursor-wait"
+                        >
+                            <Square size={14} /> Marcar fin sin conexión
+                        </button>
+                    )}
+                    {callCapturing && operatorMarkerAvailable && callOperatorMarker === 'call_ended' && (
+                        <span className="badge-success !text-xs">Fin de llamada marcado</span>
+                    )}
                 </div>
 
                 <p className="mt-2 text-[10px] text-txt-dim">
                     La captura se asociara al caso seleccionado y usara su operador y autorizacion registrados.
+                    Durante la captura, marca el inicio justo antes de llamar, la conexion solo cuando contesten y el fin al colgar.
                 </p>
 
                 {callCaptureError && (

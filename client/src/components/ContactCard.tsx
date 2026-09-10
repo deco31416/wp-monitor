@@ -4,7 +4,7 @@ import { Square, Activity, Wifi, Smartphone, Monitor, Clock, Database, BarChart3
 import clsx from 'clsx';
 import { socket } from '../socket';
 import { API_URL, authFetch, downloadAuthenticatedFile } from '../auth';
-import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type CaseRecord, type ObservedActivityEvent, type ObservedActivityResponse, type TrackerDeviceInfo } from '../types';
+import { CallAnalysisResult, CallCaptureStarted, CallEvent, selectPrimaryTrackerDevice, type CallCaptureMarkerAcknowledgement, type CaseRecord, type ObservedActivityEvent, type ObservedActivityResponse, type OperatorCallMarker, type TrackerDeviceInfo } from '../types';
 import { ActivityJournalPanel } from './ActivityJournalPanel';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
@@ -296,6 +296,10 @@ export function ContactCard({
     const [callEvent, setCallEvent] = useState<CallEvent | null>(null);
     const [callPacketCount, setCallPacketCount] = useState(0);
     const [callStopping, setCallStopping] = useState(false);
+    const [callCaptureId, setCallCaptureId] = useState<string | null>(null);
+    const [callCaptureTrigger, setCallCaptureTrigger] = useState<'manual' | 'auto' | null>(null);
+    const [callOperatorMarker, setCallOperatorMarker] = useState<OperatorCallMarker | null>(null);
+    const [callMarkerPending, setCallMarkerPending] = useState(false);
     const [selectedCallCaseId, setSelectedCallCaseId] = useState('');
     const [callCaptureError, setCallCaptureError] = useState<string | null>(null);
     const [trackingCaseId, setTrackingCaseId] = useState<string | null>(null);
@@ -340,9 +344,19 @@ export function ContactCard({
         function onCallCaptureStarted(data: CallCaptureStarted) {
             if (data.targetJid === jid) {
                 setCallCapturing(true);
+                setCallCaptureId(data.callId);
+                setCallCaptureTrigger(data.trigger);
+                setCallOperatorMarker(null);
+                setCallMarkerPending(false);
                 setCallStopping(false);
                 setCallCaptureError(null);
                 setCallPacketCount(0);
+            }
+        }
+        function onCallCaptureMarker(data: CallCaptureMarkerAcknowledgement) {
+            if (data.targetJid === jid && data.callId === callCaptureId) {
+                setCallOperatorMarker(data.marker);
+                setCallMarkerPending(false);
             }
         }
         function onCallPacket() {
@@ -354,6 +368,10 @@ export function ContactCard({
             if (result.targetJid === jid) {
                 setCallAnalysis(result);
                 setCallCapturing(false);
+                setCallCaptureId(null);
+                setCallCaptureTrigger(null);
+                setCallOperatorMarker(null);
+                setCallMarkerPending(false);
                 setCallStopping(false);
                 setCallPacketCount(0);
                 // Refresh history
@@ -362,15 +380,17 @@ export function ContactCard({
         }
         socket.on('call-event', onCallEvent);
         socket.on('call-capture-started', onCallCaptureStarted);
+        socket.on('call-capture-marker', onCallCaptureMarker);
         socket.on('call-packet', onCallPacket);
         socket.on('call-analysis', onCallAnalysis);
         return () => {
             socket.off('call-event', onCallEvent);
             socket.off('call-capture-started', onCallCaptureStarted);
+            socket.off('call-capture-marker', onCallCaptureMarker);
             socket.off('call-packet', onCallPacket);
             socket.off('call-analysis', onCallAnalysis);
         };
-    }, [jid, fetchCallHistory]);
+    }, [jid, callCaptureId, fetchCallHistory]);
 
     const handleStartManualCapture = async () => {
         if (!callTrafficAvailable) return;
@@ -397,11 +417,50 @@ export function ContactCard({
             if (!response.ok) {
                 throw new Error(await readApiError(response));
             }
+            const started = await response.json() as { callId?: string; trigger?: string };
+            if (!started.callId) throw new Error('La captura inicio sin un identificador verificable');
             setCallCapturing(true);
+            setCallCaptureId(started.callId);
+            setCallCaptureTrigger('manual');
+            setCallOperatorMarker(null);
+            setCallMarkerPending(false);
             setCallStopping(false);
             setCallPacketCount(0);
         } catch (error) {
             setCallCaptureError(error instanceof Error ? error.message : 'Error iniciando captura manual');
+        }
+    };
+
+    const handleOperatorCallMarker = async (marker: OperatorCallMarker) => {
+        if (!callCaptureId || !callCapturing || callMarkerPending || callStopping) return;
+        setCallCaptureError(null);
+        setCallMarkerPending(true);
+        try {
+            const response = await authFetch(`${API_URL}/api/call-capture/marker`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callId: callCaptureId,
+                    targetJid: jid,
+                    caseId: callCaseId,
+                    marker,
+                }),
+            });
+            if (!response.ok) throw new Error(await readApiError(response));
+            const acknowledgement = await response.json() as CallCaptureMarkerAcknowledgement;
+            if (
+                acknowledgement.ok !== true
+                || acknowledgement.callId !== callCaptureId
+                || acknowledgement.targetJid !== jid
+                || acknowledgement.marker !== marker
+            ) {
+                throw new Error('El servidor devolvio un marcador de llamada inconsistente');
+            }
+            setCallOperatorMarker(marker);
+        } catch (error) {
+            setCallCaptureError(error instanceof Error ? error.message : 'Error registrando el marcador de llamada');
+        } finally {
+            setCallMarkerPending(false);
         }
     };
 
@@ -421,6 +480,10 @@ export function ContactCard({
                 setCallCaptureError(result.message);
             }
             setCallCapturing(false);
+            setCallCaptureId(null);
+            setCallCaptureTrigger(null);
+            setCallOperatorMarker(null);
+            setCallMarkerPending(false);
             setCallStopping(false);
             setCallPacketCount(0);
         } catch (error) {
@@ -1174,6 +1237,9 @@ export function ContactCard({
                                 callEvent={callEvent}
                                 callPacketCount={callPacketCount}
                                 callStopping={callStopping}
+                                callOperatorMarker={callOperatorMarker}
+                                callMarkerPending={callMarkerPending}
+                                operatorMarkerAvailable={callCaptureTrigger === 'manual'}
                                 callCaseId={callCaseId}
                                 callOperatorName={callOperatorName}
                                 callAuthorizationNote={callAuthorizationNote}
@@ -1183,6 +1249,7 @@ export function ContactCard({
                                 onCaseIdChange={selectCallCase}
                                 onStartManualCapture={handleStartManualCapture}
                                 onStopManualCapture={handleStopManualCapture}
+                                onOperatorCallMarker={handleOperatorCallMarker}
                                 onSelectAnalysis={setCallAnalysis}
                             />
                         )}

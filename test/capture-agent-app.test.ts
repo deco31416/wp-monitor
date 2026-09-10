@@ -61,8 +61,11 @@ function buildAdapter(privileges = true): CaptureAgentAdapter & {
             phaseLifecycle.start({ captureCallId: callId, targetJid, ...context });
             return true;
         },
-        observeCallCapturePhase: (targetJid, observedCallId, status) => (
-            phaseLifecycle.observe(targetJid, observedCallId, status)
+        observeCallCapturePhase: (targetJid, observedCallId, status, observation) => (
+            phaseLifecycle.observe(targetJid, observedCallId, status, observation)
+        ),
+        markOperatorCallCapturePhase: (targetJid, marker) => (
+            phaseLifecycle.markOperatorPhase(targetJid, marker)
         ),
         stopCallCapture: () => {
             if (!state.isCapturing) return null;
@@ -123,7 +126,7 @@ test('exposes public liveness and readiness without interface details', async ()
             version: SOFTWARE_VERSION,
             status: 'ready',
             capturePrivileges: true,
-            capabilities: { callCapturePhases: 1 },
+            capabilities: { callCapturePhases: 2, operatorCallMarkers: 1 },
         });
     });
 });
@@ -276,6 +279,8 @@ test('accepts signed call phases and rejects replay, tampering, mismatch, and ph
             targetJid: '573001112233@s.whatsapp.net',
             observedCallId: 'OBSERVED-PHASE-001',
             status: 'offer',
+            evidenceSource: 'baileys_normalized',
+            evidenceConfidence: 'protocol',
         });
         const offerHeaders = signedHeaders('POST', phasePath, offerBody, 'nonce_phase_offer_0001');
         const offer = await fetch(`${baseUrl}${phasePath}`, {
@@ -308,6 +313,8 @@ test('accepts signed call phases and rejects replay, tampering, mismatch, and ph
             targetJid: '573001112233@s.whatsapp.net',
             observedCallId: 'OBSERVED-PHASE-001',
             status: 'accept',
+            evidenceSource: 'baileys_normalized',
+            evidenceConfidence: 'protocol',
         });
         const mismatch = await fetch(`${baseUrl}${phasePath}`, {
             method: 'POST',
@@ -316,6 +323,21 @@ test('accepts signed call phases and rejects replay, tampering, mismatch, and ph
         });
         assert.equal(mismatch.status, 409);
         assert.equal((await mismatch.json()).code, 'capture_phase_mismatch');
+
+        const falseConfidenceBody = JSON.stringify({
+            captureCallId: 'CAPTURE-PHASE-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            observedCallId: 'OBSERVED-PHASE-001',
+            status: 'accept',
+            evidenceSource: 'baileys_raw',
+            evidenceConfidence: 'inferred',
+        });
+        const falseConfidence = await fetch(`${baseUrl}${phasePath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', phasePath, falseConfidenceBody, 'nonce_phase_confidence1'),
+            body: falseConfidenceBody,
+        });
+        assert.equal(falseConfidence.status, 400);
 
         const acceptBody = offerBody.replace('offer', 'accept');
         const accept = await fetch(`${baseUrl}${phasePath}`, {
@@ -333,6 +355,80 @@ test('accepts signed call phases and rejects replay, tampering, mismatch, and ph
         });
         assert.equal(regressed.status, 409);
         assert.equal((await regressed.json()).code, 'capture_phase_rejected');
+    });
+});
+
+test('accepts signed operator markers and rejects order, mismatch, and replay', async () => {
+    const adapter = buildAdapter();
+    await withServer(adapter, async baseUrl => {
+        const startPath = '/v1/call/start';
+        const startBody = JSON.stringify({
+            interfaceAddr: '192.0.2.10',
+            targetJid: '573001112233@s.whatsapp.net',
+            callId: 'CAPTURE-MARKER-001',
+            isVideo: false,
+            trigger: 'manual',
+        });
+        const start = await fetch(`${baseUrl}${startPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', startPath, startBody, 'nonce_marker_start_001'),
+            body: startBody,
+        });
+        assert.equal(start.status, 201);
+
+        const markerPath = '/v1/call/marker';
+        const connectedBody = JSON.stringify({
+            captureCallId: 'CAPTURE-MARKER-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            marker: 'call_connected',
+        });
+        const outOfOrder = await fetch(`${baseUrl}${markerPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', markerPath, connectedBody, 'nonce_marker_order_001'),
+            body: connectedBody,
+        });
+        assert.equal(outOfOrder.status, 409);
+        assert.equal((await outOfOrder.json()).code, 'capture_phase_rejected');
+
+        const mismatchBody = JSON.stringify({
+            captureCallId: 'CAPTURE-MARKER-OTHER',
+            targetJid: '573001112233@s.whatsapp.net',
+            marker: 'call_started',
+        });
+        const mismatch = await fetch(`${baseUrl}${markerPath}`, {
+            method: 'POST',
+            headers: signedHeaders('POST', markerPath, mismatchBody, 'nonce_marker_mismatch1'),
+            body: mismatchBody,
+        });
+        assert.equal(mismatch.status, 409);
+        assert.equal((await mismatch.json()).code, 'capture_phase_mismatch');
+
+        const startedBody = JSON.stringify({
+            captureCallId: 'CAPTURE-MARKER-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            marker: 'call_started',
+        });
+        const headers = signedHeaders('POST', markerPath, startedBody, 'nonce_marker_started01');
+        const started = await fetch(`${baseUrl}${markerPath}`, {
+            method: 'POST',
+            headers,
+            body: startedBody,
+        });
+        assert.equal(started.status, 200);
+        assert.deepEqual(await started.json(), {
+            ok: true,
+            captureCallId: 'CAPTURE-MARKER-001',
+            targetJid: '573001112233@s.whatsapp.net',
+            marker: 'call_started',
+        });
+
+        const replay = await fetch(`${baseUrl}${markerPath}`, {
+            method: 'POST',
+            headers,
+            body: startedBody,
+        });
+        assert.equal(replay.status, 401);
+        assert.equal((await replay.json()).code, 'replayed_request');
     });
 });
 

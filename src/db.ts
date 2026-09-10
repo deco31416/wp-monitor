@@ -2153,8 +2153,8 @@ export async function deleteCaseEvidenceLink(caseId: string, type: CaseEvidenceT
     }
 }
 
-export async function saveAuditEvent(event: Omit<AuditEventDoc, 'timestamp' | 'timestampUtc'>): Promise<void> {
-    if (!db) return;
+export async function saveAuditEventVerified(event: Omit<AuditEventDoc, 'timestamp' | 'timestampUtc'>): Promise<boolean> {
+    if (!db) return false;
     try {
         const timestamp = new Date();
         await caseRecords.updateOne(
@@ -2186,9 +2186,15 @@ export async function saveAuditEvent(event: Omit<AuditEventDoc, 'timestamp' | 't
             timestampUtc: timestamp.toISOString(),
         });
         console.log(`[AUDIT] ${event.scope}:${event.action}`);
+        return true;
     } catch (err) {
         console.error('[DB] Error saving audit event:', err);
+        return false;
     }
+}
+
+export async function saveAuditEvent(event: Omit<AuditEventDoc, 'timestamp' | 'timestampUtc'>): Promise<void> {
+    await saveAuditEventVerified(event);
 }
 
 export async function getAuditEvents(caseId: string, limit: number = 100, options: DbReadOptions = {}): Promise<AuditEventDoc[]> {

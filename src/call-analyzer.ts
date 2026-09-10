@@ -29,7 +29,12 @@ import {
     CallCapturePhaseLifecycle,
     classifyCapturePacketPhase,
 } from './call-capture-phases.js';
-import type { CallCapturePhases, CallCaptureTrigger } from './call-capture-phases.js';
+import type {
+    CallCapturePhaseObservation,
+    CallCapturePhases,
+    CallCaptureTrigger,
+    OperatorCallMarker,
+} from './call-capture-phases.js';
 import {
     lookupNetworkIntelligence,
     scoreCandidate,
@@ -443,8 +448,17 @@ export function startCallCapture(
     }
 }
 
-export function observeCallCapturePhase(targetJid: string, observedCallId: string, status: string): boolean {
-    return capturePhaseLifecycle.observe(targetJid, observedCallId, status);
+export function observeCallCapturePhase(
+    targetJid: string,
+    observedCallId: string,
+    status: string,
+    observation?: CallCapturePhaseObservation,
+): boolean {
+    return capturePhaseLifecycle.observe(targetJid, observedCallId, status, observation);
+}
+
+export function markOperatorCallCapturePhase(targetJid: string, marker: OperatorCallMarker): boolean {
+    return capturePhaseLifecycle.markOperatorPhase(targetJid, marker);
 }
 
 /**

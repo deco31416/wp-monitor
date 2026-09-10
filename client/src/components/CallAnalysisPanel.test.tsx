@@ -31,6 +31,9 @@ function panel(callAnalysis: CallAnalysisResult | null, overrides: Partial<Compo
             callEvent={null}
             callPacketCount={0}
             callStopping={false}
+            callOperatorMarker={null}
+            callMarkerPending={false}
+            operatorMarkerAvailable={true}
             callCaseId="CASE-001"
             callOperatorName="operator"
             callAuthorizationNote="Authorized synthetic test"
@@ -40,6 +43,7 @@ function panel(callAnalysis: CallAnalysisResult | null, overrides: Partial<Compo
             onCaseIdChange={vi.fn()}
             onStartManualCapture={vi.fn()}
             onStopManualCapture={vi.fn()}
+            onOperatorCallMarker={vi.fn()}
             onSelectAnalysis={vi.fn()}
             {...overrides}
         />
@@ -94,6 +98,49 @@ test('keeps legacy results free from an invented phase statement', () => {
 
     expect(screen.queryByText('Resultado sin línea base previa')).not.toBeInTheDocument();
     expect(screen.queryByText('Comparación con línea base disponible')).not.toBeInTheDocument();
+});
+
+test('offers the authorized operator marker sequence only during an active capture', async () => {
+    const user = userEvent.setup();
+    const onMarker = vi.fn();
+    const { rerender } = render(panel(null, {
+        callCapturing: true,
+        callOperatorMarker: null,
+        onOperatorCallMarker: onMarker,
+    }));
+
+    await user.click(screen.getByRole('button', { name: 'Marcar inicio de llamada' }));
+    expect(onMarker).toHaveBeenLastCalledWith('call_started');
+
+    rerender(panel(null, {
+        callCapturing: true,
+        callOperatorMarker: 'call_started',
+        onOperatorCallMarker: onMarker,
+    }));
+    await user.click(screen.getByRole('button', { name: 'Marcar llamada conectada' }));
+    expect(onMarker).toHaveBeenLastCalledWith('call_connected');
+
+    rerender(panel(null, {
+        callCapturing: true,
+        callOperatorMarker: 'call_connected',
+        onOperatorCallMarker: onMarker,
+    }));
+    await user.click(screen.getByRole('button', { name: 'Marcar fin de llamada' }));
+    expect(onMarker).toHaveBeenLastCalledWith('call_ended');
+
+    rerender(panel(null, {
+        callCapturing: true,
+        callOperatorMarker: 'call_ended',
+        onOperatorCallMarker: onMarker,
+    }));
+    expect(screen.getByText('Fin de llamada marcado')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Marcar .*llamada/ })).not.toBeInTheDocument();
+
+    rerender(panel(null, {
+        callCapturing: true,
+        operatorMarkerAvailable: false,
+    }));
+    expect(screen.queryByRole('button', { name: /Marcar .*llamada/ })).not.toBeInTheDocument();
 });
 
 test('distinguishes a standalone baseline from a correlated call', () => {

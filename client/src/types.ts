@@ -157,6 +157,19 @@ export interface CallCapturePhases {
     baselineEndedAt: string | null;
     negotiationStartedAt: string | null;
     activeCallStartedAt: string | null;
+    callEndedAt?: string | null;
+    captureEndedAt?: string | null;
+    phaseEvidenceVersion?: 1;
+    phaseEvidence?: CallCapturePhaseEvidence[];
+}
+
+export interface CallCapturePhaseEvidence {
+    sequence: number;
+    kind: 'baseline_started' | 'negotiation_started' | 'active_started' | 'call_ended' | 'capture_ended';
+    at: string;
+    source: 'capture_start' | 'capture_stop' | 'baileys_normalized' | 'baileys_raw' | 'operator_marker' | 'network_onset';
+    confidence: 'system' | 'protocol' | 'operator_asserted' | 'inferred';
+    status?: 'offer' | 'ringing' | 'preaccept' | 'transport' | 'relaylatency' | 'accept' | 'reject' | 'timeout' | 'terminate';
 }
 
 export interface CallAnalysisResult {
@@ -198,6 +211,16 @@ export interface CallEvent {
 export interface CallCaptureStarted {
     callId: string;
     targetJid: string;
+    trigger: 'manual' | 'auto';
+}
+
+export type OperatorCallMarker = 'call_started' | 'call_connected' | 'call_ended';
+
+export interface CallCaptureMarkerAcknowledgement {
+    ok: true;
+    callId: string;
+    targetJid: string;
+    marker: OperatorCallMarker;
 }
 
 export interface TrackerDeviceInfo {

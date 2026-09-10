@@ -36,6 +36,9 @@ function createAdapter(): CaptureAgentAdapter {
         observeCallCapturePhase: (targetJid, observedCallId, phaseStatus) => (
             phaseLifecycle.observe(targetJid, observedCallId, phaseStatus)
         ),
+        markOperatorCallCapturePhase: (targetJid, marker) => (
+            phaseLifecycle.markOperatorPhase(targetJid, marker)
+        ),
         stopCallCapture: () => {
             if (!status.isCapturing) return null;
             const capturePhases = phaseLifecycle.finish(
@@ -144,6 +147,8 @@ test('capture agent client completes the authenticated lifecycle and restores Da
             targetJid: '573001112233@s.whatsapp.net',
             observedCallId: 'OBSERVED-CALL-001',
             status: 'offer',
+            evidenceSource: 'baileys_normalized',
+            evidenceConfidence: 'protocol',
         }), true);
 
         const result = await client.stopCallCapture('CALL-REMOTE-001');
@@ -153,6 +158,16 @@ test('capture agent client completes the authenticated lifecycle and restores Da
         assert.ok(result.endTime instanceof Date);
         assert.ok(result.candidateIps[0]?.firstSeen instanceof Date);
         assert.deepEqual(result.candidateIps[0]?.ports, [40_000, 40_001]);
+        assert.equal(result.capturePhases?.phaseEvidenceVersion, 1);
+        assert.ok(result.capturePhases?.captureEndedAt instanceof Date);
+        assert.deepEqual(result.capturePhases?.phaseEvidence?.map(event => ({
+            kind: event.kind,
+            source: event.source,
+            confidence: event.confidence,
+        })), [
+            { kind: 'negotiation_started', source: 'baileys_normalized', confidence: 'protocol' },
+            { kind: 'capture_ended', source: 'capture_stop', confidence: 'system' },
+        ]);
 
         const service = new CallCaptureService({ mode: 'agent', agent: client });
         assert.equal(await service.stop(), null);
@@ -187,7 +202,58 @@ test('call capture service forwards the signed remote phase lifecycle', async ()
         assert.equal(result?.capturePhases?.negotiationStartedAt?.getTime(), NOW);
         assert.equal(result?.capturePhases?.activeCallStartedAt?.getTime(), NOW);
         assert.equal(result?.capturePhases?.baselineAvailable, false);
+        assert.deepEqual(result?.capturePhases?.phaseEvidence?.map(event => event.source), [
+            'baileys_normalized',
+            'baileys_normalized',
+            'baileys_normalized',
+            'capture_stop',
+        ]);
         assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-SERVICE-001', 'accept'), false);
+    });
+});
+
+test('call capture service forwards authorized operator markers without protocol evidence', async () => {
+    await withAgent(async baseUrl => {
+        let nonce = 0;
+        const client = new CaptureAgentClient({
+            baseUrl,
+            sharedSecret: SECRET,
+            now: () => NOW,
+            nonce: () => `marker_nonce_${String(++nonce).padStart(16, '0')}`,
+        });
+        const service = new CallCaptureService({ mode: 'agent', agent: client });
+        const targetJid = '573001112233@s.whatsapp.net';
+
+        assert.equal(await service.start(
+            '172.31.0.10',
+            targetJid,
+            'CAPTURE-MARKER-001',
+            false,
+            undefined,
+            { trigger: 'manual' },
+        ), true);
+        await assert.rejects(
+            service.markOperatorPhase(targetJid, 'call_connected'),
+            (error: unknown) => error instanceof CaptureAgentClientError
+                && error.status === 409
+                && error.code === 'capture_phase_rejected',
+        );
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_started'), true);
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_connected'), true);
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_ended'), true);
+
+        const result = await service.stop();
+        assert.deepEqual(result?.capturePhases?.phaseEvidence?.map(event => ({
+            kind: event.kind,
+            source: event.source,
+            confidence: event.confidence,
+            status: event.status,
+        })), [
+            { kind: 'negotiation_started', source: 'operator_marker', confidence: 'operator_asserted', status: undefined },
+            { kind: 'active_started', source: 'operator_marker', confidence: 'operator_asserted', status: undefined },
+            { kind: 'call_ended', source: 'operator_marker', confidence: 'operator_asserted', status: undefined },
+            { kind: 'capture_ended', source: 'capture_stop', confidence: 'system', status: undefined },
+        ]);
     });
 });
 
@@ -202,17 +268,24 @@ test('capture agent client rejects unsafe origins and weak secrets', () => {
     }), /at least 32 bytes/);
 });
 
-test('readiness requires the remote phase capability', async () => {
-    const client = new CaptureAgentClient({
-        baseUrl: 'http://capture-agent.test:4100',
-        sharedSecret: SECRET,
-        fetchImpl: (async () => new Response(JSON.stringify({
-            status: 'ready',
-            capturePrivileges: true,
-        }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
-    });
+test('readiness requires both remote phase capabilities', async () => {
+    for (const capabilities of [
+        undefined,
+        { callCapturePhases: 1, operatorCallMarkers: 1 },
+        { callCapturePhases: 2 },
+    ]) {
+        const client = new CaptureAgentClient({
+            baseUrl: 'http://capture-agent.test:4100',
+            sharedSecret: SECRET,
+            fetchImpl: (async () => new Response(JSON.stringify({
+                status: 'ready',
+                capturePrivileges: true,
+                ...(capabilities ? { capabilities } : {}),
+            }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
+        });
 
-    assert.equal(await client.ready(), false);
+        assert.equal(await client.ready(), false);
+    }
 });
 
 test('capture agent client maps transport failures to a controlled unavailable error', async () => {
@@ -236,6 +309,8 @@ test('call phase requests fail closed on timeout, unavailable agent, and oversiz
         targetJid: '573001112233@s.whatsapp.net',
         observedCallId: 'OBSERVED-FAILURE-001',
         status: 'offer' as const,
+        evidenceSource: 'baileys_normalized' as const,
+        evidenceConfidence: 'protocol' as const,
     };
     const unavailable = new CaptureAgentClient({
         baseUrl: 'http://127.0.0.1:9',
@@ -284,6 +359,8 @@ test('call phase requests fail closed on timeout, unavailable agent, and oversiz
             captureCallId: phase.captureCallId,
             observedCallId: 'OBSERVED-OTHER-001',
             status: phase.status,
+            evidenceSource: phase.evidenceSource,
+            evidenceConfidence: phase.evidenceConfidence,
         }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
     });
     await assert.rejects(
@@ -546,6 +623,37 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
                 baselineEndedAt: null,
                 negotiationStartedAt: null,
                 activeCallStartedAt: null,
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: null,
+                activeCallStartedAt: null,
+                phaseEvidence: [],
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: null,
+                activeCallStartedAt: null,
+                callEndedAt: null,
+                captureEndedAt: new Date(NOW + 10_000).toISOString(),
+                phaseEvidenceVersion: 1,
+                phaseEvidence: [{
+                    sequence: 1,
+                    kind: 'capture_ended',
+                    at: new Date(NOW + 10_000).toISOString(),
+                    source: 'capture_stop',
+                    confidence: 'inferred',
+                }],
             },
         },
         {

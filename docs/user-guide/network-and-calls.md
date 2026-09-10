@@ -87,10 +87,16 @@ En Docker/VPS enlaza WhatsApp Web mediante Selkies detras del acceso/tunel prote
 1. selecciona el Case ID autorizado;
 2. inicia la captura manual antes de llamar;
 3. deja un intervalo deliberado de linea base sin llamada;
-4. realiza la llamada propia durante 60-90 segundos en la misma ventana;
-5. contesta o no segun el escenario documentado;
-6. detiene desde WP MONITOR;
-7. espera el resultado en tiempo real y revisa la disponibilidad de linea base.
+4. pulsa `Marcar inicio de llamada` e inicia inmediatamente la llamada propia;
+5. pulsa `Marcar llamada conectada` solo si la otra parte contesta; si no
+   contesta, usa `Marcar fin sin conexion`;
+6. al colgar una llamada conectada, pulsa `Marcar fin de llamada`;
+7. detiene la captura desde WP MONITOR;
+8. espera el resultado en tiempo real y revisa la disponibilidad de linea base.
+
+Los marcadores quedan asociados al caso y contacto activos. Expresan lo declarado
+por el operador; no significan que WhatsApp o Baileys hayan confirmado por si
+mismos esas fases.
 
 Con proveedor local o agente, el resultado separa paquetes previos y posteriores al
 inicio correlacionado de la llamada. Si la captura comienza automaticamente, la

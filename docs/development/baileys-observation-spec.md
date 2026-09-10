@@ -168,6 +168,7 @@ Reglas:
 | BO-CALL-16 | En modo agente, inicio y transiciones de fase viajan por el contrato HMAC con timestamp y nonce; replay, correlacion u orden invalidos fallan cerrados, mientras una indisponibilidad conserva la actividad comercial ya observada. |
 | BO-CALL-17 | Toda clasificacion local de infraestructura declara version, CIDR, fuente y vigencia; IPv4/IPv6, DNS, relay, CDN, cloud y endpoint publico propio degradan de forma visible cuando la fuente vence, falta o entra en conflicto, y nunca se convierten por ello en identidad del contacto. |
 | BO-CALL-18 | `direct_confirmed` exige coincidencia exacta entre flujo elegible y endpoint peer de Baileys; STUN sin esa fuente independiente permanece probable, y DNS, relay, infraestructura o GeoIP nunca confirman una ruta directa. |
+| BO-CALL-19 | Un marcador manual solo puede alterar la captura manual activa cuando coinciden caso, contacto y `callId`; conserva procedencia `operator_marker/operator_asserted`, no simula confirmacion de protocolo y viaja al agente mediante autenticacion HMAC y proteccion anti-replay. |
 
 ### Alcance, identidad e idempotencia
 

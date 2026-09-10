@@ -3,9 +3,19 @@ import { isIP } from 'node:net';
 import { signCaptureAgentRequest, validateCaptureAgentSecret } from './capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus, CandidateIP } from './call-analyzer.js';
 import {
+    CALL_CAPTURE_PHASE_CAPABILITY_VERSION,
+    CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES,
+    CALL_CAPTURE_PHASE_EVIDENCE_KINDS,
+    CALL_CAPTURE_PHASE_EVIDENCE_SOURCES,
     CALL_CAPTURE_PHASE_STATUSES,
+    OPERATOR_CALL_MARKERS,
+    isValidCallCapturePhaseObservation,
+    type CallCapturePhaseEvidence,
+    type CallCapturePhaseEvidenceConfidence,
+    type CallCapturePhaseEvidenceSource,
     type CallCapturePhaseStatus,
     type CallCaptureTrigger,
+    type OperatorCallMarker,
 } from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
 import type { NetworkIntelligence } from './call-scoring.js';
@@ -438,6 +448,27 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
     const baselineEndedAt = optionalDate(object.baselineEndedAt, 'capturePhases.baselineEndedAt');
     const negotiationStartedAt = optionalDate(object.negotiationStartedAt, 'capturePhases.negotiationStartedAt');
     const activeCallStartedAt = optionalDate(object.activeCallStartedAt, 'capturePhases.activeCallStartedAt');
+    const hasVersionedEvidence = object.phaseEvidenceVersion !== undefined;
+    if (!hasVersionedEvidence && (
+        object.phaseEvidence !== undefined
+        || object.callEndedAt !== undefined
+        || object.captureEndedAt !== undefined
+    )) {
+        throw new CaptureAgentClientError('Capture agent returned unversioned phase evidence', 502, 'invalid_agent_response');
+    }
+
+    const phaseEvidenceVersion = hasVersionedEvidence
+        ? requireIntegerInRange(object.phaseEvidenceVersion, 'capturePhases.phaseEvidenceVersion', 1, 1)
+        : undefined;
+    const callEndedAt = hasVersionedEvidence
+        ? optionalDate(object.callEndedAt, 'capturePhases.callEndedAt')
+        : undefined;
+    const captureEndedAt = hasVersionedEvidence
+        ? optionalDate(object.captureEndedAt, 'capturePhases.captureEndedAt')
+        : undefined;
+    const phaseEvidence = hasVersionedEvidence
+        ? parseCallCapturePhaseEvidence(object.phaseEvidence)
+        : undefined;
 
     if (baselineAvailable !== Boolean(baselineStartedAt && baselineEndedAt)) {
         throw new CaptureAgentClientError('Capture agent returned inconsistent baseline phases', 502, 'invalid_agent_response');
@@ -454,6 +485,22 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
     if (activeCallStartedAt && !negotiationStartedAt) {
         throw new CaptureAgentClientError('Capture agent returned an active phase without negotiation', 502, 'invalid_agent_response');
     }
+    if (callEndedAt && activeCallStartedAt && callEndedAt.getTime() < activeCallStartedAt.getTime()) {
+        throw new CaptureAgentClientError('Capture agent returned call end before active phase', 502, 'invalid_agent_response');
+    }
+    if (captureEndedAt && callEndedAt && captureEndedAt.getTime() < callEndedAt.getTime()) {
+        throw new CaptureAgentClientError('Capture agent returned capture end before call end', 502, 'invalid_agent_response');
+    }
+    if (hasVersionedEvidence) {
+        if (!captureEndedAt || !phaseEvidence || phaseEvidence.length === 0) {
+            throw new CaptureAgentClientError('Capture agent returned incomplete versioned phase evidence', 502, 'invalid_agent_response');
+        }
+        validatePhaseEvidenceTimestamp(phaseEvidence, 'baseline_started', baselineStartedAt);
+        validatePhaseEvidenceTimestamp(phaseEvidence, 'negotiation_started', negotiationStartedAt);
+        validatePhaseEvidenceTimestamp(phaseEvidence, 'active_started', activeCallStartedAt);
+        validatePhaseEvidenceTimestamp(phaseEvidence, 'call_ended', callEndedAt ?? null);
+        validatePhaseEvidenceTimestamp(phaseEvidence, 'capture_ended', captureEndedAt);
+    }
 
     return {
         baselineAvailable,
@@ -461,7 +508,92 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
         baselineEndedAt,
         negotiationStartedAt,
         activeCallStartedAt,
+        ...(phaseEvidenceVersion === undefined ? {} : { phaseEvidenceVersion: phaseEvidenceVersion as 1 }),
+        ...(phaseEvidence === undefined ? {} : { phaseEvidence }),
+        ...(callEndedAt === undefined ? {} : { callEndedAt }),
+        ...(captureEndedAt === undefined ? {} : { captureEndedAt }),
     };
+}
+
+function parseCallCapturePhaseEvidence(value: unknown): CallCapturePhaseEvidence[] {
+    const events = requireArray(value, 'capturePhases.phaseEvidence', 16);
+    let previousTimestamp = Number.NEGATIVE_INFINITY;
+    const seenKinds = new Set<string>();
+
+    return events.map((entry, index) => {
+        const object = requireObject(entry, `capturePhases.phaseEvidence[${index}]`);
+        const sequence = requireIntegerInRange(
+            object.sequence,
+            `capturePhases.phaseEvidence[${index}].sequence`,
+            1,
+            16,
+        );
+        const kind = requireEnum(
+            object.kind,
+            `capturePhases.phaseEvidence[${index}].kind`,
+            CALL_CAPTURE_PHASE_EVIDENCE_KINDS,
+        );
+        const at = requireDate(object.at, `capturePhases.phaseEvidence[${index}].at`);
+        const source = requireEnum(
+            object.source,
+            `capturePhases.phaseEvidence[${index}].source`,
+            CALL_CAPTURE_PHASE_EVIDENCE_SOURCES,
+        );
+        const confidence = requireEnum(
+            object.confidence,
+            `capturePhases.phaseEvidence[${index}].confidence`,
+            CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES,
+        );
+        const status = object.status === undefined
+            ? undefined
+            : requireEnum(
+                object.status,
+                `capturePhases.phaseEvidence[${index}].status`,
+                CALL_CAPTURE_PHASE_STATUSES,
+            );
+
+        if (sequence !== index + 1 || at.getTime() < previousTimestamp || seenKinds.has(kind)) {
+            throw new CaptureAgentClientError('Capture agent returned unordered or duplicate phase evidence', 502, 'invalid_agent_response');
+        }
+        if (!isValidCallCapturePhaseObservation(source, confidence)) {
+            throw new CaptureAgentClientError('Capture agent returned inconsistent phase evidence confidence', 502, 'invalid_agent_response');
+        }
+        const protocolSource = source === 'baileys_normalized' || source === 'baileys_raw';
+        const terminalStatus = status === 'reject' || status === 'timeout' || status === 'terminate';
+        const invalidSemantics = (
+            (protocolSource && status === undefined)
+            || (kind === 'baseline_started' && (source !== 'capture_start' || status !== undefined))
+            || (kind === 'capture_ended' && (source !== 'capture_stop' || status !== undefined))
+            || (kind === 'active_started' && status !== undefined && status !== 'accept')
+            || (kind === 'call_ended' && status !== undefined && !terminalStatus)
+            || (source === 'capture_start' && kind !== 'baseline_started')
+            || (source === 'capture_stop' && kind !== 'capture_ended')
+        );
+        if (invalidSemantics) {
+            throw new CaptureAgentClientError('Capture agent returned inconsistent phase evidence semantics', 502, 'invalid_agent_response');
+        }
+        previousTimestamp = at.getTime();
+        seenKinds.add(kind);
+        return {
+            sequence,
+            kind,
+            at,
+            source,
+            confidence,
+            ...(status === undefined ? {} : { status }),
+        };
+    });
+}
+
+function validatePhaseEvidenceTimestamp(
+    evidence: CallCapturePhaseEvidence[],
+    kind: CallCapturePhaseEvidence['kind'],
+    timestamp: Date | null,
+): void {
+    const event = evidence.find(item => item.kind === kind);
+    if (Boolean(event) !== Boolean(timestamp) || (event && timestamp && event.at.getTime() !== timestamp.getTime())) {
+        throw new CaptureAgentClientError('Capture agent returned inconsistent phase evidence timestamps', 502, 'invalid_agent_response');
+    }
 }
 
 function parseCaptureBounds(value: unknown): NonNullable<CallAnalysisResult['captureBounds']> {
@@ -542,12 +674,21 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
             capturePhases.baselineEndedAt,
             capturePhases.negotiationStartedAt,
             capturePhases.activeCallStartedAt,
-        ].filter((value): value is Date => value !== null);
+            capturePhases.callEndedAt,
+            capturePhases.captureEndedAt,
+            ...(capturePhases.phaseEvidence?.map(event => event.at) ?? []),
+        ].filter((value): value is Date => value instanceof Date);
         if (phaseDates.some(value => value.getTime() < startTime.getTime())) {
             throw new CaptureAgentClientError('Capture agent returned a phase before capture start', 502, 'invalid_agent_response');
         }
         if (endTime && phaseDates.some(value => value.getTime() > endTime.getTime())) {
             throw new CaptureAgentClientError('Capture agent returned a phase after capture end', 502, 'invalid_agent_response');
+        }
+        if (
+            capturePhases.phaseEvidenceVersion === 1
+            && (!endTime || capturePhases.captureEndedAt?.getTime() !== endTime.getTime())
+        ) {
+            throw new CaptureAgentClientError('Capture agent returned capture phase evidence with a mismatched end', 502, 'invalid_agent_response');
         }
     }
     if (captureBounds && captureBounds.storedPackets + captureBounds.droppedPackets !== totalPackets) {
@@ -638,7 +779,8 @@ export class CaptureAgentClient {
             const capabilities = requireObject(payload.capabilities, 'Capture agent readiness capabilities');
             return payload.status === 'ready'
                 && payload.capturePrivileges === true
-                && capabilities.callCapturePhases === 1;
+                && capabilities.callCapturePhases === CALL_CAPTURE_PHASE_CAPABILITY_VERSION
+                && capabilities.operatorCallMarkers === 1;
         } catch {
             return false;
         }
@@ -670,6 +812,8 @@ export class CaptureAgentClient {
         targetJid: string;
         observedCallId: string;
         status: CallCapturePhaseStatus;
+        evidenceSource: CallCapturePhaseEvidenceSource;
+        evidenceConfidence: CallCapturePhaseEvidenceConfidence;
     }): Promise<boolean> {
         const payload = requireObject(await this.request('POST', '/v1/call/phase', input), 'Capture agent');
         if (
@@ -677,9 +821,32 @@ export class CaptureAgentClient {
             || requireCallId(payload.captureCallId, 'captureCallId') !== input.captureCallId
             || requireCallId(payload.observedCallId, 'observedCallId') !== input.observedCallId
             || requireEnum(payload.status, 'status', CALL_CAPTURE_PHASE_STATUSES) !== input.status
+            || requireEnum(payload.evidenceSource, 'evidenceSource', CALL_CAPTURE_PHASE_EVIDENCE_SOURCES) !== input.evidenceSource
+            || requireEnum(payload.evidenceConfidence, 'evidenceConfidence', CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES) !== input.evidenceConfidence
         ) {
             throw new CaptureAgentClientError(
                 'Capture agent returned an inconsistent call phase acknowledgement',
+                502,
+                'invalid_agent_response',
+            );
+        }
+        return true;
+    }
+
+    async markOperatorCallCapturePhase(input: {
+        captureCallId: string;
+        targetJid: string;
+        marker: OperatorCallMarker;
+    }): Promise<boolean> {
+        const payload = requireObject(await this.request('POST', '/v1/call/marker', input), 'Capture agent');
+        if (
+            payload.ok !== true
+            || requireCallId(payload.captureCallId, 'captureCallId') !== input.captureCallId
+            || validateJid(payload.targetJid, 'targetJid').value !== input.targetJid
+            || requireEnum(payload.marker, 'marker', OPERATOR_CALL_MARKERS) !== input.marker
+        ) {
+            throw new CaptureAgentClientError(
+                'Capture agent returned an inconsistent operator marker acknowledgement',
                 502,
                 'invalid_agent_response',
             );

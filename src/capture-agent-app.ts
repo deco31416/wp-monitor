@@ -9,9 +9,17 @@ import { isIP } from 'node:net';
 import { CaptureAgentRequestVerifier } from './capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus } from './call-analyzer.js';
 import {
+    CALL_CAPTURE_PHASE_CAPABILITY_VERSION,
+    CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES,
+    CALL_CAPTURE_PHASE_EVIDENCE_SOURCES,
+    OPERATOR_CALL_MARKERS,
     isCallCapturePhaseStatus,
+    isValidCallCapturePhaseObservation,
+    type CallCapturePhaseEvidenceConfidence,
+    type CallCapturePhaseEvidenceSource,
     type CallCapturePhaseStatus,
     type CallCaptureTrigger,
+    type OperatorCallMarker,
 } from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
 import { cleanText, validateJid } from './validation.js';
@@ -32,7 +40,16 @@ export interface CaptureAgentAdapter {
             initialCallStatus?: CallCapturePhaseStatus;
         },
     ): boolean;
-    observeCallCapturePhase(targetJid: string, observedCallId: string, status: CallCapturePhaseStatus): boolean;
+    observeCallCapturePhase(
+        targetJid: string,
+        observedCallId: string,
+        status: CallCapturePhaseStatus,
+        observation: {
+            source: CallCapturePhaseEvidenceSource;
+            confidence: CallCapturePhaseEvidenceConfidence;
+        },
+    ): boolean;
+    markOperatorCallCapturePhase(targetJid: string, marker: OperatorCallMarker): boolean;
     stopCallCapture(): CallAnalysisResult | null;
     waitForCallCaptureClose?(): Promise<void>;
 }
@@ -134,7 +151,10 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             version: SOFTWARE_VERSION,
             status: ready ? 'ready' : 'unavailable',
             capturePrivileges: ready,
-            capabilities: { callCapturePhases: 1 },
+            capabilities: {
+                callCapturePhases: CALL_CAPTURE_PHASE_CAPABILITY_VERSION,
+                operatorCallMarkers: 1,
+            },
         });
     });
 
@@ -234,11 +254,30 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
         const target = validateJid(body.targetJid, 'targetJid');
         const observedCallId = cleanText(body.observedCallId, 120);
         const status = cleanText(body.status, 32).toLowerCase();
+        const evidenceSource = cleanText(body.evidenceSource, 32);
+        const evidenceConfidence = cleanText(body.evidenceConfidence, 32);
+        const protocolEvidenceSource = evidenceSource === 'baileys_normalized' || evidenceSource === 'baileys_raw';
         const validationErrors = [
             CALL_ID_PATTERN.test(captureCallId) ? null : 'captureCallId must be 3-120 safe characters',
             target.ok ? null : target.errors?.[0] || 'targetJid is invalid',
             CALL_ID_PATTERN.test(observedCallId) ? null : 'observedCallId must be 3-120 safe characters',
             isCallCapturePhaseStatus(status) ? null : 'status is not a supported call phase status',
+            CALL_CAPTURE_PHASE_EVIDENCE_SOURCES.includes(evidenceSource as CallCapturePhaseEvidenceSource)
+                ? null
+                : 'evidenceSource is not supported',
+            CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES.includes(evidenceConfidence as CallCapturePhaseEvidenceConfidence)
+                ? null
+                : 'evidenceConfidence is not supported',
+            protocolEvidenceSource ? null : 'call phase endpoint accepts only Baileys protocol evidence',
+            evidenceConfidence === 'protocol' ? null : 'Baileys phase evidence requires protocol confidence',
+            CALL_CAPTURE_PHASE_EVIDENCE_SOURCES.includes(evidenceSource as CallCapturePhaseEvidenceSource)
+                && CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES.includes(evidenceConfidence as CallCapturePhaseEvidenceConfidence)
+                && !isValidCallCapturePhaseObservation(
+                    evidenceSource as CallCapturePhaseEvidenceSource,
+                    evidenceConfidence as CallCapturePhaseEvidenceConfidence,
+                )
+                ? 'evidence source and confidence are inconsistent'
+                : null,
         ].filter((error): error is string => Boolean(error));
         if (validationErrors.length > 0) {
             res.status(400).json({ error: 'Call phase request validation failed', details: validationErrors });
@@ -258,6 +297,10 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             target.value!,
             observedCallId,
             status as CallCapturePhaseStatus,
+            {
+                source: evidenceSource as CallCapturePhaseEvidenceSource,
+                confidence: evidenceConfidence as CallCapturePhaseEvidenceConfidence,
+            },
         );
         if (!accepted) {
             res.status(409).json({
@@ -266,7 +309,50 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             });
             return;
         }
-        res.json({ ok: true, captureCallId, observedCallId, status });
+        res.json({ ok: true, captureCallId, observedCallId, status, evidenceSource, evidenceConfidence });
+    });
+
+    app.post('/v1/call/marker', (request, res) => {
+        const body = parseJsonObject(request as RawBodyRequest, res);
+        if (!body) return;
+        const captureCallId = cleanText(body.captureCallId, 120);
+        const target = validateJid(body.targetJid, 'targetJid');
+        const marker = cleanText(body.marker, 32).toLowerCase();
+        const validationErrors = [
+            CALL_ID_PATTERN.test(captureCallId) ? null : 'captureCallId must be 3-120 safe characters',
+            target.ok ? null : target.errors?.[0] || 'targetJid is invalid',
+            OPERATOR_CALL_MARKERS.includes(marker as OperatorCallMarker) ? null : 'marker is not supported',
+        ].filter((error): error is string => Boolean(error));
+        if (validationErrors.length > 0) {
+            res.status(400).json({ error: 'Operator marker request validation failed', details: validationErrors });
+            return;
+        }
+
+        const status = options.adapter.getCallCaptureStatus();
+        if (
+            !status.isCapturing
+            || status.callId !== captureCallId
+            || status.targetJid !== target.value
+        ) {
+            res.status(409).json({
+                error: 'Operator marker does not match the active capture',
+                code: 'capture_phase_mismatch',
+            });
+            return;
+        }
+
+        const accepted = options.adapter.markOperatorCallCapturePhase(
+            target.value!,
+            marker as OperatorCallMarker,
+        );
+        if (!accepted) {
+            res.status(409).json({
+                error: 'Operator marker was rejected by the active phase lifecycle',
+                code: 'capture_phase_rejected',
+            });
+            return;
+        }
+        res.json({ ok: true, captureCallId, targetJid: target.value, marker });
     });
 
     app.post('/v1/call/stop', async (request, res) => {

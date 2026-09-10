@@ -18,7 +18,7 @@ test('raw transport closes a manual baseline through the shared phase lifecycle'
     now = new Date(4_000);
 
     const result = await correlateCallCapturePhase(
-        async (jid, callId, status) => lifecycle.observe(jid, callId, status),
+        async (jid, callId, status, observation) => lifecycle.observe(jid, callId, status, observation),
         {
             source: 'raw_transport',
             targetJid: TARGET_JID,
@@ -39,6 +39,13 @@ test('raw transport closes a manual baseline through the shared phase lifecycle'
         baselineEndedAt: new Date(4_000),
         negotiationStartedAt: new Date(4_000),
         activeCallStartedAt: null,
+        callEndedAt: null,
+        captureEndedAt: null,
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'baseline_started', at: new Date(1_000), source: 'capture_start', confidence: 'system' },
+            { sequence: 2, kind: 'negotiation_started', at: new Date(4_000), source: 'baileys_raw', confidence: 'protocol', status: 'transport' },
+        ],
     });
 });
 
@@ -46,7 +53,12 @@ test('normalized and raw duplicates preserve the first transition timestamp', as
     let now = new Date(1_000);
     const lifecycle = new CallCapturePhaseLifecycle(() => now);
     lifecycle.start({ captureCallId: CAPTURE_ID, targetJid: TARGET_JID, trigger: 'manual' });
-    const observe = async (jid: string, callId: string, status: string) => lifecycle.observe(jid, callId, status);
+    const observe = async (
+        jid: string,
+        callId: string,
+        status: Parameters<typeof lifecycle.observe>[2],
+        observation: Parameters<typeof lifecycle.observe>[3],
+    ) => lifecycle.observe(jid, callId, status, observation);
 
     now = new Date(3_000);
     const first = await correlateCallCapturePhase(observe, {
@@ -91,7 +103,12 @@ test('terminal phase is accepted but cannot bind a manual capture to a new call'
 test('a different observed call cannot mutate an already correlated lifecycle', async () => {
     const lifecycle = new CallCapturePhaseLifecycle(() => new Date(2_000));
     lifecycle.start({ captureCallId: CAPTURE_ID, targetJid: TARGET_JID, trigger: 'manual' });
-    const observe = async (jid: string, callId: string, status: string) => lifecycle.observe(jid, callId, status);
+    const observe = async (
+        jid: string,
+        callId: string,
+        status: Parameters<typeof lifecycle.observe>[2],
+        observation: Parameters<typeof lifecycle.observe>[3],
+    ) => lifecycle.observe(jid, callId, status, observation);
     await correlateCallCapturePhase(observe, {
         source: 'baileys', targetJid: TARGET_JID, observedCallId: CALL_ID, status: 'offer',
     });

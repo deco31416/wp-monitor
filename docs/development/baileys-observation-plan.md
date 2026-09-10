@@ -4,7 +4,7 @@ Estado del plan: `EN EJECUCION`
 
 Rama de trabajo: `develop`
 
-Ultima revision: `2026-09-09`
+Ultima revision: `2026-09-10`
 
 Este archivo es un tablero de ingenieria, no una declaracion de funcionalidad
 publicada. Una tarea solo cambia a `DONE` cuando su criterio de aceptacion tiene
@@ -427,7 +427,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     respuesta sobredimensionada.
   - Evidencia: `/v1/call/phase` correlaciona captura, contacto, llamada observada
     y estado bajo el HMAC existente; readiness exige
-    `capabilities.callCapturePhases=1`. El agente rechaza firma alterada, replay,
+    `capabilities.callCapturePhases=2`. El agente rechaza firma alterada, replay,
     captura distinta y regresion posterior a `accept`; cliente y servicio
     contienen timeout, indisponibilidad, acuse inconsistente y respuesta mayor a
     5 MiB sin eliminar la actividad comercial observada. QA completa en verde el
@@ -553,7 +553,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     `unresolved` 0/100 sin candidata. Pruebas dirigidas 15/15 y typecheck de tests
     pasan el 2026-09-09.
 
-- [ ] **OBS-20.12B — Correlacion WhatsApp Web/Baileys/captura** — `IN PROGRESS (E2 LOCAL)`
+- [ ] **OBS-20.12B — Correlacion WhatsApp Web/Baileys/captura** — `PARCIAL (E4 LIMITACION CONFIRMADA)`
   - Determinar si el evento falta, llega con PN/LID distinto, usa otro `callId`,
     llega fuera de ventana o solo aparece como nodo raw.
   - Cierre: llamadas entrantes y salientes autorizadas vinculan una unica llamada
@@ -565,12 +565,49 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     conserva la primera transicion, rechaza otra llamada/contacto y no inicia una
     captura ni promueve IPs. El hub raw captura tambien rechazos asincronos sin
     producir promesas no manejadas. Pruebas dirigidas 19/19 y typecheck pasan.
-    Falta E3/E4 con llamadas Web entrante y saliente autorizadas para cerrar.
+  - Evidencia E4 del 2026-09-09 sobre `develop`: entrante autorizada con 4.717
+    paquetes y saliente originada desde `wa-browser` con 1.736 paquetes. Ambas
+    terminaron sin captura residual, mezcla de llamada/contacto/caso ni fallo de
+    infraestructura, pero Baileys no emitio fases normalizadas ni nodos raw
+    `transport/relaylatency`. `negotiationStartedAt` y `activeCallStartedAt`
+    permanecieron ausentes; todos los paquetes quedaron en baseline. Esto
+    confirma que el correlador funciona solo si recibe señalizacion y que el
+    dispositivo Baileys no aporta las fases de la llamada ejecutada por el otro
+    dispositivo vinculado `wa-browser`. No se repetiran llamadas hasta agregar
+    una fuente de fase perteneciente a la captura.
 
-- [ ] **OBS-20.12C — Ventana diferencial confiable** — `TODO`
+- [ ] **OBS-20.12C — Ventana diferencial confiable** — `IN PROGRESS (C2 E2 LOCAL)`
   - Separar de forma verificable linea base, negociacion, llamada activa y cierre.
   - Cierre: una llamada correlacionada produce paquetes activos; una captura sin
     correlacion permanece no atribuible y nunca fabrica una ruta.
+  - [x] **C1 — Contrato versionado de evidencia de fase** — `DONE (E2 LOCAL)`
+    - Bitacora monotona y acotada con secuencia, transicion, timestamp, fuente,
+      confianza y estado de protocolo opcional.
+    - Fuentes reservadas: inicio/cierre de captura, Baileys normalizado/raw,
+      marcador del operador y cambio de trafico inferido. La combinacion
+      fuente-confianza se valida en productor y consumidor.
+    - El cliente del agente acepta historicos sin la extension, valida
+      estrictamente la version nueva y readiness exige `callCapturePhases: 2`
+      para impedir mezcla silenciosa de contratos.
+  - [x] **C2 — Marcador autorizado del operador** — `DONE (E2 LOCAL)`
+    - La pestaña `Llamada` guia inicio, conexion y fin sin abrir una vista nueva.
+      Cada accion exige captura manual activa y coincidencia exacta de caso,
+      contacto y `callId`; un caso que deje de estar activo falla cerrado.
+    - El backend audita el marcador sin aceptar operador ni autorizacion
+      sustitutos desde el navegador. En modo agente, `/v1/call/marker` usa el
+      canal HMAC, nonce anti-replay y capability `operatorCallMarkers: 1`.
+      Si la persistencia de auditoria falla despues de marcar, la operacion queda
+      reintentable y no permite avanzar a otra fase hasta guardar la evidencia.
+    - La evidencia queda como `operator_marker/operator_asserted`, sin estado de
+      protocolo y sin presentarse como confirmacion de Baileys. Orden invalido,
+      captura automatica, contacto ajeno, marcador repetido regresivo y reloj
+      regresivo se rechazan o permanecen idempotentes segun el caso.
+    - Evidencia local: 38/38 specs backend dirigidos, 39/39 frontend, 338/338
+      backend completos, typechecks, lint y builds en verde el 2026-09-10.
+  - [ ] **C3 — Detector diferencial de trafico** — `TODO`
+  - [ ] **C4 — Reconciliacion multifuente monotona** — `TODO`
+  - [ ] **C5 — Conteos separados por fase** — `TODO`
+  - [ ] **C6 — Compatibilidad de historicos y migracion de lectura** — `TODO`
 
 - [ ] **OBS-20.12D — Libro completo de endpoints** — `TODO`
   - Conservar para cada IP publica conteos totales/base/llamada, bytes, direccion,

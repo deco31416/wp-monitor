@@ -1,5 +1,6 @@
 import {
     isCallCapturePhaseStatus,
+    type CallCapturePhaseObservation,
     type CallCapturePhaseStatus,
 } from './call-capture-phases.js';
 
@@ -29,6 +30,7 @@ export type CallCapturePhaseObserver = (
     targetJid: string,
     observedCallId: string,
     status: CallCapturePhaseStatus,
+    observation: CallCapturePhaseObservation,
 ) => Promise<boolean>;
 
 const BINDABLE_PHASE_STATUSES = new Set<CallCapturePhaseStatus>([
@@ -73,7 +75,10 @@ export async function correlateCallCapturePhase(
         };
     }
 
-    const accepted = await observe(input.targetJid, input.observedCallId, status);
+    const accepted = await observe(input.targetJid, input.observedCallId, status, {
+        source: input.source === 'baileys' ? 'baileys_normalized' : 'baileys_raw',
+        confidence: 'protocol',
+    });
     return {
         source: input.source,
         status,

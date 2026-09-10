@@ -148,11 +148,21 @@ test('offers saved cases for call capture and derives their protected audit cont
         ok: true,
         json: async () => ({ callTrafficAnalysis: true }),
     })));
-    authFetchMock.mockImplementation(async (input: string) => ({
+    authFetchMock.mockImplementation(async (input: string, init?: RequestInit) => ({
         ok: true,
         status: 200,
         json: async () => {
             if (input.includes('/api/cases')) return cases;
+            if (input.includes('/api/call-capture/start')) return { ok: true, callId: 'manual-qa-001', trigger: 'manual' };
+            if (input.includes('/api/call-capture/marker')) {
+                const body = JSON.parse(String(init?.body || '{}'));
+                return {
+                    ok: true,
+                    callId: body.callId,
+                    targetJid: body.targetJid,
+                    marker: body.marker,
+                };
+            }
             if (input.includes('/api/contact/') && input.includes('/activity')) {
                 return {
                     active: true,
@@ -202,6 +212,18 @@ test('offers saved cases for call capture and derives their protected audit cont
             caseId: 'CASE-QA-001',
             operatorName: 'OPERADOR-QA',
             authorizationNote: 'Prueba funcional autorizada',
+        }),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Marcar inicio de llamada' }));
+    expect(authFetchMock).toHaveBeenCalledWith('http://localhost:4000/api/call-capture/marker', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            callId: 'manual-qa-001',
+            targetJid: '15555550123@s.whatsapp.net',
+            caseId: 'CASE-QA-001',
+            marker: 'call_started',
         }),
     });
 });

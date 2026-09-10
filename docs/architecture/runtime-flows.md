@@ -100,11 +100,25 @@ los conteos posteriores a la linea base; cada candidata declara
 linea base y lo declara mediante `capturePhases.baselineAvailable=false`. Los
 duplicados son idempotentes y otra llamada no puede mover la captura activa. El
 proveedor `agent` recibe cada transicion en `/v1/call/phase`: el cuerpo firmado
-incluye captura, contacto, llamada observada y estado. El agente rechaza firma o
-nonce invalidos, replay, correlacion incorrecta y regresiones de fase. Un timeout
+incluye captura, contacto, llamada observada, estado, fuente y confianza. Cada
+analisis nuevo conserva `phaseEvidenceVersion: 1` y una bitacora ordenada de
+inicio de baseline, negociacion, fase activa, fin de llamada y fin de captura.
+Los historicos sin esta extension siguen siendo legibles. El agente rechaza firma o
+nonce invalidos, replay, correlacion incorrecta, procedencia incoherente y regresiones de fase. Un timeout
 o agente no disponible degrada la evidencia tecnica sin eliminar la actividad
-de llamada ya publicada. Readiness exige `callCapturePhases: 1`, por lo que una
+de llamada ya publicada. Readiness exige `callCapturePhases: 2`, por lo que una
 mezcla de versiones falla cerrada durante un despliegue gradual.
+
+Cuando la llamada se realiza desde `wa-browser` y el dispositivo Baileys no recibe
+su señalizacion, el operador autenticado puede marcar inicio, conexion y fin desde
+la captura manual. El backend acepta la accion solo si caso activo, contacto y
+`callId` coinciden con el contexto autorizado conservado en servidor; luego la
+audita y, en modo agente, la transmite por `/v1/call/marker` con HMAC y nonce.
+Readiness exige tambien `operatorCallMarkers: 1`. Esta fuente se registra como
+afirmacion del operador y nunca como evento confirmado por WhatsApp o Baileys.
+Un reintento del mismo marcador es idempotente; si la escritura de auditoria no
+queda confirmada, el backend conserva el estado pendiente y bloquea la siguiente
+transicion hasta reconciliar esa escritura.
 
 Antes del scoring, el backend consulta el registro versionado de infraestructura.
 La coincidencia mas especifica distingue relay, STUN/TURN, DNS, CDN, cloud y

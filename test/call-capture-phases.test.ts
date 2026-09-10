@@ -34,6 +34,15 @@ test('manual capture records an ordered baseline, negotiation and active call', 
         baselineEndedAt: new Date(4_000),
         negotiationStartedAt: new Date(4_000),
         activeCallStartedAt: new Date(6_000),
+        callEndedAt: null,
+        captureEndedAt: new Date(9_000),
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'baseline_started', at: new Date(1_000), source: 'capture_start', confidence: 'system' },
+            { sequence: 2, kind: 'negotiation_started', at: new Date(4_000), source: 'baileys_normalized', confidence: 'protocol', status: 'offer' },
+            { sequence: 3, kind: 'active_started', at: new Date(6_000), source: 'baileys_normalized', confidence: 'protocol', status: 'accept' },
+            { sequence: 4, kind: 'capture_ended', at: new Date(9_000), source: 'capture_stop', confidence: 'system' },
+        ],
     });
     assert.equal(lifecycle.snapshot(), null);
 });
@@ -56,6 +65,12 @@ test('automatic capture started by an offer declares that no prior baseline exis
         baselineEndedAt: null,
         negotiationStartedAt: new Date(2_000),
         activeCallStartedAt: null,
+        callEndedAt: null,
+        captureEndedAt: null,
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'negotiation_started', at: new Date(2_000), source: 'baileys_normalized', confidence: 'protocol', status: 'offer' },
+        ],
     });
 });
 
@@ -77,6 +92,13 @@ test('automatic capture started after accept records active call without inventi
         baselineEndedAt: null,
         negotiationStartedAt: new Date(3_000),
         activeCallStartedAt: new Date(3_000),
+        callEndedAt: null,
+        captureEndedAt: null,
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'negotiation_started', at: new Date(3_000), source: 'baileys_normalized', confidence: 'protocol', status: 'accept' },
+            { sequence: 2, kind: 'active_started', at: new Date(3_000), source: 'baileys_normalized', confidence: 'protocol', status: 'accept' },
+        ],
     });
 });
 
@@ -114,6 +136,14 @@ test('a late negotiation event cannot regress an active call phase', () => {
         baselineEndedAt: new Date(2_000),
         negotiationStartedAt: new Date(2_000),
         activeCallStartedAt: new Date(3_000),
+        callEndedAt: null,
+        captureEndedAt: null,
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'baseline_started', at: new Date(1_000), source: 'capture_start', confidence: 'system' },
+            { sequence: 2, kind: 'negotiation_started', at: new Date(2_000), source: 'baileys_normalized', confidence: 'protocol', status: 'offer' },
+            { sequence: 3, kind: 'active_started', at: new Date(3_000), source: 'baileys_normalized', confidence: 'protocol', status: 'accept' },
+        ],
     });
 });
 
@@ -140,7 +170,82 @@ test('finishing an immediate manual capture does not invent a zero-length baseli
         baselineEndedAt: null,
         negotiationStartedAt: null,
         activeCallStartedAt: null,
+        callEndedAt: null,
+        captureEndedAt: new Date(1_000),
+        phaseEvidenceVersion: 1,
+        phaseEvidence: [
+            { sequence: 1, kind: 'capture_ended', at: new Date(1_000), source: 'capture_stop', confidence: 'system' },
+        ],
     });
+});
+
+test('records protocol provenance and rejects phase progression after call end', () => {
+    const time = clock(1_000);
+    const lifecycle = new CallCapturePhaseLifecycle(time.now);
+    lifecycle.start({ captureCallId: CAPTURE_ID, targetJid: JID, trigger: 'manual' });
+    time.set(2_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'transport', {
+        source: 'baileys_raw',
+        confidence: 'protocol',
+    }), true);
+    time.set(3_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'terminate', {
+        source: 'baileys_raw',
+        confidence: 'protocol',
+    }), true);
+    time.set(4_000);
+    assert.equal(lifecycle.observe(JID, CALL_ID, 'accept'), false);
+
+    const snapshot = lifecycle.snapshot();
+    assert.equal(snapshot?.callEndedAt?.getTime(), 3_000);
+    assert.deepEqual(snapshot?.phaseEvidence?.map(event => ({
+        kind: event.kind,
+        source: event.source,
+        confidence: event.confidence,
+    })), [
+        { kind: 'baseline_started', source: 'capture_start', confidence: 'system' },
+        { kind: 'negotiation_started', source: 'baileys_raw', confidence: 'protocol' },
+        { kind: 'call_ended', source: 'baileys_raw', confidence: 'protocol' },
+    ]);
+});
+
+test('authorized operator markers create an ordered manual lifecycle without protocol claims', () => {
+    const time = clock(1_000);
+    const lifecycle = new CallCapturePhaseLifecycle(time.now);
+    lifecycle.start({ captureCallId: CAPTURE_ID, targetJid: JID, trigger: 'manual' });
+
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_connected'), false);
+    time.set(2_000);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_started'), true);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_started'), true);
+    time.set(4_000);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_connected'), true);
+    time.set(7_000);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_ended'), true);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_ended'), true);
+    assert.equal(lifecycle.markOperatorPhase(JID, 'call_connected'), false);
+
+    assert.deepEqual(lifecycle.snapshot()?.phaseEvidence, [
+        { sequence: 1, kind: 'baseline_started', at: new Date(1_000), source: 'capture_start', confidence: 'system' },
+        { sequence: 2, kind: 'negotiation_started', at: new Date(2_000), source: 'operator_marker', confidence: 'operator_asserted' },
+        { sequence: 3, kind: 'active_started', at: new Date(4_000), source: 'operator_marker', confidence: 'operator_asserted' },
+        { sequence: 4, kind: 'call_ended', at: new Date(7_000), source: 'operator_marker', confidence: 'operator_asserted' },
+    ]);
+});
+
+test('operator markers reject automatic captures, foreign contacts, and clock regression', () => {
+    const time = clock(2_000);
+    const automatic = new CallCapturePhaseLifecycle(time.now);
+    automatic.start({ captureCallId: CALL_ID, targetJid: JID, trigger: 'auto' });
+    assert.equal(automatic.markOperatorPhase(JID, 'call_started'), false);
+
+    const manual = new CallCapturePhaseLifecycle(time.now);
+    manual.start({ captureCallId: CAPTURE_ID, targetJid: JID, trigger: 'manual' });
+    assert.equal(manual.markOperatorPhase('573009999999@s.whatsapp.net', 'call_started'), false);
+    time.set(3_000);
+    assert.equal(manual.markOperatorPhase(JID, 'call_started'), true);
+    time.set(2_500);
+    assert.equal(manual.markOperatorPhase(JID, 'call_connected'), false);
 });
 
 test('packet classification separates baseline traffic from the call window', () => {

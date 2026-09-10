@@ -1,6 +1,7 @@
 import {
     autoDetectInterface,
     getCallCaptureStatus,
+    markOperatorCallCapturePhase,
     observeCallCapturePhase,
     startCallCapture,
     stopCallCapture,
@@ -13,7 +14,9 @@ import type { NetworkInterface } from './packet-capture.js';
 import type { CallCaptureMode } from './runtime.js';
 import {
     isCallCapturePhaseStatus,
+    type CallCapturePhaseObservation,
     type CallCapturePhaseStatus,
+    type OperatorCallMarker,
 } from './call-capture-phases.js';
 
 export interface CallCaptureServiceOptions {
@@ -120,15 +123,36 @@ export class CallCaptureService {
         return false;
     }
 
-    async observeCallEvent(targetJid: string, observedCallId: string, status: string): Promise<boolean> {
+    async observeCallEvent(
+        targetJid: string,
+        observedCallId: string,
+        status: string,
+        observation: CallCapturePhaseObservation = {
+            source: 'baileys_normalized',
+            confidence: 'protocol',
+        },
+    ): Promise<boolean> {
         if (!isCallCapturePhaseStatus(status)) return false;
-        if (this.mode === 'local') return observeCallCapturePhase(targetJid, observedCallId, status);
+        if (this.mode === 'local') return observeCallCapturePhase(targetJid, observedCallId, status, observation);
         if (this.mode !== 'agent' || !this.activeAgentCapture) return false;
         return this.agent!.observeCallCapturePhase({
             captureCallId: this.activeAgentCapture.callId,
             targetJid,
             observedCallId,
             status,
+            evidenceSource: observation.source,
+            evidenceConfidence: observation.confidence,
+        });
+    }
+
+    async markOperatorPhase(targetJid: string, marker: OperatorCallMarker): Promise<boolean> {
+        if (this.mode === 'local') return markOperatorCallCapturePhase(targetJid, marker);
+        if (this.mode !== 'agent' || !this.activeAgentCapture) return false;
+        if (this.activeAgentCapture.targetJid !== targetJid) return false;
+        return this.agent!.markOperatorCallCapturePhase({
+            captureCallId: this.activeAgentCapture.callId,
+            targetJid,
+            marker,
         });
     }
 

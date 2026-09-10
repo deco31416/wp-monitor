@@ -33,21 +33,24 @@ Invariantes:
 
 Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Mantiene disponibilidad observable sin conceder capabilities al backend.
 
-### `src/call-capture-phases.ts`
+### `src/call-capture-phases.ts` y `src/operator-call-marker.ts`
 
 Maquina de fases determinista para una unica captura. Correlaciona contacto y
 llamada observada, separa linea base, negociacion y llamada activa, rechaza
 retrocesos de reloj y eventos de otra llamada, y clasifica cada paquete sin
 retener contenido. Los proveedores local y agente usan la misma maquina; el
-backend transmite al sidecar cada transicion correlacionada mediante HMAC.
+backend transmite al sidecar cada transicion correlacionada mediante HMAC. Las
+capturas manuales aceptan ademas marcadores ordenados del operador para inicio,
+conexion y fin; su procedencia permanece diferenciada de la señalizacion de
+protocolo y exige coincidencia exacta del alcance autorizado.
 
 ### `src/capture-agent-auth.ts`, `src/capture-agent-client.ts` y `src/capture-agent-app.ts`
 
-Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. Ademas de start/status/stop, `/v1/call/phase` correlaciona captura, contacto y llamada observada. El cliente aplica timeout, bloquea redirects, exige la capability `callCapturePhases: 1` y valida cada acuse antes de entregarlo al backend.
+Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. Ademas de start/status/stop, `/v1/call/phase` correlaciona captura, contacto y llamada observada, declarando fuente y confianza; `/v1/call/marker` registra un marcador manual ordenado sin fingir evidencia de protocolo. El cliente aplica timeout, bloquea redirects, exige las capabilities `callCapturePhases: 2` y `operatorCallMarkers: 1`, y valida cada acuse antes de entregarlo al backend.
 
 ### `src/capture-agent.ts`
 
-Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/phase/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
+Entrypoint del sidecar privilegiado minimo. Solo expone health, interfaces y ciclo start/phase/marker/status/stop dentro del namespace del navegador. Requiere simultaneamente `CAP_NET_RAW` y `CAP_NET_ADMIN`.
 
 ### `src/stun-parser.ts`
 

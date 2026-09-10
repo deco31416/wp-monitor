@@ -48,7 +48,7 @@ import {
     type DurablePersistenceResult,
     type DurablePublicationResult,
 } from './durable-publication.js';
-import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getCommercialObservedActivityEvents, countCommercialObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, openPresenceCoverageWindow, confirmPresenceCoverage, closePresenceCoverageWindow, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
+import { connectDB, isDBConnected, saveMeasurement, saveActivityEvent, saveContact, removeContact, reactivateContact, getRecentMeasurements, getSavedContacts, getActivityHistory, getCommercialObservedActivityEvents, countCommercialObservedActivityEvents, getStateDistribution, getObservedActivitySummary, updateContactProfile, updateCustomName, getContactProfile, getOnlinePatterns, generateReport, disconnectDB, saveCallAnalysis, getCallAnalyses, saveAuditEvent, saveAuditEventVerified, getAuditEvents, createCase, getCase, updateCase, saveCaseEvidenceLink, deleteCaseEvidenceLink, getCaseEvidenceLinks, saveCheckInRequest, getCheckInByToken, updateCheckIn, completeCheckIn, deleteCheckIn, listCheckIns, createTrackingSession, finishTrackingSession, getActiveTrackingSessions, updateTrackingSessionProbeMethod, openPresenceCoverageWindow, confirmPresenceCoverage, closePresenceCoverageWindow, getPrimaryOperator, findOperatorByNormalizedUsername, createPrimaryOperator, updatePrimaryOperatorCredentials, recordPrimaryOperatorLogin } from './db.js';
 import type { CheckInDoc, TrackingSessionDoc } from './db.js';
 import type { PresenceCoverageCloseReason } from './presence-coverage.js';
 import { PresenceCoverageLifecycle } from './presence-coverage-lifecycle.js';
@@ -80,6 +80,11 @@ import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
 import { CallCaptureService } from './call-capture-service.js';
+import { isOperatorCallMarker, type OperatorCallMarker } from './call-capture-phases.js';
+import {
+    getOperatorCallMarkerDisposition,
+    matchesActiveOperatorCallMarkerScope,
+} from './operator-call-marker.js';
 import {
     canBindObservedCall,
     correlateCallCapturePhase,
@@ -672,6 +677,17 @@ function buildOpenApiDocument() {
                     responses: { '200': { description: 'Call analysis result' } },
                 },
             },
+            '/api/call-capture/marker': {
+                post: {
+                    tags: ['Call Capture'],
+                    summary: 'Record an authorized operator phase marker',
+                    responses: {
+                        '200': { description: 'Operator marker recorded' },
+                        '400': { description: 'Invalid marker request' },
+                        '409': { description: 'Marker does not match the active authorized capture' },
+                    },
+                },
+            },
             '/api/checkins': {
                 get: {
                     tags: ['Check-In'],
@@ -968,9 +984,24 @@ type ActiveCallAuditContext = CaptureAuditContext & {
     targetJid: string;
     callId: string;
     observedCallId?: string;
+    operatorMarker?: OperatorCallMarker;
+    operatorMarkerAudited?: boolean;
 };
 
 let activeCallAuditContext: ActiveCallAuditContext | null = null;
+let operatorMarkerQueue: Promise<void> = Promise.resolve();
+
+async function serializeOperatorMarker<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = operatorMarkerQueue;
+    let release!: () => void;
+    operatorMarkerQueue = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+    }
+}
 const liveSignalExpiryTimers = new Map<string, NodeJS.Timeout>();
 
 function clearContactObservationState(jid: string): void {
@@ -1138,6 +1169,26 @@ async function auditEvent(
         targetJid: targetJid || null,
         details,
     });
+}
+
+async function persistOperatorMarkerAudit(context: ActiveCallAuditContext): Promise<boolean> {
+    if (!context.operatorMarker) return true;
+    const stored = await saveAuditEventVerified({
+        caseId: context.caseId,
+        operatorName: context.operatorName,
+        authorizationNote: context.authorizationNote,
+        action: 'call_capture_operator_marker',
+        scope: 'call',
+        targetJid: context.targetJid,
+        details: {
+            callId: context.callId,
+            marker: context.operatorMarker,
+            evidenceSource: 'operator_marker',
+            evidenceConfidence: 'operator_asserted',
+        },
+    });
+    context.operatorMarkerAudited = stored;
+    return stored;
 }
 
 function normalizeLiveJid(value: unknown): string | null {
@@ -1587,7 +1638,7 @@ async function handleObservedBaileysCall(event: ObservedBaileysCall): Promise<vo
                     captureMode: CALL_CAPTURE_MODE,
                 }, jid);
                 console.log('[CALL] Auto-capture started');
-                io.emit('call-capture-started', { callId: call.id, targetJid: jid });
+                io.emit('call-capture-started', { callId: call.id, targetJid: jid, trigger: 'auto' });
             }
         } catch {
             console.warn('[CALL] Auto-capture skipped: capture service request failed');
@@ -1673,7 +1724,12 @@ async function observeCorrelatedCallPhase(
 ): Promise<boolean> {
     try {
         const result = await correlateCallCapturePhase(
-            (jid, callId, phaseStatus) => callCaptureService.observeCallEvent(jid, callId, phaseStatus),
+            (jid, callId, phaseStatus, observation) => callCaptureService.observeCallEvent(
+                jid,
+                callId,
+                phaseStatus,
+                observation,
+            ),
             { source, targetJid, observedCallId, status },
         );
         bindObservedCallToManualCapture(result, targetJid, observedCallId);
@@ -3697,11 +3753,148 @@ app.post('/api/call-capture/start', async (req, res) => {
             trigger: 'manual_rest',
             captureMode: CALL_CAPTURE_MODE,
         }, target);
-        io.emit('call-capture-started', { callId: cid, targetJid: target });
-        res.json({ ok: true, callId: cid });
+        io.emit('call-capture-started', { callId: cid, targetJid: target, trigger: 'manual' });
+        res.json({ ok: true, callId: cid, trigger: 'manual' });
     } else {
         res.status(500).json({ error: 'Failed to start capture. Already capturing or run as administrator.' });
     }
+});
+
+app.post('/api/call-capture/marker', async (req, res) => {
+    if (await rejectCallCaptureUnavailable(res)) return;
+    const requestedCase = validateCaseId(req.body?.caseId);
+    const requestedTarget = validateJid(req.body?.targetJid, 'targetJid');
+    const requestedCallId = cleanText(req.body?.callId, 120);
+    const requestedMarker = cleanText(req.body?.marker, 32).toLowerCase();
+    if (
+        !requestedCase.ok
+        || !requestedTarget.ok
+        || !requestedCallId
+        || !isOperatorCallMarker(requestedMarker)
+    ) {
+        validationError(res, [
+            ...(requestedCase.errors || []),
+            ...(requestedTarget.errors || []),
+            ...(!requestedCallId ? ['callId is required'] : []),
+            ...(!isOperatorCallMarker(requestedMarker) ? ['marker is not supported'] : []),
+        ]);
+        return;
+    }
+
+    await serializeOperatorMarker(async () => {
+    const markerRequest = {
+        caseId: requestedCase.value!,
+        targetJid: requestedTarget.value!,
+        callId: requestedCallId,
+        marker: requestedMarker as OperatorCallMarker,
+    };
+    const activeContext = activeCallAuditContext;
+    if (!activeContext || !matchesActiveOperatorCallMarkerScope(activeContext, markerRequest)) {
+        res.status(409).json({
+            error: 'Operator marker does not match the active authorized capture',
+            code: 'capture_phase_mismatch',
+        });
+        return;
+    }
+
+    try {
+        const captureStatus = await callCaptureService.getStatus();
+        if (
+            !captureStatus.isCapturing
+            || captureStatus.callId !== activeContext.callId
+            || captureStatus.targetJid !== activeContext.targetJid
+        ) {
+            res.status(409).json({
+                error: 'Operator marker does not match the active packet capture',
+                code: 'capture_phase_mismatch',
+            });
+            return;
+        }
+    } catch (error) {
+        respondCallCaptureError(res, error);
+        return;
+    }
+
+    const activeCase = await getCase(activeContext.caseId);
+    if (!activeCase || activeCase.status !== 'active') {
+        res.status(409).json({
+            error: 'The authorized case is no longer active',
+            code: 'case_not_active',
+        });
+        return;
+    }
+
+    const markerDisposition = getOperatorCallMarkerDisposition(
+        activeContext.operatorMarker,
+        markerRequest.marker,
+    );
+    if (markerDisposition === 'reject') {
+        res.status(409).json({
+            error: 'Operator marker is not valid for the current call phase',
+            code: 'capture_phase_rejected',
+        });
+        return;
+    }
+
+    const acknowledgement = {
+        ok: true,
+        callId: activeContext.callId,
+        targetJid: activeContext.targetJid,
+        marker: markerRequest.marker,
+    };
+    if (markerDisposition === 'idempotent') {
+        if (!activeContext.operatorMarkerAudited && !await persistOperatorMarkerAudit(activeContext)) {
+            res.status(503).json({
+                error: 'Operator marker was recorded but its audit entry is still pending',
+                code: 'audit_persistence_unavailable',
+            });
+            return;
+        }
+        res.json(acknowledgement);
+        return;
+    }
+    if (
+        activeContext.operatorMarker
+        && !activeContext.operatorMarkerAudited
+        && !await persistOperatorMarkerAudit(activeContext)
+    ) {
+        res.status(503).json({
+            error: 'The previous operator marker audit entry is still pending',
+            code: 'audit_persistence_unavailable',
+        });
+        return;
+    }
+
+    let accepted: boolean;
+    try {
+        accepted = await callCaptureService.markOperatorPhase(
+            activeContext.targetJid,
+            markerRequest.marker,
+        );
+    } catch (error) {
+        respondCallCaptureError(res, error);
+        return;
+    }
+    if (!accepted) {
+        res.status(409).json({
+            error: 'Operator marker is not valid for the current call phase',
+            code: 'capture_phase_rejected',
+        });
+        return;
+    }
+
+    activeContext.operatorMarker = markerRequest.marker;
+    activeContext.operatorMarkerAudited = false;
+    if (!await persistOperatorMarkerAudit(activeContext)) {
+        res.status(503).json({
+            error: 'Operator marker was recorded but its audit entry is still pending',
+            code: 'audit_persistence_unavailable',
+        });
+        return;
+    }
+    io.emit('call-capture-marker', acknowledgement);
+    res.json(acknowledgement);
+    });
 });
 
 app.post('/api/call-capture/stop', async (_req, res) => {
@@ -4264,7 +4457,7 @@ io.on('connection', (socket) => {
                 trigger: 'socket',
                 captureMode: CALL_CAPTURE_MODE,
             }, jid);
-            io.emit('call-capture-started', { callId: cid, targetJid: jid });
+            io.emit('call-capture-started', { callId: cid, targetJid: jid, trigger: 'manual' });
             console.log('[CALL] Manual capture started');
         } else {
             socket.emit('error', { message: 'Failed to start call capture. Already capturing or run as administrator.' });
