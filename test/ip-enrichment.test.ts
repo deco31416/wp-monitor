@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyEnrichmentClassification, normalizeDbIpResponse, normalizeIpApiResponse } from '../src/ip-enrichment.js';
 import type { CandidateIP } from '../src/call-analyzer.js';
+import { lookupNetworkIntelligence } from '../src/call-scoring.js';
 
 test('normalizes ip-api geolocation and ASN data', () => {
     const enrichment = normalizeIpApiResponse({
@@ -92,6 +93,12 @@ test('demotes enriched CDN/cloud IPs even when initial traffic score is high', (
     assert.equal(adjusted.confidence, 'low');
     assert.ok(adjusted.confidenceScore <= 30);
     assert.ok(adjusted.reasonCodes.some(reason => reason.code === 'ENRICHED_CDN_PROVIDER'));
+    assert.deepEqual(adjusted.networkIntelligence.exclusionDecision, {
+        version: 1,
+        classification: 'contextual',
+        basis: 'enrichment',
+        reasonCodes: ['ENRICHED_CDN_PROVIDER'],
+    });
 });
 
 test('keeps enriched consumer ISP candidates eligible for corroboration', () => {
@@ -127,6 +134,37 @@ test('keeps enriched consumer ISP candidates eligible for corroboration', () => 
     assert.equal(adjusted.networkIntelligence.asn, 64503);
     assert.equal(adjusted.networkIntelligence.source, 'enrichment');
     assert.match(adjusted.networkIntelligence.org, /residencial/i);
+});
+
+test('cannot downgrade an exact DNS hard exclusion with contextual enrichment', () => {
+    const candidate = buildCandidate({
+        ip: '8.8.8.8',
+        provider: 'google',
+        networkCategory: 'dns',
+        endpointRole: 'dns',
+        networkIntelligence: lookupNetworkIntelligence('8.8.8.8', 'google', {
+            now: new Date('2026-09-10T12:00:00.000Z'),
+        }),
+        isP2P: false,
+    });
+    const enrichment = normalizeIpApiResponse({
+        status: 'success',
+        query: '8.8.8.8',
+        countryCode: 'US',
+        isp: 'Google LLC',
+        org: 'Google Public DNS',
+        as: 'AS15169 Google LLC',
+        asname: 'GOOGLE',
+        hosting: true,
+        proxy: false,
+    }, 'https://geo.example.test/json/8.8.8.8');
+
+    const adjusted = applyEnrichmentClassification(candidate, enrichment);
+
+    assert.equal(adjusted.networkCategory, 'dns');
+    assert.equal(adjusted.networkIntelligence.category, 'dns');
+    assert.equal(adjusted.networkIntelligence.exclusionDecision?.classification, 'hard_excluded');
+    assert.deepEqual(adjusted.networkIntelligence.exclusionDecision?.reasonCodes, ['EXACT_PUBLIC_DNS']);
 });
 
 function buildCandidate(overrides: Partial<CandidateIP>): CandidateIP {

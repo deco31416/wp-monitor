@@ -59,9 +59,14 @@ Un evento faltante se documenta; no se inventa ni se elimina evidencia para mejo
 | --- | --- | --- |
 | JSON de auditoria | Tecnica | Eventos y hash canonico |
 | Bitacora HTML/PDF | Operativa | Señales pasivas y mediciones tecnicas separadas para la sesion activa |
-| Final JSON | Integracion | Caso completo estructurado |
-| Final HTML/PDF | Revision humana | Informe formal con timeline pasivo, medicion tecnica, auditoria y hallazgos |
-| Evidence Package ZIP | Archivo/auditoria | Manifiesto, actividad pasiva JSON/CSV, datos, anexos y hashes |
+| Final JSON 1.3 | Integracion | Caso completo estructurado, scoring v3, contexto de red, contradicciones y limites de presentacion |
+| Final HTML/PDF 1.3 | Revision humana | Informe formal con la misma conclusion, contexto de red y radio de incertidumbre declarado |
+| Evidence Package ZIP 1.3 | Archivo/auditoria | Manifiesto, actividad pasiva JSON/CSV, libro completo de endpoints, informes, anexos y hashes |
+
+HTML y PDF presentan como maximo 10 candidatas y 10 observaciones no
+concluyentes por legibilidad. Cuando existen mas, ambos lo declaran; el JSON y
+los anexos CSV conservan el conjunto incluido en el informe. El Evidence
+Package mantiene ademas el analisis canonico fuente y sus hashes.
 
 ## Revision antes de entregar
 

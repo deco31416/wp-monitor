@@ -439,7 +439,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     fueron retirados; no se tocaron produccion ni recursos persistentes.
 
 - [x] **OBS-20.9 — Registro versionado de infraestructura** — `DONE (E3 LOCAL)`
-  - Alcance: clasificar Meta, relays anunciados, Google STUN/TURN, DNS, CDN,
+  - Alcance: clasificar Meta, relays anunciados, servicios Google, DNS, CDN,
     cloud, endpoint propio y redes no atribuibles, con procedencia y fecha.
   - Aceptacion: una lista obsoleta o un proveedor desconocido no convierte una
     IP en contacto; existe ultimo dato valido y degradacion visible.
@@ -449,7 +449,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     ausente.
   - Evidencia: registro canonico `2026.09.08.1` con resolucion por prefijo y
     prioridad, procedencia, vigencia, conflictos y degradacion segura. Cubre
-    IPv4/IPv6, Meta/relay, Google STUN/TURN, DNS exacto, Cloudflare/CDN,
+    IPv4/IPv6, Meta/relay, servicios Google, DNS exacto, Cloudflare/CDN,
     cloud curado, desconocidos y salida publica propia observada por STUN. Se
     eliminaron rangos historicos de terceros atribuidos incorrectamente a Meta,
     heuristicas `/8` demasiado amplias y la segunda tabla hardcodeada del
@@ -576,7 +576,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     dispositivo vinculado `wa-browser`. No se repetiran llamadas hasta agregar
     una fuente de fase perteneciente a la captura.
 
-- [ ] **OBS-20.12C — Ventana diferencial confiable** — `IN PROGRESS (C2 E2 LOCAL)`
+- [ ] **OBS-20.12C — Ventana diferencial confiable** — `IN PROGRESS (C3 E2 LOCAL)`
   - Separar de forma verificable linea base, negociacion, llamada activa y cierre.
   - Cierre: una llamada correlacionada produce paquetes activos; una captura sin
     correlacion permanece no atribuible y nunca fabrica una ruta.
@@ -587,8 +587,8 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
       marcador del operador y cambio de trafico inferido. La combinacion
       fuente-confianza se valida en productor y consumidor.
     - El cliente del agente acepta historicos sin la extension, valida
-      estrictamente la version nueva y readiness exige `callCapturePhases: 2`
-      para impedir mezcla silenciosa de contratos.
+      estrictamente las versiones de evidencia y readiness exige actualmente
+      `callCapturePhases: 4` para impedir mezcla silenciosa de contratos.
   - [x] **C2 — Marcador autorizado del operador** — `DONE (E2 LOCAL)`
     - La pestaña `Llamada` guia inicio, conexion y fin sin abrir una vista nueva.
       Cada accion exige captura manual activa y coincidencia exacta de caso,
@@ -604,25 +604,105 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
       regresivo se rechazan o permanecen idempotentes segun el caso.
     - Evidencia local: 38/38 specs backend dirigidos, 39/39 frontend, 338/338
       backend completos, typechecks, lint y builds en verde el 2026-09-10.
-  - [ ] **C3 — Detector diferencial de trafico** — `TODO`
-  - [ ] **C4 — Reconciliacion multifuente monotona** — `TODO`
-  - [ ] **C5 — Conteos separados por fase** — `TODO`
-  - [ ] **C6 — Compatibilidad de historicos y migracion de lectura** — `TODO`
+  - [x] **C3 — Detector diferencial de trafico** — `DONE (E2 LOCAL)`
+    - Una captura manual entrena una linea base fija de cinco segundos y evalua
+      por endpoint ventanas moviles acotadas de dos segundos. Solo un incremento
+      UDP sostenido, bidireccional y superior a umbrales absolutos y relativos
+      genera `network_onset/inferred`; TCP, rafagas breves, trafico unidireccional,
+      timestamps regresivos y actividad comparable con la base no disparan fase.
+    - La deteccion solo cierra la linea base y abre negociacion inferida. No
+      promueve IPs, no confirma llamada activa, identidad, ruta directa ni
+      ubicacion, y no se aplica a capturas automaticas sin linea base.
+  - [x] **C4 — Reconciliacion multifuente monotona** — `DONE (E2 LOCAL)`
+    - El primer evento aceptado fija el limite temporal canonico de la fase.
+      Fuentes independientes posteriores se conservan como corroboraciones
+      acotadas por fuente, sin mover el limite, repetir una fuente ni permitir
+      retrocesos; detector, operador, Baileys raw y normalizado mantienen su
+      procedencia y confianza originales.
+    - `phaseEvidenceVersion: 2` agrega corroboraciones y conserva lectura de v1.
+      Al cierre de C4, readiness exigia `callCapturePhases: 3`, por lo que un
+      agente anterior fallaba cerrado durante una actualizacion en vez de perder
+      evidencia silenciosamente. C5 eleva el contrato vigente a 4.
+    - Evidencia local: 42/42 specs dirigidos, 347/347 backend, 39/39 frontend,
+      typechecks, lint, builds, documentacion, contenedores, Compose sintetico y
+      licencias en verde el 2026-09-10.
+  - [x] **C5 — Conteos separados por fase** — `DONE (E2 LOCAL)`
+    - Cada analisis nuevo conserva paquetes y bytes almacenados en linea base,
+      negociacion, llamada activa, posterior a la llamada y no clasificados,
+      globalmente y por endpoint publico. El contrato `phaseCounts.version=1`
+      reconcilia sumas; metadata descartada permanece declarada exclusivamente
+      en `captureBounds` porque no puede asignarse responsablemente a una fase.
+    - El cliente del agente valida version, enteros no negativos y sumas exactas
+      por captura y endpoint. Readiness exige ahora `callCapturePhases: 4`, por
+      lo que una mezcla runtime no omite el desglose silenciosamente.
+    - `baselinePackets` y `activeCallPackets` conservan temporalmente su semantica
+      historica para no alterar el scoring v2 antes de `OBS-20.12F`; C5 no cambia
+      candidatos, veredictos ni presentacion comercial.
+    - Evidencia local: 43/43 specs dirigidos, 349/349 backend, 39/39 frontend,
+      typechecks, lint, builds, documentacion, contenedores, Compose sintetico y
+      licencias en verde el 2026-09-10.
+  - [x] **C6 — Compatibilidad de historicos y migracion de lectura** — `DONE (E2 LOCAL)`
+    - La lectura de MongoDB conserva historicos sin desglose como evidencia
+      ausente y no sintetiza fases, bytes o timestamps. Un libro C5 se acepta de
+      forma atomica solo cuando global, `captureBounds` y todos los endpoints
+      reconcilian; cualquier extension parcial o malformada se retira en memoria
+      sin reescribir el documento almacenado.
+    - Los conteos historicos `baselinePackets`/`activeCallPackets` permanecen
+      disponibles si ambos son enteros no negativos y suman el total del
+      endpoint; un par inconsistente se omite en vez de reparar evidencia.
+    - Evidencia local: 33/33 specs dirigidos, 354/354 backend, 39/39 frontend,
+      typechecks, lint, builds, documentacion, contenedores, Compose sintetico y
+      licencias en verde el 2026-09-10.
 
-- [ ] **OBS-20.12D — Libro completo de endpoints** — `TODO`
+- [x] **OBS-20.12D — Libro completo de endpoints** — `DONE (E2 LOCAL)`
   - Conservar para cada IP publica conteos totales/base/llamada, bytes, direccion,
     puertos, protocolo, tiempos, inteligencia de red y decision explicable.
   - Cierre: ninguna IP publica desaparece silenciosamente entre captura,
     analisis, persistencia, interfaz e informes.
+  - Implementado: `candidateIps` mantiene su nombre historico y actua como libro
+    canonico de todos los endpoints publicos, no solo de los promovidos. La UI lo
+    divide de forma exhaustiva y sin solapamientos entre candidatas,
+    infraestructura y observaciones no concluyentes; `metaIps` queda solo como
+    fallback visual para historicos que no conservaron el detalle completo.
+  - Informes: el reporte final publica `observedEndpoints`, el total
+    `observedEndpointCount` y el anexo canonico
+    `annexes/observed-endpoints.csv`, conservando bytes, tiempos, puertos,
+    protocolo, fases, inteligencia, score, correlacion y decision. Los anexos
+    historicos de candidatas y observaciones siguen disponibles por
+    compatibilidad.
+  - Evidencia local: 25/25 specs dirigidos, 354/354 backend, 40/40 frontend,
+    typechecks, lint, builds, documentacion, contenedores, Compose sintetico y
+    licencias en verde el 2026-09-10. La evidencia E3/E4 queda reservada para
+    `OBS-20.12I`.
 
-- [ ] **OBS-20.12E — Auditoria de falsos negativos** — `TODO`
+- [x] **OBS-20.12E — Auditoria de falsos negativos** — `DONE (E2 LOCAL)`
   - Separar exclusiones fuertes de clasificaciones contextuales y revisar rangos
     amplios, coincidencias ASN y reglas textuales de cloud/CDN/hosting.
   - Cierre: Meta, DNS exacto y salida propia permanecen excluidos; Google/cloud y
     observaciones ambiguas se conservan visibles con procedencia y motivo, sin
     promoverlas automaticamente como contacto.
+  - Implementado: `networkIntelligence.exclusionDecision.version=1` separa
+    `hard_excluded`, `contextual` y `eligible`, incluyendo base y codigos de
+    motivo. Meta, DNS publico con coincidencia exacta `/32` o `/128` y el
+    endpoint publico propio son exclusiones fuertes. Google general, CDN,
+    cloud/hosting, STUN/TURN contextual y clasificaciones de enriquecimiento
+    permanecen como contexto revisable, sin promocion automatica.
+  - El snapshot `2026.09.10.1` deja de describir rangos generales de Google como
+    prueba STUN/TURN y los clasifica como red de servicio/cloud contextual. DNS
+    Google y Cloudflare conservan entradas exactas y fuertes. Readiness exige
+    `endpointExclusionDecision: 1`, evitando mezcla silenciosa entre backend y
+    agente.
+  - Un enriquecimiento contextual nunca reemplaza una exclusion fuerte obtenida
+    del registro o de la salida propia observada en runtime.
+  - UI e informes muestran el tratamiento y su procedencia; el anexo completo
+    añade clasificacion, base y motivos. El score y la conclusion de ruta siguen
+    en v2 sin cambios de umbral; su evolucion corresponde a `OBS-20.12F`.
+  - Evidencia local: 62/62 specs backend y 15/15 frontend dirigidos; 356/356
+    backend, 40/40 frontend, typechecks, lint, builds, documentacion,
+    contenedores, Compose sintetico y licencias en verde el 2026-09-10. La
+    evidencia E3/E4 queda reservada para `OBS-20.12I`.
 
-- [ ] **OBS-20.12F — Scoring de ruta y contexto de red v3** — `TODO`
+- [x] **OBS-20.12F — Scoring de ruta y contexto de red v3** — `DONE (E2 LOCAL)`
   - Separar probabilidad de ruta directa de estimacion geografica de la red.
     Aplicar delta frente a baseline, inicio temporal, bidireccionalidad,
     densidad, ICE/Baileys/STUN y tipo de ASN antes del contexto geografico.
@@ -635,12 +715,42 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     roaming no sustituyen evidencia de ruta.
   - Cierre: modelo determinista, versionado, explicable y calibrado con fixtures
     autorizadas antes de considerar aprendizaje estadistico.
+  - Implementado: cada endpoint nuevo publica `scoreVersion=3`, un
+    `scoreBreakdown.version=3` reconstruible y un `networkContext.version=1`
+    ortogonal. El score usa exclusivamente señales de ruta y calidad: delta de
+    tasa frente a baseline, cercania temporal al inicio, bidireccionalidad,
+    volumen, densidad, metadata STUN/transport y clasificacion de red. Cada
+    tope conserva valor anterior, maximo y resultado.
+  - GeoIP y el prefijo del objetivo canonico nunca aportan delta ni tope. Su
+    relacion `match`, `mismatch` o `unavailable` queda visible con
+    `affectsRouteScore=false`; zonas compartidas como `+1` y `+7` no inventan
+    un pais. La tabla E.164 versionada cubre numeracion internacional y puede
+    mantenerse sin acoplarla al algoritmo.
+  - El enriquecimiento vuelve a puntuar con los mismos insumos de subventana,
+    evitando mezclar otra vez la linea base. Readiness exige
+    `candidateScoring: 3`; respuestas v3 incompletas o matematicamente
+    incoherentes fallan cerradas. MongoDB conserva v2 y retira en memoria
+    extensiones v3 malformadas sin reescribir historicos.
+  - Evidencia local: 57/57 specs dirigidos, 363/363 backend y 40/40 frontend;
+    typechecks, lint y builds en verde el 2026-09-10. La evidencia E3/E4 queda
+    reservada para `OBS-20.12I`.
 
-- [ ] **OBS-20.12G — Experiencia comercial e informes** — `TODO`
+- [x] **OBS-20.12G — Experiencia comercial e informes** — `DONE (E2 LOCAL)`
   - Integrar conclusion, candidatas, infraestructura, observaciones, razones,
     radio de incertidumbre y contradicciones en `Llamada`, sin pestana nueva.
   - Cierre: paridad semantica y de limites en JSON, HTML, PDF, ZIP y Evidence
     Package.
+  - Implementado: `Llamada` presenta el desglose reconstruible del score v3,
+    sus topes, el contexto E.164/GeoIP separado, contradicciones y un radio de
+    incertidumbre explicitamente no cuantificado cuando la fuente no lo
+    proporciona. No se inventan kilometros ni se modifica el score por pais.
+  - El informe final y el Evidence Package avanzan a contrato `1.3`; JSON,
+    HTML, PDF y anexos CSV conservan la misma conclusion, contexto, score y
+    limitaciones. HTML y PDF comparten limite visible de 10 endpoints por grupo
+    y declaran cuando el JSON/CSV contiene mas registros.
+  - Evidencia local: 11/11 specs dirigidos de informes, 364/364 backend y 41/41
+    frontend; typechecks, lint, builds y documentacion en verde el 2026-09-10. La
+    validacion visual/runtime E3/E4 queda reservada para `OBS-20.12I`.
 
 - [ ] **OBS-20.12H — Matriz automatizada de regresion** — `TODO`
   - Cubrir relay, directa probable/confirmada, mixta, sin correlacion, trafico de

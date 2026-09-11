@@ -1,7 +1,11 @@
 import { isPrivateIP } from './meta-ip-ranges.js';
 import type { CallAnalysisResult, CandidateIP } from './call-analyzer.js';
 import { scoreCandidate } from './call-scoring.js';
-import type { CandidateConfidence, NetworkIntelligenceCategory } from './call-scoring.js';
+import type {
+    CandidateConfidence,
+    EndpointExclusionDecision,
+    NetworkIntelligenceCategory,
+} from './call-scoring.js';
 import { SOFTWARE_VERSION } from './version.js';
 
 export interface IpEnrichment {
@@ -178,8 +182,18 @@ export function applyEnrichmentClassification(candidate: CandidateIP, enrichment
 
     const infrastructure = detectInfrastructureEnrichment(enrichment);
     if (infrastructure) {
+        if (candidate.networkIntelligence.exclusionDecision?.classification === 'hard_excluded') {
+            return candidate;
+        }
         const confidenceScore = Math.min(candidate.confidenceScore, infrastructure.cap);
         const reasonExists = candidate.reasonCodes.some(reason => reason.code === infrastructure.reasonCode);
+
+        const enrichmentDecision: EndpointExclusionDecision = {
+            version: 1,
+            classification: 'contextual',
+            basis: 'enrichment',
+            reasonCodes: [infrastructure.reasonCode],
+        };
 
         return {
             ...candidate,
@@ -192,6 +206,7 @@ export function applyEnrichmentClassification(candidate: CandidateIP, enrichment
                 source: 'enrichment',
                 isDatacenterLikely: true,
                 caution: 'Clasificacion ajustada por enriquecimiento ASN/ISP/ORG. Red cloud/CDN/hosting/proxy observada; no identifica usuario final.',
+                exclusionDecision: enrichmentDecision,
             },
             confidenceScore,
             confidence: confidenceFromScore(confidenceScore),
@@ -236,14 +251,20 @@ function reScoreEnrichedCandidate(candidate: CandidateIP, targetJid: string, dur
     const score = scoreCandidate({
         provider: candidate.provider,
         networkIntelligence: candidate.networkIntelligence,
-        packets: candidate.packets,
-        bytesTotal: candidate.bytesTotal,
-        direction: candidate.direction,
-        ports: candidate.ports,
-        durationSec,
+        packets: candidate.scoreBreakdown?.inputs.packets ?? candidate.activeCallPackets ?? candidate.packets,
+        bytesTotal: candidate.scoreBreakdown?.inputs.bytesTotal ?? candidate.bytesTotal,
+        direction: candidate.scoreBreakdown?.inputs.direction ?? candidate.direction,
+        ports: candidate.scoreBreakdown?.inputs.ports ?? candidate.ports,
+        durationSec: candidate.scoreBreakdown?.inputs.durationSec ?? durationSec,
         targetJid,
         observedCountryCode: observedCountryCode ?? null,
         ...(candidate.addressFamily === undefined ? {} : { addressFamily: candidate.addressFamily }),
+        ...(candidate.scoreBreakdown ? {
+            baselinePackets: candidate.scoreBreakdown.inputs.baselinePackets,
+            baselineDurationSec: candidate.scoreBreakdown.inputs.baselineDurationSec,
+            onsetDelayMs: candidate.scoreBreakdown.inputs.onsetDelayMs,
+            protocolEvidence: candidate.scoreBreakdown.inputs.protocolEvidence,
+        } : {}),
     });
 
     return {
@@ -255,6 +276,9 @@ function reScoreEnrichedCandidate(candidate: CandidateIP, targetJid: string, dur
         technicalNote: score.technicalNote,
         isP2P: score.isP2P,
         correlation: score.correlation,
+        networkContext: score.networkContext,
+        scoreBreakdown: score.scoreBreakdown,
+        scoreVersion: 3,
     };
 }
 

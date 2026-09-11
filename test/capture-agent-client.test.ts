@@ -158,7 +158,7 @@ test('capture agent client completes the authenticated lifecycle and restores Da
         assert.ok(result.endTime instanceof Date);
         assert.ok(result.candidateIps[0]?.firstSeen instanceof Date);
         assert.deepEqual(result.candidateIps[0]?.ports, [40_000, 40_001]);
-        assert.equal(result.capturePhases?.phaseEvidenceVersion, 1);
+        assert.equal(result.capturePhases?.phaseEvidenceVersion, 2);
         assert.ok(result.capturePhases?.captureEndedAt instanceof Date);
         assert.deepEqual(result.capturePhases?.phaseEvidence?.map(event => ({
             kind: event.kind,
@@ -257,6 +257,64 @@ test('call capture service forwards authorized operator markers without protocol
     });
 });
 
+test('capture agent preserves multi-source corroboration without moving phase boundaries', async () => {
+    await withAgent(async baseUrl => {
+        let nonce = 0;
+        const client = new CaptureAgentClient({
+            baseUrl,
+            sharedSecret: SECRET,
+            now: () => NOW,
+            nonce: () => `reconcile_nonce_${String(++nonce).padStart(16, '0')}`,
+        });
+        const service = new CallCaptureService({ mode: 'agent', agent: client });
+        const targetJid = '573001112233@s.whatsapp.net';
+
+        assert.equal(await service.start(
+            '172.31.0.10',
+            targetJid,
+            'CAPTURE-RECONCILE-001',
+            false,
+            undefined,
+            { trigger: 'manual' },
+        ), true);
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_started'), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-RECONCILE-001', 'offer'), true);
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_connected'), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-RECONCILE-001', 'accept'), true);
+        assert.equal(await service.markOperatorPhase(targetJid, 'call_ended'), true);
+        assert.equal(await service.observeCallEvent(targetJid, 'OBSERVED-RECONCILE-001', 'terminate'), true);
+
+        const result = await service.stop();
+        assert.equal(result?.capturePhases?.phaseEvidenceVersion, 2);
+        assert.deepEqual(result?.capturePhases?.phaseEvidence?.map(event => ({
+            kind: event.kind,
+            source: event.source,
+            corroborations: event.corroborations?.map(corroboration => ({
+                source: corroboration.source,
+                confidence: corroboration.confidence,
+                status: corroboration.status,
+            })),
+        })), [
+            {
+                kind: 'negotiation_started',
+                source: 'operator_marker',
+                corroborations: [{ source: 'baileys_normalized', confidence: 'protocol', status: 'offer' }],
+            },
+            {
+                kind: 'active_started',
+                source: 'operator_marker',
+                corroborations: [{ source: 'baileys_normalized', confidence: 'protocol', status: 'accept' }],
+            },
+            {
+                kind: 'call_ended',
+                source: 'operator_marker',
+                corroborations: [{ source: 'baileys_normalized', confidence: 'protocol', status: 'terminate' }],
+            },
+            { kind: 'capture_ended', source: 'capture_stop', corroborations: undefined },
+        ]);
+    });
+});
+
 test('capture agent client rejects unsafe origins and weak secrets', () => {
     assert.throws(() => new CaptureAgentClient({
         baseUrl: 'http://user:password@capture-agent:4100/path',
@@ -268,11 +326,15 @@ test('capture agent client rejects unsafe origins and weak secrets', () => {
     }), /at least 32 bytes/);
 });
 
-test('readiness requires both remote phase capabilities', async () => {
+test('readiness requires phase, marker, endpoint-decision, and scoring capabilities', async () => {
     for (const capabilities of [
         undefined,
-        { callCapturePhases: 1, operatorCallMarkers: 1 },
-        { callCapturePhases: 2 },
+        { callCapturePhases: 1, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3 },
+        { callCapturePhases: 2, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3 },
+        { callCapturePhases: 3, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3 },
+        { callCapturePhases: 4, endpointExclusionDecision: 1, candidateScoring: 3 },
+        { callCapturePhases: 4, operatorCallMarkers: 1, candidateScoring: 3 },
+        { callCapturePhases: 4, operatorCallMarkers: 1, endpointExclusionDecision: 1 },
     ]) {
         const client = new CaptureAgentClient({
             baseUrl: 'http://capture-agent.test:4100',
@@ -490,6 +552,12 @@ test('capture agent client accepts the additive v2 packet contract without requi
                 source: 'local_rules',
                 isDatacenterLikely: false,
                 caution: 'Synthetic test fixture.',
+                exclusionDecision: {
+                    version: 1,
+                    classification: 'contextual',
+                    basis: 'registry',
+                    reasonCodes: ['CLOUD_HOSTING_CONTEXT'],
+                },
                 registryEvidence: {
                     schemaVersion: 1,
                     registryVersion: 'test.1',
@@ -525,6 +593,14 @@ test('capture agent client accepts the additive v2 packet contract without requi
             endpointRole: 'unknown',
             baselinePackets: 2,
             activeCallPackets: 6,
+            phaseCounts: {
+                version: 1,
+                baseline: { packets: 2, bytes: 240 },
+                negotiation: { packets: 1, bytes: 120 },
+                active: { packets: 4, bytes: 480 },
+                postCall: { packets: 1, bytes: 120 },
+                unclassified: { packets: 0, bytes: 0 },
+            },
             protocolEvidence: ['stun_binding_request', 'transport_flow'],
             scoreVersion: 2,
         }],
@@ -552,6 +628,14 @@ test('capture agent client accepts the additive v2 packet contract without requi
             droppedPackets: 2,
             truncated: true,
         },
+        phaseCounts: {
+            version: 1,
+            baseline: { packets: 2, bytes: 240 },
+            negotiation: { packets: 2, bytes: 240 },
+            active: { packets: 4, bytes: 480 },
+            postCall: { packets: 1, bytes: 120 },
+            unclassified: { packets: 1, bytes: 80 },
+        },
     };
     const client = new CaptureAgentClient({
         baseUrl: 'http://capture-agent.test:4100',
@@ -568,6 +652,12 @@ test('capture agent client accepts the additive v2 packet contract without requi
     assert.equal(result.candidateIps[0]?.endpointRole, 'unknown');
     assert.equal(result.candidateIps[0]?.networkIntelligence?.registryEvidence?.registryVersion, 'test.1');
     assert.equal(result.candidateIps[0]?.networkIntelligence?.registryEvidence?.source?.label, 'Synthetic registry source');
+    assert.deepEqual(result.candidateIps[0]?.networkIntelligence?.exclusionDecision, {
+        version: 1,
+        classification: 'contextual',
+        basis: 'registry',
+        reasonCodes: ['CLOUD_HOSTING_CONTEXT'],
+    });
     assert.deepEqual(result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
     assert.ok(result.capturePhases?.baselineStartedAt instanceof Date);
     assert.equal(result.capturePhases?.baselineAvailable, true);
@@ -578,15 +668,140 @@ test('capture agent client accepts the additive v2 packet contract without requi
         droppedPackets: 2,
         truncated: true,
     });
+    assert.deepEqual(result.phaseCounts, payload.phaseCounts);
+    assert.deepEqual(result.candidateIps[0]?.phaseCounts, payload.candidateIps[0]?.phaseCounts);
+
+    const v3Candidate = {
+        ...payload.candidateIps[0],
+        scoreVersion: 3,
+        reasonCodes: [{ code: 'SYNTHETIC_SCORE', label: 'Synthetic score', delta: 40 }],
+        networkContext: {
+            version: 1,
+            targetCallingCode: '57',
+            targetCountryCode: 'CO',
+            observedCountryCode: 'CO',
+            relationship: 'match',
+            affectsRouteScore: false,
+            reasonCodes: ['PHONE_GEO_CONTEXT_MATCH'],
+            limitations: ['phone_prefix_is_context_not_location'],
+        },
+        scoreBreakdown: {
+            version: 3,
+            rawScore: 40,
+            finalScore: 15,
+            inputs: {
+                packets: 6,
+                bytesTotal: 720,
+                durationSec: 8,
+                direction: 'bidirectional',
+                ports: [40_000, 40_001],
+                baselinePackets: 2,
+                baselineDurationSec: 2,
+                onsetDelayMs: 500,
+                protocolEvidence: ['transport_flow'],
+            },
+            components: [{ code: 'SYNTHETIC_SCORE', label: 'Synthetic score', delta: 40 }],
+            caps: [{ code: 'HARD_CAP_TINY_SAMPLE', maximum: 15, before: 40, after: 15 }],
+        },
+    };
+    const v3Client = new CaptureAgentClient({
+        baseUrl: 'http://capture-agent.test:4100',
+        sharedSecret: SECRET,
+        fetchImpl: (async () => new Response(JSON.stringify({ ...payload, candidateIps: [v3Candidate] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })) as typeof fetch,
+    });
+    const v3Result = await v3Client.stopCallCapture('CALL-V2-001');
+    assert.equal(v3Result.candidateIps[0]?.scoreVersion, 3);
+    assert.equal(v3Result.candidateIps[0]?.scoreBreakdown?.finalScore, 15);
+    assert.equal(v3Result.candidateIps[0]?.networkContext?.affectsRouteScore, false);
+    assert.deepEqual(v3Result.candidateIps[0]?.protocolEvidence, ['stun_binding_request', 'transport_flow']);
+    assert.deepEqual(v3Result.candidateIps[0]?.scoreBreakdown?.inputs.protocolEvidence, ['transport_flow']);
 
     for (const candidateIps of [
         [{ ...payload.candidateIps[0], activeCallPackets: undefined }],
         [{ ...payload.candidateIps[0], baselinePackets: 3, activeCallPackets: 6 }],
+        [{
+            ...payload.candidateIps[0],
+            networkIntelligence: {
+                ...payload.candidateIps[0]!.networkIntelligence,
+                exclusionDecision: {
+                    version: 2,
+                    classification: 'contextual',
+                    basis: 'registry',
+                    reasonCodes: ['CLOUD_HOSTING_CONTEXT'],
+                },
+            },
+        }],
+        [{
+            ...payload.candidateIps[0],
+            networkIntelligence: {
+                ...payload.candidateIps[0]!.networkIntelligence,
+                exclusionDecision: {
+                    version: 1,
+                    classification: 'eligible',
+                    basis: 'registry',
+                    reasonCodes: ['NO_STRONG_EXCLUSION'],
+                },
+            },
+        }],
+        [{
+            ...payload.candidateIps[0],
+            networkIntelligence: {
+                ...payload.candidateIps[0]!.networkIntelligence,
+                exclusionDecision: {
+                    version: 1,
+                    classification: 'contextual',
+                    basis: 'enrichment',
+                    reasonCodes: [],
+                },
+            },
+        }],
+        [{
+            ...payload.candidateIps[0],
+            phaseCounts: {
+                ...payload.candidateIps[0]!.phaseCounts,
+                active: { packets: 5, bytes: 480 },
+            },
+        }],
+        [{
+            ...payload.candidateIps[0],
+            phaseCounts: {
+                ...payload.candidateIps[0]!.phaseCounts,
+                active: { packets: 4, bytes: 481 },
+            },
+        }],
+        [{ ...v3Candidate, networkContext: undefined }],
+        [{
+            ...v3Candidate,
+            scoreBreakdown: { ...v3Candidate.scoreBreakdown, rawScore: 41 },
+        }],
     ]) {
         const invalidClient = new CaptureAgentClient({
             baseUrl: 'http://capture-agent.test:4100',
             sharedSecret: SECRET,
             fetchImpl: (async () => new Response(JSON.stringify({ ...payload, candidateIps }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })) as typeof fetch,
+        });
+        await assert.rejects(
+            invalidClient.stopCallCapture('CALL-V2-001'),
+            (error: unknown) => error instanceof CaptureAgentClientError
+                && error.code === 'invalid_agent_response',
+        );
+    }
+
+    for (const invalidPhaseCounts of [
+        { ...payload.phaseCounts, version: 2 },
+        { ...payload.phaseCounts, active: { packets: 5, bytes: 480 } },
+        { ...payload.phaseCounts, baseline: { packets: -1, bytes: 240 } },
+    ]) {
+        const invalidClient = new CaptureAgentClient({
+            baseUrl: 'http://capture-agent.test:4100',
+            sharedSecret: SECRET,
+            fetchImpl: (async () => new Response(JSON.stringify({ ...payload, phaseCounts: invalidPhaseCounts }), {
                 status: 200,
                 headers: { 'content-type': 'application/json' },
             })) as typeof fetch,
@@ -654,6 +869,83 @@ test('capture agent client rejects inconsistent v2 evidence and backend-owned co
                     source: 'capture_stop',
                     confidence: 'inferred',
                 }],
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: new Date(NOW + 2_000).toISOString(),
+                activeCallStartedAt: null,
+                callEndedAt: null,
+                captureEndedAt: new Date(NOW + 10_000).toISOString(),
+                phaseEvidenceVersion: 1,
+                phaseEvidence: [
+                    {
+                        sequence: 1,
+                        kind: 'negotiation_started',
+                        at: new Date(NOW + 2_000).toISOString(),
+                        source: 'operator_marker',
+                        confidence: 'operator_asserted',
+                        corroborations: [{
+                            at: new Date(NOW + 3_000).toISOString(),
+                            source: 'baileys_normalized',
+                            confidence: 'protocol',
+                            status: 'offer',
+                        }],
+                    },
+                    {
+                        sequence: 2,
+                        kind: 'capture_ended',
+                        at: new Date(NOW + 10_000).toISOString(),
+                        source: 'capture_stop',
+                        confidence: 'system',
+                    },
+                ],
+            },
+        },
+        {
+            ...basePayload,
+            capturePhases: {
+                baselineAvailable: false,
+                baselineStartedAt: null,
+                baselineEndedAt: null,
+                negotiationStartedAt: new Date(NOW + 2_000).toISOString(),
+                activeCallStartedAt: null,
+                callEndedAt: null,
+                captureEndedAt: new Date(NOW + 10_000).toISOString(),
+                phaseEvidenceVersion: 2,
+                phaseEvidence: [
+                    {
+                        sequence: 1,
+                        kind: 'negotiation_started',
+                        at: new Date(NOW + 2_000).toISOString(),
+                        source: 'network_onset',
+                        confidence: 'inferred',
+                        corroborations: [
+                            {
+                                at: new Date(NOW + 4_000).toISOString(),
+                                source: 'baileys_raw',
+                                confidence: 'protocol',
+                                status: 'transport',
+                            },
+                            {
+                                at: new Date(NOW + 3_000).toISOString(),
+                                source: 'operator_marker',
+                                confidence: 'operator_asserted',
+                            },
+                        ],
+                    },
+                    {
+                        sequence: 2,
+                        kind: 'capture_ended',
+                        at: new Date(NOW + 10_000).toISOString(),
+                        source: 'capture_stop',
+                        confidence: 'system',
+                    },
+                ],
             },
         },
         {

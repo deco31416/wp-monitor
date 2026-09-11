@@ -1,12 +1,13 @@
 # Registro Versionado de Infraestructura de Red
 
-Ultima actualizacion: 2026-09-08
+Ultima actualizacion: 2026-09-10
 
 ## Proposito
 
 `src/network-infrastructure-registry.ts` es la fuente canonica local para
 separar infraestructura observada de una posible ruta directa. Clasifica IPv4 e
-IPv6 de Meta/relay, Google STUN/TURN, DNS publico, CDN, cloud/hosting y el
+IPv6 de Meta/relay, redes generales de servicio Google, DNS publico, CDN,
+cloud/hosting y el
 endpoint publico propio aprendido de STUN. Una coincidencia describe la ruta;
 nunca identifica al contacto ni prueba su ubicacion.
 
@@ -19,6 +20,8 @@ El backend adjunta a cada coincidencia:
 - entradas competidoras por solapamiento;
 - estado `fresh`, `stale`, `source_unavailable`, `unknown` o `invalid`;
 - cautela y bandera de degradacion.
+- decision de exclusion `hard_excluded`, `contextual` o `eligible`, su base y
+  codigos de motivo.
 
 La seleccion prioriza el prefijo mas especifico, luego la prioridad declarada y
 por ultimo el ID alfabetico. Un empate real se conserva como conflicto visible.
@@ -34,11 +37,20 @@ por ultimo el ID alfabetico. Un empate real se conserva como conflicto visible.
 | DNS Cloudflare | [Cloudflare DNS](https://developers.cloudflare.com/1.1.1.1/ip-addresses/) | Endpoints exactos publicados |
 | GitHub, Akamai y DigitalOcean | Registro local curado | Heuristica para filtrar infraestructura; no atribucion personal |
 
-El snapshot integrado es `2026.09.08.1` y vence el 2026-12-07. No existe una
+El snapshot integrado es `2026.09.10.1`; conserva la consulta de fuentes del
+2026-09-08 y vence el 2026-12-07. No existe una
 descarga automatica en runtime: esto evita que un proveedor externo cambie la
 clasificacion de evidencia historica sin revision, pruebas y version.
 
 ## Degradacion segura
+
+- Meta, DNS publico exacto (`/32` o `/128`) y el endpoint publico propio son
+  exclusiones fuertes.
+- Un rango general de Google no prueba STUN/TURN. Google general, CDN,
+  cloud/hosting y coincidencias de enriquecimiento son clasificaciones
+  contextuales: se conservan visibles y no se promueven automaticamente.
+- Una respuesta contextual de GeoIP/ASN no puede degradar ni reemplazar una
+  exclusion fuerte previamente resuelta.
 
 - Una fuente vencida conserva el ultimo match como infraestructura, lo marca
   `stale` y limita el score; no convierte la IP en candidata.

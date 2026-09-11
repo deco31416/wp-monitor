@@ -6,8 +6,89 @@ export interface CallCapturePhases {
     activeCallStartedAt: Date | null;
     callEndedAt?: Date | null;
     captureEndedAt?: Date | null;
-    phaseEvidenceVersion?: 1;
+    phaseEvidenceVersion?: 1 | 2;
     phaseEvidence?: CallCapturePhaseEvidence[];
+}
+
+export const CALL_CAPTURE_PHASE_COUNTS_VERSION = 1 as const;
+
+export type DetailedCapturePacketPhase =
+    | 'baseline'
+    | 'negotiation'
+    | 'active'
+    | 'postCall'
+    | 'unclassified';
+
+export interface CallCapturePhaseCount {
+    packets: number;
+    bytes: number;
+}
+
+export interface CallCapturePhaseCounts {
+    version: typeof CALL_CAPTURE_PHASE_COUNTS_VERSION;
+    baseline: CallCapturePhaseCount;
+    negotiation: CallCapturePhaseCount;
+    active: CallCapturePhaseCount;
+    postCall: CallCapturePhaseCount;
+    unclassified: CallCapturePhaseCount;
+}
+
+export function createCallCapturePhaseCounts(): CallCapturePhaseCounts {
+    return {
+        version: CALL_CAPTURE_PHASE_COUNTS_VERSION,
+        baseline: { packets: 0, bytes: 0 },
+        negotiation: { packets: 0, bytes: 0 },
+        active: { packets: 0, bytes: 0 },
+        postCall: { packets: 0, bytes: 0 },
+        unclassified: { packets: 0, bytes: 0 },
+    };
+}
+
+export function recordCallCapturePhasePacket(
+    counts: CallCapturePhaseCounts,
+    phase: DetailedCapturePacketPhase,
+    bytes: number,
+): void {
+    counts[phase].packets += 1;
+    counts[phase].bytes += bytes;
+}
+
+export function normalizeCallCapturePhaseCounts(value: unknown): CallCapturePhaseCounts | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const object = value as Record<string, unknown>;
+    if (object.version !== CALL_CAPTURE_PHASE_COUNTS_VERSION) return undefined;
+
+    const normalizeCount = (phase: DetailedCapturePacketPhase): CallCapturePhaseCount | undefined => {
+        const value = object[phase];
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+        const count = value as Record<string, unknown>;
+        if (!Number.isSafeInteger(count.packets) || Number(count.packets) < 0) return undefined;
+        if (!Number.isSafeInteger(count.bytes) || Number(count.bytes) < 0) return undefined;
+        return { packets: Number(count.packets), bytes: Number(count.bytes) };
+    };
+
+    const baseline = normalizeCount('baseline');
+    const negotiation = normalizeCount('negotiation');
+    const active = normalizeCount('active');
+    const postCall = normalizeCount('postCall');
+    const unclassified = normalizeCount('unclassified');
+    if (!baseline || !negotiation || !active || !postCall || !unclassified) return undefined;
+    return {
+        version: CALL_CAPTURE_PHASE_COUNTS_VERSION,
+        baseline,
+        negotiation,
+        active,
+        postCall,
+        unclassified,
+    };
+}
+
+export function sumCallCapturePhaseCounts(counts: CallCapturePhaseCounts): CallCapturePhaseCount {
+    return [counts.baseline, counts.negotiation, counts.active, counts.postCall, counts.unclassified]
+        .reduce((total, count) => ({
+            packets: total.packets + count.packets,
+            bytes: total.bytes + count.bytes,
+        }), { packets: 0, bytes: 0 });
 }
 
 export type CallCaptureTrigger = 'manual' | 'auto';
@@ -38,7 +119,7 @@ export const CALL_CAPTURE_PHASE_STATUSES = [
 
 export type CallCapturePhaseStatus = typeof CALL_CAPTURE_PHASE_STATUSES[number];
 
-export const CALL_CAPTURE_PHASE_CAPABILITY_VERSION = 2 as const;
+export const CALL_CAPTURE_PHASE_CAPABILITY_VERSION = 4 as const;
 
 export const CALL_CAPTURE_PHASE_EVIDENCE_SOURCES = [
     'capture_start',
@@ -73,6 +154,14 @@ export type CallCapturePhaseEvidenceKind = typeof CALL_CAPTURE_PHASE_EVIDENCE_KI
 export interface CallCapturePhaseEvidence {
     sequence: number;
     kind: CallCapturePhaseEvidenceKind;
+    at: Date;
+    source: CallCapturePhaseEvidenceSource;
+    confidence: CallCapturePhaseEvidenceConfidence;
+    status?: CallCapturePhaseStatus;
+    corroborations?: CallCapturePhaseCorroboration[];
+}
+
+export interface CallCapturePhaseCorroboration {
     at: Date;
     source: CallCapturePhaseEvidenceSource;
     confidence: CallCapturePhaseEvidenceConfidence;
@@ -151,6 +240,12 @@ function clonePhases(phases: CallCapturePhases): CallCapturePhases {
             phaseEvidence: phases.phaseEvidence.map(event => ({
                 ...event,
                 at: new Date(event.at.getTime()),
+                ...(event.corroborations === undefined ? {} : {
+                    corroborations: event.corroborations.map(corroboration => ({
+                        ...corroboration,
+                        at: new Date(corroboration.at.getTime()),
+                    })),
+                }),
             })),
         }),
     };
@@ -181,7 +276,7 @@ export class CallCapturePhaseLifecycle {
             activeCallStartedAt: null,
             callEndedAt: null,
             captureEndedAt: null,
-            phaseEvidenceVersion: 1,
+            phaseEvidenceVersion: 2,
             phaseEvidence: [],
         };
         this.active = {
@@ -215,7 +310,14 @@ export class CallCapturePhaseLifecycle {
     markOperatorPhase(targetJid: string, marker: OperatorCallMarker): boolean {
         const active = this.active;
         if (!active || active.trigger !== 'manual' || active.targetJid !== targetJid) return false;
-        if (active.phases.callEndedAt) return marker === 'call_ended';
+        if (active.phases.callEndedAt) {
+            return marker === 'call_ended' && this.corroborate(
+                active.phases,
+                'call_ended',
+                this.now(),
+                { source: 'operator_marker', confidence: 'operator_asserted' },
+            );
+        }
 
         const transitionAt = this.now();
         if (!isAtOrAfter(transitionAt, active.phases.negotiationStartedAt)) return false;
@@ -223,7 +325,14 @@ export class CallCapturePhaseLifecycle {
 
         if (marker === 'call_started') {
             if (active.phases.activeCallStartedAt) return false;
-            if (active.phases.negotiationStartedAt) return true;
+            if (active.phases.negotiationStartedAt) {
+                return this.corroborate(
+                    active.phases,
+                    'negotiation_started',
+                    transitionAt,
+                    { source: 'operator_marker', confidence: 'operator_asserted' },
+                );
+            }
             this.closeBaseline(active.phases, transitionAt);
             active.phases.negotiationStartedAt = transitionAt;
             this.appendEvidence(active.phases, {
@@ -237,7 +346,14 @@ export class CallCapturePhaseLifecycle {
 
         if (!active.phases.negotiationStartedAt) return false;
         if (marker === 'call_connected') {
-            if (active.phases.activeCallStartedAt) return true;
+            if (active.phases.activeCallStartedAt) {
+                return this.corroborate(
+                    active.phases,
+                    'active_started',
+                    transitionAt,
+                    { source: 'operator_marker', confidence: 'operator_asserted' },
+                );
+            }
             active.phases.activeCallStartedAt = transitionAt;
             this.appendEvidence(active.phases, {
                 kind: 'active_started',
@@ -258,6 +374,32 @@ export class CallCapturePhaseLifecycle {
         return true;
     }
 
+    markNetworkOnset(targetJid: string, onsetAt: Date): boolean {
+        const active = this.active;
+        if (!active || active.trigger !== 'manual' || active.targetJid !== targetJid) return false;
+        if (!Number.isFinite(onsetAt.getTime()) || !isAtOrAfter(onsetAt, active.phases.baselineStartedAt)) return false;
+        if (active.phases.activeCallStartedAt || active.phases.callEndedAt) return false;
+        if (active.phases.negotiationStartedAt) {
+            return this.corroborate(
+                active.phases,
+                'negotiation_started',
+                onsetAt,
+                { source: 'network_onset', confidence: 'inferred' },
+            );
+        }
+
+        this.closeBaseline(active.phases, onsetAt);
+        if (!active.phases.baselineAvailable) return false;
+        active.phases.negotiationStartedAt = new Date(onsetAt);
+        this.appendEvidence(active.phases, {
+            kind: 'negotiation_started',
+            at: new Date(onsetAt),
+            source: 'network_onset',
+            confidence: 'inferred',
+        });
+        return true;
+    }
+
     observe(
         targetJid: string,
         observedCallId: string,
@@ -268,6 +410,7 @@ export class CallCapturePhaseLifecycle {
         },
     ): boolean {
         if (!isValidCallCapturePhaseObservation(observation.source, observation.confidence)) return false;
+        if (observation.source !== 'baileys_normalized' && observation.source !== 'baileys_raw') return false;
         const active = this.active;
         if (!active || active.targetJid !== targetJid) return false;
         if (active.observedCallId && active.observedCallId !== observedCallId) return false;
@@ -281,9 +424,19 @@ export class CallCapturePhaseLifecycle {
             return false;
         }
 
-        if (active.phases.callEndedAt) return TERMINAL_STATUSES.has(normalizedStatus);
+        if (active.phases.callEndedAt) {
+            if (!TERMINAL_STATUSES.has(normalizedStatus)) return false;
+            const accepted = this.corroborate(
+                active.phases,
+                'call_ended',
+                this.now(),
+                observation,
+                normalizedStatus as CallCapturePhaseStatus,
+            );
+            if (accepted) active.observedCallId ??= observedCallId;
+            return accepted;
+        }
 
-        active.observedCallId ??= observedCallId;
         if (TERMINAL_STATUSES.has(normalizedStatus)) {
             const endedAt = this.now();
             if (!isAtOrAfter(endedAt, active.phases.negotiationStartedAt)) return false;
@@ -296,6 +449,7 @@ export class CallCapturePhaseLifecycle {
                 confidence: observation.confidence,
                 status: normalizedStatus as CallCapturePhaseStatus,
             });
+            active.observedCallId ??= observedCallId;
             return true;
         }
 
@@ -320,17 +474,34 @@ export class CallCapturePhaseLifecycle {
                 confidence: observation.confidence,
                 status: normalizedStatus as CallCapturePhaseStatus,
             });
+        } else if (NEGOTIATION_STATUSES.has(normalizedStatus) || ACTIVE_STATUSES.has(normalizedStatus)) {
+            if (!this.corroborate(
+                active.phases,
+                'negotiation_started',
+                transitionAt,
+                observation,
+                normalizedStatus as CallCapturePhaseStatus,
+            )) return false;
         }
-        if (ACTIVE_STATUSES.has(normalizedStatus) && !active.phases.activeCallStartedAt) {
-            active.phases.activeCallStartedAt = transitionAt;
-            this.appendEvidence(active.phases, {
-                kind: 'active_started',
-                at: transitionAt,
-                source: observation.source,
-                confidence: observation.confidence,
-                status: normalizedStatus as CallCapturePhaseStatus,
-            });
+        if (ACTIVE_STATUSES.has(normalizedStatus)) {
+            if (!active.phases.activeCallStartedAt) {
+                active.phases.activeCallStartedAt = transitionAt;
+                this.appendEvidence(active.phases, {
+                    kind: 'active_started',
+                    at: transitionAt,
+                    source: observation.source,
+                    confidence: observation.confidence,
+                    status: normalizedStatus as CallCapturePhaseStatus,
+                });
+            } else if (!this.corroborate(
+                active.phases,
+                'active_started',
+                transitionAt,
+                observation,
+                normalizedStatus as CallCapturePhaseStatus,
+            )) return false;
         }
+        active.observedCallId ??= observedCallId;
         return true;
     }
 
@@ -378,6 +549,35 @@ export class CallCapturePhaseLifecycle {
         evidence.push({ ...event, sequence: evidence.length + 1 });
     }
 
+    private corroborate(
+        phases: CallCapturePhases,
+        kind: CallCapturePhaseEvidenceKind,
+        at: Date,
+        observation: CallCapturePhaseObservation,
+        status?: CallCapturePhaseStatus,
+    ): boolean {
+        if (!isValidCallCapturePhaseObservation(observation.source, observation.confidence)) return false;
+        const event = phases.phaseEvidence?.find(candidate => candidate.kind === kind);
+        if (!event || !Number.isFinite(at.getTime()) || at.getTime() < event.at.getTime()) return false;
+        if (event.source === observation.source) return true;
+
+        const corroborations = event.corroborations ?? [];
+        if (corroborations.some(candidate => candidate.source === observation.source)) return true;
+        if (corroborations.length >= 3) return false;
+        const previous = corroborations[corroborations.length - 1];
+        if (previous && at.getTime() < previous.at.getTime()) return false;
+        event.corroborations = [
+            ...corroborations,
+            {
+                at: new Date(at),
+                source: observation.source,
+                confidence: observation.confidence,
+                ...(status === undefined ? {} : { status }),
+            },
+        ];
+        return true;
+    }
+
     private closeBaseline(phases: CallCapturePhases, transitionAt: Date): void {
         if (!phases.baselineStartedAt || phases.baselineEndedAt) return;
         if (transitionAt.getTime() > phases.baselineStartedAt.getTime()) {
@@ -410,4 +610,32 @@ export function classifyCapturePacketPhase(
         return 'baseline';
     }
     return 'call';
+}
+
+export function classifyDetailedCapturePacketPhase(
+    timestamp: Date,
+    phases: CallCapturePhases | undefined,
+): DetailedCapturePacketPhase {
+    const time = timestamp.getTime();
+    if (!Number.isFinite(time) || !phases) return 'unclassified';
+
+    const captureEnd = phases.captureEndedAt?.getTime();
+    if (captureEnd !== undefined && time > captureEnd) return 'unclassified';
+
+    const callEnd = phases.callEndedAt?.getTime();
+    if (callEnd !== undefined && time >= callEnd) return 'postCall';
+
+    const activeStart = phases.activeCallStartedAt?.getTime();
+    if (activeStart !== undefined && time >= activeStart) return 'active';
+
+    const negotiationStart = phases.negotiationStartedAt?.getTime();
+    if (negotiationStart !== undefined && time >= negotiationStart) return 'negotiation';
+
+    if (phases.baselineAvailable && phases.baselineStartedAt && phases.baselineEndedAt) {
+        const baselineStart = phases.baselineStartedAt.getTime();
+        const baselineEnd = phases.baselineEndedAt.getTime();
+        if (time >= baselineStart && time < baselineEnd) return 'baseline';
+    }
+
+    return 'unclassified';
 }

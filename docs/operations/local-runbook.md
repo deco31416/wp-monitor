@@ -188,7 +188,7 @@ Usar `Network Monitor` para observar trafico local autorizado:
 La pestana `IP Tracker` del Network Monitor es una vista investigativa preliminar sobre la captura general. El backend calcula `ipInsights` a partir de los top origen/destino y los separa en:
 
 - **Descartada**: IP privada, local, CGNAT, reservada, multicast o de documentacion.
-- **Infraestructura**: Meta/WhatsApp, Google STUN/TURN, Cloudflare, GitHub, Akamai/CDN, nube/hosting o servicios auxiliares conocidos.
+- **Infraestructura**: Meta/WhatsApp, red general de servicio Google, Cloudflare, GitHub, Akamai/CDN, nube/hosting o servicios auxiliares conocidos. Un rango Google general es contexto de infraestructura, no prueba STUN/TURN.
 - **Candidata preliminar**: IP publica no catalogada con flujo bidireccional y volumen suficiente para revision manual.
 - **Revisar**: IP publica no catalogada, pero con senal debil, baja muestra o flujo limitado.
 

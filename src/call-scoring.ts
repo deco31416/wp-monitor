@@ -2,12 +2,21 @@ import {
     lookupInfrastructure,
     type InfrastructureRegistryEvidence,
 } from './network-infrastructure-registry.js';
+import { resolveE164CountryContext } from './e164-country-context.js';
 
 export type CandidateProvider = 'meta' | 'google' | 'cloudflare' | 'unknown';
 export type CandidateDirection = 'incoming' | 'outgoing' | 'bidirectional';
 export type NetworkCategory = 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown_public';
 export type NetworkIntelligenceCategory = 'meta' | 'stun_turn' | 'dns' | 'cdn' | 'cloud_hosting' | 'consumer_isp_or_unknown' | 'unknown';
 export type CandidateConfidence = 'high' | 'medium' | 'low';
+export const ENDPOINT_EXCLUSION_DECISION_VERSION = 1 as const;
+
+export interface EndpointExclusionDecision {
+    version: typeof ENDPOINT_EXCLUSION_DECISION_VERSION;
+    classification: 'hard_excluded' | 'contextual' | 'eligible';
+    basis: 'runtime' | 'registry' | 'provider_fallback' | 'enrichment' | 'none';
+    reasonCodes: string[];
+}
 
 export interface NetworkIntelligence {
     asn: number | null;
@@ -17,6 +26,7 @@ export interface NetworkIntelligence {
     isDatacenterLikely: boolean;
     caution: string;
     registryEvidence?: InfrastructureRegistryEvidence;
+    exclusionDecision?: EndpointExclusionDecision;
 }
 
 export interface CandidateReasonCode {
@@ -34,6 +44,43 @@ export interface CandidateCorrelation {
     caps: string[];
 }
 
+export interface CandidateNetworkContext {
+    version: 1;
+    targetCallingCode: string | null;
+    targetCountryCode: string | null;
+    observedCountryCode: string | null;
+    relationship: 'match' | 'mismatch' | 'unavailable';
+    affectsRouteScore: false;
+    reasonCodes: string[];
+    limitations: string[];
+}
+
+export interface CandidateScoreCap {
+    code: string;
+    maximum: number;
+    before: number;
+    after: number;
+}
+
+export interface CandidateScoreBreakdown {
+    version: 3;
+    rawScore: number;
+    finalScore: number;
+    inputs: {
+        packets: number;
+        bytesTotal: number;
+        durationSec: number;
+        direction: CandidateDirection;
+        ports: number[];
+        baselinePackets: number;
+        baselineDurationSec: number;
+        onsetDelayMs: number | null;
+        protocolEvidence: NonNullable<CandidateScoreInput['protocolEvidence']>;
+    };
+    components: CandidateReasonCode[];
+    caps: CandidateScoreCap[];
+}
+
 export interface CandidateScoreInput {
     provider: CandidateProvider;
     networkIntelligence: NetworkIntelligence;
@@ -45,6 +92,10 @@ export interface CandidateScoreInput {
     targetJid?: string | null;
     observedCountryCode?: string | null;
     addressFamily?: 4 | 6;
+    baselinePackets?: number;
+    baselineDurationSec?: number;
+    onsetDelayMs?: number | null;
+    protocolEvidence?: Array<'stun_binding_request' | 'stun_binding_response' | 'stun_other' | 'transport_flow' | 'frame_length_86'>;
 }
 
 export interface CandidateScoreResult {
@@ -55,11 +106,13 @@ export interface CandidateScoreResult {
     networkCategory: NetworkCategory;
     isP2P: boolean;
     correlation: CandidateCorrelation;
+    networkContext: CandidateNetworkContext;
+    scoreBreakdown: CandidateScoreBreakdown;
 }
 
 export function classifyNetworkCategory(provider: CandidateProvider): NetworkCategory {
     if (provider === 'meta') return 'meta';
-    if (provider === 'google') return 'stun_turn';
+    if (provider === 'google') return 'cloud_hosting';
     if (provider === 'cloudflare') return 'cdn';
     return 'unknown_public';
 }
@@ -71,7 +124,7 @@ export function lookupNetworkIntelligence(
 ): NetworkIntelligence {
     const registryEvidence = lookupInfrastructure(ip, options);
     if (registryEvidence.entryId) {
-        return {
+        const intelligence: NetworkIntelligence = {
             asn: registryEvidence.asn,
             org: registryEvidence.org,
             category: registryEvidence.category ?? 'unknown',
@@ -80,11 +133,15 @@ export function lookupNetworkIntelligence(
             caution: registryEvidence.caution,
             registryEvidence,
         };
+        return {
+            ...intelligence,
+            exclusionDecision: classifyEndpointExclusion(registryEvidence.provider, intelligence),
+        };
     }
 
     if (provider !== 'unknown') {
         const category = classifyNetworkCategory(provider);
-        return {
+        const intelligence: NetworkIntelligence = {
             asn: null,
             org: provider,
             category: category === 'unknown_public' ? 'unknown' : category,
@@ -93,9 +150,13 @@ export function lookupNetworkIntelligence(
             caution: 'Proveedor indicado sin una coincidencia vigente del registro. Se conserva como infraestructura y no identifica usuario final.',
             registryEvidence,
         };
+        return {
+            ...intelligence,
+            exclusionDecision: classifyEndpointExclusion(provider, intelligence),
+        };
     }
 
-    return {
+    const intelligence: NetworkIntelligence = {
         asn: null,
         org: 'Unknown public network',
         category: 'consumer_isp_or_unknown',
@@ -104,186 +165,230 @@ export function lookupNetworkIntelligence(
         caution: registryEvidence.caution,
         registryEvidence,
     };
+    return {
+        ...intelligence,
+        exclusionDecision: classifyEndpointExclusion(provider, intelligence),
+    };
+}
+
+export function classifyEndpointExclusion(
+    provider: CandidateProvider,
+    intelligence: NetworkIntelligence,
+): EndpointExclusionDecision {
+    const evidence = intelligence.registryEvidence;
+    const role = evidence?.endpointRole;
+
+    if (role === 'own_public_endpoint') {
+        return decision('hard_excluded', 'runtime', 'OWN_PUBLIC_ENDPOINT');
+    }
+    if (provider === 'meta' || evidence?.provider === 'meta' || intelligence.category === 'meta') {
+        return decision('hard_excluded', evidence?.entryId ? 'registry' : 'provider_fallback', 'META_INFRASTRUCTURE');
+    }
+    if (role === 'dns' && isExactHostMatch(evidence?.matchedCidr)) {
+        return decision('hard_excluded', 'registry', 'EXACT_PUBLIC_DNS');
+    }
+    if (role === 'dns') {
+        return decision('contextual', 'registry', 'BROAD_DNS_CLASSIFICATION');
+    }
+    if (role === 'stun_turn' || intelligence.category === 'stun_turn') {
+        return decision('contextual', evidence?.entryId ? 'registry' : 'provider_fallback', 'STUN_TURN_CONTEXT');
+    }
+    if (role === 'cdn' || intelligence.category === 'cdn') {
+        return decision('contextual', evidence?.entryId ? 'registry' : 'provider_fallback', 'CDN_CONTEXT');
+    }
+    if (role === 'cloud_hosting' || intelligence.category === 'cloud_hosting') {
+        return decision('contextual', evidence?.entryId ? 'registry' : 'provider_fallback', 'CLOUD_HOSTING_CONTEXT');
+    }
+    if (provider !== 'unknown' || intelligence.isDatacenterLikely) {
+        return decision('contextual', evidence?.entryId ? 'registry' : 'provider_fallback', 'INFRASTRUCTURE_CONTEXT');
+    }
+    return decision('eligible', 'none', 'NO_STRONG_EXCLUSION');
+}
+
+function decision(
+    classification: EndpointExclusionDecision['classification'],
+    basis: EndpointExclusionDecision['basis'],
+    reasonCode: string,
+): EndpointExclusionDecision {
+    return { version: 1, classification, basis, reasonCodes: [reasonCode] };
+}
+
+function isExactHostMatch(cidr?: string | null): boolean {
+    return Boolean(cidr && (cidr.endsWith('/32') || cidr.endsWith('/128')));
 }
 
 export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult {
     const networkCategory = networkCategoryFromIntelligence(input.networkIntelligence.category, input.provider);
     const reasonCodes: CandidateReasonCode[] = [];
-    let score = input.provider === 'unknown' ? 35 : 5;
+    const caps: CandidateScoreCap[] = [];
+    const exclusionDecision = input.networkIntelligence.exclusionDecision
+        ?? classifyEndpointExclusion(input.provider, input.networkIntelligence);
+    let score = 0;
 
-    if (input.provider === 'unknown' && !input.networkIntelligence.isDatacenterLikely) {
-        reasonCodes.push({ code: 'UNKNOWN_PUBLIC_PROVIDER', label: 'IP publica fuera de proveedores relay conocidos', delta: 35 });
+    const add = (code: string, label: string, delta: number): void => {
+        score += delta;
+        reasonCodes.push({ code, label, delta });
+    };
+    const cap = (code: string, maximum: number): void => {
+        if (!reasonCodes.some(reason => reason.code === code)) {
+            reasonCodes.push({ code, label: capLabel(code), delta: 0 });
+        }
+        const before = score;
+        const after = Math.min(before, maximum);
+        if (after < before) caps.push({ code, maximum, before, after });
+        score = after;
+    };
+
+    if (exclusionDecision.classification === 'eligible') {
+        add('ELIGIBLE_PUBLIC_ENDPOINT', 'Endpoint publico sin exclusion fuerte de infraestructura', 20);
+        add('UNKNOWN_PUBLIC_PROVIDER', 'IP publica fuera de exclusiones fuertes conocidas', 0);
+    } else if (exclusionDecision.classification === 'contextual') {
+        add('CONTEXTUAL_INFRASTRUCTURE_CLASSIFICATION', 'Infraestructura contextual conservada para revision', 0);
+        add('KNOWN_INFRASTRUCTURE', `Infraestructura contextual probable: ${input.networkIntelligence.org}`, 0);
     } else {
-        reasonCodes.push({ code: 'KNOWN_INFRASTRUCTURE', label: `Infraestructura probable: ${input.networkIntelligence.org}`, delta: -30 });
+        add('HARD_INFRASTRUCTURE_EXCLUSION', 'Exclusion fuerte sustentada por infraestructura', 0);
+        add('KNOWN_INFRASTRUCTURE', `Infraestructura excluida: ${input.networkIntelligence.org}`, 0);
     }
 
     if (input.networkIntelligence.category === 'consumer_isp_or_unknown') {
-        score += 10;
-        reasonCodes.push({ code: 'NO_LOCAL_ASN_MATCH', label: 'Sin coincidencia local de ASN/ORG cloud o relay', delta: 10 });
+        add('CONSUMER_OR_UNKNOWN_NETWORK', 'Red de acceso, ISP o red publica aun no catalogada', 10);
+    } else if (input.networkIntelligence.isDatacenterLikely) {
+        add('DATACENTER_OR_RELAY_LIKELY', 'ASN/ORG o rango sugiere datacenter, CDN o relay', -10);
     }
 
-    if (input.networkIntelligence.isDatacenterLikely) {
-        score -= 25;
-        reasonCodes.push({ code: 'DATACENTER_OR_RELAY_LIKELY', label: 'ASN/ORG o rango sugiere datacenter, CDN o relay', delta: -25 });
+    const baselineDurationSec = input.baselineDurationSec ?? 0;
+    const baselinePackets = input.baselinePackets ?? 0;
+    if (baselineDurationSec > 0 && input.durationSec > 0) {
+        const activeRate = input.durationSec > 0 ? input.packets / input.durationSec : 0;
+        const baselineRate = baselinePackets / baselineDurationSec;
+        const rateDelta = activeRate - baselineRate;
+        if (
+            (baselinePackets === 0 && input.packets >= 20)
+            || (baselineRate > 0 && activeRate >= baselineRate * 3 && rateDelta >= 1)
+        ) {
+            add('STRONG_BASELINE_DELTA', 'Incremento fuerte frente a la linea base previa', 20);
+        } else if (baselineRate > 0 && activeRate >= baselineRate * 1.5 && rateDelta >= 0.5) {
+            add('MODERATE_BASELINE_DELTA', 'Incremento moderado frente a la linea base previa', 10);
+        } else if (activeRate <= baselineRate) {
+            add('NO_BASELINE_INCREASE', 'La actividad no supera la tasa de la linea base', -15);
+        } else {
+            add('WEAK_BASELINE_DELTA', 'El incremento frente a la linea base es debil', 0);
+        }
+    } else {
+        add('BASELINE_UNAVAILABLE', 'No existe una linea base comparable para este endpoint', 0);
     }
 
     if (input.direction === 'bidirectional') {
-        score += 25;
-        reasonCodes.push({ code: 'BIDIRECTIONAL_TRAFFIC', label: 'Flujo bidireccional observado', delta: 25 });
+        add('BIDIRECTIONAL_TRAFFIC', 'Flujo bidireccional observado', 20);
     } else {
-        score -= 10;
-        reasonCodes.push({ code: 'ONE_WAY_TRAFFIC', label: 'Solo se observo trafico en una direccion', delta: -10 });
+        add('ONE_WAY_TRAFFIC', 'Solo se observo trafico en una direccion', -10);
     }
 
     if (input.packets >= 250) {
-        score += 20;
-        reasonCodes.push({ code: 'HIGH_PACKET_VOLUME', label: 'Volumen alto de paquetes durante la ventana', delta: 20 });
+        add('HIGH_PACKET_VOLUME', 'Volumen alto de paquetes durante la ventana', 15);
     } else if (input.packets >= 75) {
-        score += 12;
-        reasonCodes.push({ code: 'MEDIUM_PACKET_VOLUME', label: 'Volumen medio de paquetes durante la ventana', delta: 12 });
+        add('MEDIUM_PACKET_VOLUME', 'Volumen medio de paquetes durante la ventana', 10);
     } else if (input.packets >= 20) {
-        score += 6;
-        reasonCodes.push({ code: 'LOW_PACKET_VOLUME', label: 'Volumen bajo pero util de paquetes', delta: 6 });
+        add('LOW_PACKET_VOLUME', 'Volumen bajo pero util de paquetes', 5);
     } else {
-        score -= 15;
-        reasonCodes.push({ code: 'INSUFFICIENT_PACKET_VOLUME', label: 'Muy pocos paquetes para confianza fuerte', delta: -15 });
+        add('INSUFFICIENT_PACKET_VOLUME', 'Muy pocos paquetes para confianza fuerte', -15);
     }
 
     const avgBytes = input.packets > 0 ? input.bytesTotal / input.packets : 0;
     if (avgBytes >= 80 && avgBytes <= 1400) {
-        score += 5;
-        reasonCodes.push({ code: 'REALISTIC_PACKET_SIZE', label: 'Tamano promedio compatible con trafico multimedia/UDP', delta: 5 });
+        add('REALISTIC_PACKET_SIZE', 'Tamano promedio compatible con trafico multimedia/UDP', 5);
     }
 
     const hasStunTurnPort = input.ports.some(port => [3478, 3479, 5349, 19302].includes(port));
     if (hasStunTurnPort) {
-        score -= 20;
-        reasonCodes.push({ code: 'STUN_TURN_PORT', label: 'Puerto asociado a STUN/TURN/relay observado', delta: -20 });
+        add('STUN_TURN_PORT', 'Puerto asociado a STUN/TURN/relay observado', -10);
     }
 
     if (input.durationSec > 0 && input.packets / input.durationSec >= 2) {
-        score += 8;
-        reasonCodes.push({ code: 'TEMPORAL_DENSITY', label: 'Densidad temporal consistente durante la captura', delta: 8 });
+        add('HIGH_TEMPORAL_DENSITY', 'Densidad temporal consistente durante la ventana', 10);
+    } else if (input.durationSec > 0 && input.packets / input.durationSec >= 0.5) {
+        add('MODERATE_TEMPORAL_DENSITY', 'Densidad temporal moderada durante la ventana', 5);
     }
 
-    if (networkCategory !== 'unknown_public' && networkCategory !== 'consumer_isp_or_unknown') {
-        score = Math.min(score, 30);
+    if (
+        input.onsetDelayMs !== undefined
+        && input.onsetDelayMs !== null
+        && Number.isFinite(input.onsetDelayMs)
+        && input.onsetDelayMs >= 0
+    ) {
+        if (input.onsetDelayMs <= 3_000) {
+            add('IMMEDIATE_CALL_ONSET', 'El flujo aparece dentro de los primeros 3 segundos de la fase de llamada', 10);
+        } else if (input.onsetDelayMs <= 10_000) {
+            add('NEAR_CALL_ONSET', 'El flujo aparece cerca del inicio de la fase de llamada', 5);
+        } else if (input.onsetDelayMs > 30_000) {
+            add('LATE_CALL_ONSET', 'El flujo aparece tarde respecto al inicio de la fase de llamada', -10);
+        } else {
+            add('DELAYED_CALL_ONSET', 'El flujo aparece despues del inicio sin correlacion temporal fuerte', 0);
+        }
+    } else {
+        add('CALL_ONSET_UNAVAILABLE', 'No hay un limite de fase suficiente para medir el inicio del flujo', 0);
+    }
+
+    const protocolEvidence = new Set(input.protocolEvidence ?? []);
+    if (protocolEvidence.has('transport_flow')) {
+        add('TRANSPORT_FLOW_OBSERVED', 'Flujo de transporte decodificado durante la captura', 5);
+    }
+    if (protocolEvidence.has('stun_binding_request') || protocolEvidence.has('stun_binding_response')) {
+        add('STRUCTURAL_STUN_CONTEXT', 'Negociacion STUN estructural observada como contexto', 3);
     }
 
     const phoneContext = inferPhoneCountryFromJid(input.targetJid);
     const observedCountryCode = normalizeCountryCode(input.observedCountryCode);
-    const caps: string[] = [];
+    const networkContext = buildNetworkContext(phoneContext, observedCountryCode);
+    const correlationCaps: string[] = [];
 
     if (input.packets < 10) {
-        const before = score;
-        score = Math.min(score, 15);
-        caps.push('Muestra minima insuficiente');
-        reasonCodes.push({
-            code: 'HARD_CAP_TINY_SAMPLE',
-            label: 'Menos de 10 paquetes: no se acepta como candidata',
-            delta: Math.min(0, score - before),
-        });
+        cap('HARD_CAP_TINY_SAMPLE', 15);
+        correlationCaps.push('Muestra minima insuficiente');
     } else if (input.packets < 20) {
-        const before = score;
-        score = Math.min(score, 30);
-        caps.push('Muestra baja');
-        reasonCodes.push({
-            code: 'CAP_LOW_SAMPLE',
-            label: 'Menos de 20 paquetes: confianza limitada',
-            delta: Math.min(0, score - before),
-        });
-    }
-
-    const hasCountryMismatch = Boolean(
-        phoneContext?.countryCode
-        && observedCountryCode
-        && phoneContext.countryCode !== observedCountryCode
-    );
-
-    if (hasCountryMismatch) {
-        const before = score;
-        score -= 15;
-        reasonCodes.push({
-            code: 'PHONE_GEO_COUNTRY_MISMATCH',
-            label: `Pais GeoIP (${observedCountryCode}) no coincide con prefijo telefonico (${phoneContext?.countryCode})`,
-            delta: -15,
-        });
-
-        if (input.packets < 50) {
-            score = Math.min(score, 20);
-            caps.push('Pais no correlaciona con el numero y la muestra es baja');
-            reasonCodes.push({
-                code: 'CAP_COUNTRY_MISMATCH_LOW_SAMPLE',
-                label: 'Muestra baja con pais divergente: observacion no concluyente',
-                delta: Math.min(0, score - (before - 15)),
-            });
-        }
+        cap('CAP_LOW_SAMPLE', 30);
+        correlationCaps.push('Muestra baja');
     }
 
     if (input.direction !== 'bidirectional') {
-        const before = score;
-        score = Math.min(score, 45);
-        if (before > score) {
-            caps.push('Flujo de una sola direccion');
-            reasonCodes.push({
-                code: 'CAP_ONE_WAY_FLOW',
-                label: 'Sin flujo bidireccional fuerte: no subir de confianza media',
-                delta: score - before,
-            });
-        }
+        cap('CAP_ONE_WAY_FLOW', 45);
+        correlationCaps.push('Flujo de una sola direccion');
     }
 
     if (input.networkIntelligence.registryEvidence?.degraded) {
-        const before = score;
-        score = Math.min(score, 20);
-        caps.push('Registro de infraestructura degradado');
-        reasonCodes.push({
-            code: 'INFRASTRUCTURE_REGISTRY_DEGRADED',
-            label: 'Registro de infraestructura vencido, ambiguo o sin fuente valida',
-            delta: Math.min(0, score - before),
-        });
+        cap('INFRASTRUCTURE_REGISTRY_DEGRADED', 30);
+        correlationCaps.push('Registro de infraestructura degradado');
     }
 
     if (
         input.addressFamily === 6
         && ['unknown', 'invalid'].includes(input.networkIntelligence.registryEvidence?.status ?? 'unknown')
     ) {
-        const before = score;
-        score = Math.min(score, 30);
-        caps.push('Registro IPv6 pendiente');
-        reasonCodes.push({
-            code: 'IPV6_REGISTRY_PENDING',
-            label: 'IPv6 observado; clasificacion de infraestructura pendiente de registro versionado',
-            delta: Math.min(0, score - before),
-        });
+        cap('IPV6_REGISTRY_PENDING', 30);
+        correlationCaps.push('Registro IPv6 pendiente');
     }
 
     const isOwnPublicEndpoint = input.networkIntelligence.registryEvidence?.endpointRole === 'own_public_endpoint';
-    if (isOwnPublicEndpoint) {
-        const before = score;
-        score = 0;
-        caps.push('Endpoint publico propio');
-        reasonCodes.push({
-            code: 'OWN_PUBLIC_ENDPOINT',
-            label: 'Direccion publica propia observada mediante STUN; no pertenece al contacto',
-            delta: -before,
-        });
+    if (exclusionDecision.classification === 'hard_excluded') {
+        cap(isOwnPublicEndpoint ? 'OWN_PUBLIC_ENDPOINT' : 'HARD_INFRASTRUCTURE_EXCLUSION', 0);
+        correlationCaps.push(isOwnPublicEndpoint ? 'Endpoint publico propio' : 'Exclusion fuerte de infraestructura');
+    } else if (exclusionDecision.classification === 'contextual') {
+        cap('CONTEXTUAL_INFRASTRUCTURE_REVIEW', 30);
+        correlationCaps.push('Infraestructura contextual sin promocion automatica');
     }
 
     const confidenceScore = clampScore(score);
     const confidence = confidenceFromScore(confidenceScore);
-    const baseP2P = input.provider === 'unknown'
-        && !input.networkIntelligence.isDatacenterLikely
-        && !isOwnPublicEndpoint;
+    const baseP2P = exclusionDecision.classification === 'eligible' && !isOwnPublicEndpoint;
     const scoredCorrelation = buildCorrelation({
         baseP2P,
+        exclusionClassification: exclusionDecision.classification,
         confidenceScore,
         packets: input.packets,
-        hasCountryMismatch,
         phoneCountryCode: phoneContext?.countryCode || null,
         observedCountryCode,
         networkCategory,
-        caps,
+        caps: correlationCaps,
     });
     const unresolvedIpv6 = input.addressFamily === 6
         && ['unknown', 'invalid'].includes(input.networkIntelligence.registryEvidence?.status ?? 'unknown');
@@ -296,9 +401,50 @@ export function scoreCandidate(input: CandidateScoreInput): CandidateScoreResult
         }
         : scoredCorrelation;
     const isP2P = baseP2P && confidenceScore >= 45 && correlation.classification === 'candidate';
-    const technicalNote = buildTechnicalNote(baseP2P, correlation);
+    const technicalNote = buildTechnicalNote(baseP2P, correlation, exclusionDecision);
 
-    return { confidence, confidenceScore, reasonCodes, technicalNote, networkCategory, isP2P, correlation };
+    return {
+        confidence,
+        confidenceScore,
+        reasonCodes,
+        technicalNote,
+        networkCategory,
+        isP2P,
+        correlation,
+        networkContext,
+        scoreBreakdown: {
+            version: 3,
+            rawScore: reasonCodes.reduce((total, reason) => total + reason.delta, 0),
+            finalScore: confidenceScore,
+            inputs: {
+                packets: input.packets,
+                bytesTotal: input.bytesTotal,
+                durationSec: input.durationSec,
+                direction: input.direction,
+                ports: [...input.ports],
+                baselinePackets,
+                baselineDurationSec,
+                onsetDelayMs: input.onsetDelayMs ?? null,
+                protocolEvidence: [...(input.protocolEvidence ?? [])],
+            },
+            components: reasonCodes.map(reason => ({ ...reason })),
+            caps: caps.map(item => ({ ...item })),
+        },
+    };
+}
+
+function capLabel(code: string): string {
+    const labels: Record<string, string> = {
+        HARD_CAP_TINY_SAMPLE: 'Menos de 10 paquetes: no se acepta como candidata',
+        CAP_LOW_SAMPLE: 'Menos de 20 paquetes: confianza limitada',
+        CAP_ONE_WAY_FLOW: 'Sin flujo bidireccional fuerte: confianza limitada',
+        INFRASTRUCTURE_REGISTRY_DEGRADED: 'Registro de infraestructura vencido, ambiguo o sin fuente valida',
+        IPV6_REGISTRY_PENDING: 'IPv6 observado con clasificacion de infraestructura pendiente',
+        OWN_PUBLIC_ENDPOINT: 'La salida publica propia no pertenece al contacto',
+        HARD_INFRASTRUCTURE_EXCLUSION: 'Exclusion fuerte de infraestructura aplicada',
+        CONTEXTUAL_INFRASTRUCTURE_REVIEW: 'Infraestructura contextual visible sin promocion automatica',
+    };
+    return labels[code] ?? code;
 }
 
 function networkCategoryFromIntelligence(category: NetworkIntelligenceCategory, provider: CandidateProvider): NetworkCategory {
@@ -311,52 +457,28 @@ function networkCategoryFromIntelligence(category: NetworkIntelligenceCategory, 
     return classifyNetworkCategory(provider);
 }
 
-export function inferPhoneCountryFromJid(jid?: string | null): { countryCode: string; callingCode: string; label: string } | null {
-    const digits = (jid || '').split('@')[0]?.replace(/\D/g, '') || '';
-    if (!digits) return null;
-
-    const prefixes: Array<{ callingCode: string; countryCode: string; label: string }> = [
-        { callingCode: '593', countryCode: 'EC', label: 'Ecuador' },
-        { callingCode: '598', countryCode: 'UY', label: 'Uruguay' },
-        { callingCode: '595', countryCode: 'PY', label: 'Paraguay' },
-        { callingCode: '591', countryCode: 'BO', label: 'Bolivia' },
-        { callingCode: '502', countryCode: 'GT', label: 'Guatemala' },
-        { callingCode: '503', countryCode: 'SV', label: 'El Salvador' },
-        { callingCode: '504', countryCode: 'HN', label: 'Honduras' },
-        { callingCode: '505', countryCode: 'NI', label: 'Nicaragua' },
-        { callingCode: '506', countryCode: 'CR', label: 'Costa Rica' },
-        { callingCode: '507', countryCode: 'PA', label: 'Panama' },
-        { callingCode: '52', countryCode: 'MX', label: 'Mexico' },
-        { callingCode: '57', countryCode: 'CO', label: 'Colombia' },
-        { callingCode: '58', countryCode: 'VE', label: 'Venezuela' },
-        { callingCode: '51', countryCode: 'PE', label: 'Peru' },
-        { callingCode: '54', countryCode: 'AR', label: 'Argentina' },
-        { callingCode: '55', countryCode: 'BR', label: 'Brasil' },
-        { callingCode: '56', countryCode: 'CL', label: 'Chile' },
-        { callingCode: '34', countryCode: 'ES', label: 'Espana' },
-        { callingCode: '1', countryCode: 'US', label: 'NANP/US-CA-Caribe' },
-    ];
-
-    return prefixes
-        .sort((a, b) => b.callingCode.length - a.callingCode.length)
-        .find(prefix => digits.startsWith(prefix.callingCode)) || null;
+export function inferPhoneCountryFromJid(jid?: string | null): ReturnType<typeof resolveE164CountryContext> {
+    return resolveE164CountryContext(jid);
 }
 
 function buildCorrelation(input: {
     baseP2P: boolean;
+    exclusionClassification: EndpointExclusionDecision['classification'];
     confidenceScore: number;
     packets: number;
-    hasCountryMismatch: boolean;
     phoneCountryCode: string | null;
     observedCountryCode: string | null;
     networkCategory: NetworkCategory;
     caps: string[];
 }): CandidateCorrelation {
     if (!input.baseP2P) {
+        const contextual = input.exclusionClassification === 'contextual';
         return {
             classification: 'infrastructure',
-            label: 'Infraestructura / relay',
-            summary: 'La IP coincide con infraestructura, CDN, cloud o relay probable; se conserva como ruta observada, no como candidata de usuario.',
+            label: contextual ? 'Infraestructura contextual' : 'Exclusión fuerte de infraestructura',
+            summary: contextual
+                ? 'La IP tiene señales contextuales de infraestructura, CDN, cloud o relay. Se conserva para revisión y no se promueve automáticamente como candidata.'
+                : 'La IP coincide con una exclusión fuerte: Meta, DNS público exacto o la salida pública propia. Se conserva como ruta observada, no como candidata.',
             phoneCountryCode: input.phoneCountryCode,
             observedCountryCode: input.observedCountryCode,
             caps: input.caps,
@@ -368,17 +490,6 @@ function buildCorrelation(input: {
             classification: 'insufficient',
             label: 'No concluyente',
             summary: 'La muestra tiene menos de 10 paquetes. Puede ser ruido, cache, relay residual, DNS/CDN o trafico paralelo de la maquina.',
-            phoneCountryCode: input.phoneCountryCode,
-            observedCountryCode: input.observedCountryCode,
-            caps: input.caps,
-        };
-    }
-
-    if (input.hasCountryMismatch && input.packets < 50) {
-        return {
-            classification: 'context_mismatch',
-            label: 'Contexto divergente',
-            summary: 'El pais GeoIP observado no correlaciona con el prefijo telefonico y la muestra es baja; requiere nueva captura o evidencia externa.',
             phoneCountryCode: input.phoneCountryCode,
             observedCountryCode: input.observedCountryCode,
             caps: input.caps,
@@ -406,9 +517,15 @@ function buildCorrelation(input: {
     };
 }
 
-function buildTechnicalNote(baseP2P: boolean, correlation: CandidateCorrelation): string {
+function buildTechnicalNote(
+    baseP2P: boolean,
+    correlation: CandidateCorrelation,
+    exclusionDecision: EndpointExclusionDecision,
+): string {
     if (!baseP2P) {
-        return 'Infraestructura o relay conocido/probable. No debe tratarse como IP candidata de usuario.';
+        return exclusionDecision.classification === 'contextual'
+            ? 'Clasificación contextual de infraestructura. La observación permanece visible para revisión, pero no se promueve automáticamente como IP candidata.'
+            : 'Exclusión técnica fuerte por Meta, DNS público exacto o salida pública propia. No debe tratarse como IP candidata de usuario.';
     }
 
     if (correlation.classification === 'candidate') {
@@ -419,6 +536,35 @@ function buildTechnicalNote(baseP2P: boolean, correlation: CandidateCorrelation)
         ? ` Contexto: prefijo telefonico ${correlation.phoneCountryCode}, GeoIP observado ${correlation.observedCountryCode}.`
         : '';
     return `${correlation.summary}${countryContext}`;
+}
+
+function buildNetworkContext(
+    phoneContext: ReturnType<typeof inferPhoneCountryFromJid>,
+    observedCountryCode: string | null,
+): CandidateNetworkContext {
+    const targetCountryCode = phoneContext?.countryCode ?? null;
+    const relationship = targetCountryCode && observedCountryCode
+        ? targetCountryCode === observedCountryCode ? 'match' : 'mismatch'
+        : 'unavailable';
+    const reasonCodes = relationship === 'match'
+        ? ['PHONE_GEO_CONTEXT_MATCH']
+        : relationship === 'mismatch'
+            ? ['PHONE_GEO_CONTEXT_MISMATCH']
+            : ['PHONE_GEO_CONTEXT_UNAVAILABLE'];
+
+    return {
+        version: 1,
+        targetCallingCode: phoneContext?.callingCode ?? null,
+        targetCountryCode,
+        observedCountryCode,
+        relationship,
+        affectsRouteScore: false,
+        reasonCodes,
+        limitations: [
+            'phone_prefix_is_context_not_location',
+            'geoip_is_network_estimate_not_device_location',
+        ],
+    };
 }
 
 function normalizeCountryCode(value?: string | null): string | null {

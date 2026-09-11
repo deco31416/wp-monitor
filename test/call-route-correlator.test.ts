@@ -225,3 +225,42 @@ test('caps confidence when capture or the infrastructure registry is degraded', 
     assert.ok(assessed.routeAssessment?.limitations.includes('packet_capture_truncated'));
     assert.ok(assessed.routeAssessment?.limitations.includes('infrastructure_registry_degraded'));
 });
+
+test('publishes route assessment v3 only when fed by candidate scoring v3', () => {
+    const v3 = candidate({
+        scoreVersion: 3,
+        networkContext: {
+            version: 1,
+            targetCallingCode: '57',
+            targetCountryCode: 'CO',
+            observedCountryCode: 'CO',
+            relationship: 'match',
+            affectsRouteScore: false,
+            reasonCodes: ['PHONE_GEO_CONTEXT_MATCH'],
+            limitations: ['phone_prefix_is_context_not_location'],
+        },
+        scoreBreakdown: {
+            version: 3,
+            rawScore: 62,
+            finalScore: 62,
+            inputs: {
+                packets: 100,
+                bytesTotal: 20_000,
+                durationSec: 20,
+                direction: 'bidirectional',
+                ports: [40_000],
+                baselinePackets: 20,
+                baselineDurationSec: 5,
+                onsetDelayMs: 1_000,
+                protocolEvidence: ['transport_flow'],
+            },
+            components: [{ code: 'SYNTHETIC_ROUTE_SCORE', label: 'Synthetic route score', delta: 62 }],
+            caps: [],
+        },
+    });
+    const assessed = correlateCallRoute(result({ candidateIps: [v3] }));
+
+    assert.equal(assessed.routeAssessment?.assessmentVersion, 3);
+    assert.ok(assessed.routeAssessment?.reasonCodes.includes('CANDIDATE_SCORING_V3'));
+    assert.ok(assessed.routeAssessment?.reasonCodes.includes('GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE'));
+});

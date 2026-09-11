@@ -10,6 +10,8 @@ import {
     CALL_CAPTURE_PHASE_STATUSES,
     OPERATOR_CALL_MARKERS,
     isValidCallCapturePhaseObservation,
+    normalizeCallCapturePhaseCounts,
+    sumCallCapturePhaseCounts,
     type CallCapturePhaseEvidence,
     type CallCapturePhaseEvidenceConfidence,
     type CallCapturePhaseEvidenceSource,
@@ -18,7 +20,13 @@ import {
     type OperatorCallMarker,
 } from './call-capture-phases.js';
 import type { NetworkInterface } from './packet-capture.js';
-import type { NetworkIntelligence } from './call-scoring.js';
+import {
+    ENDPOINT_EXCLUSION_DECISION_VERSION,
+    type CandidateNetworkContext,
+    type CandidateScoreBreakdown,
+    type EndpointExclusionDecision,
+    type NetworkIntelligence,
+} from './call-scoring.js';
 import { validateJid } from './validation.js';
 
 export interface CaptureAgentClientOptions {
@@ -88,6 +96,176 @@ function requireArray(value: unknown, field: string, maximum: number): unknown[]
         throw new CaptureAgentClientError(`Capture agent returned an invalid ${field}`, 502, 'invalid_agent_response');
     }
     return value;
+}
+
+function parsePhaseCounts(
+    value: unknown,
+    context: string,
+): NonNullable<CallAnalysisResult['phaseCounts']> {
+    const counts = normalizeCallCapturePhaseCounts(value);
+    if (!counts) {
+        throw new CaptureAgentClientError(`Capture agent returned an invalid ${context}`, 502, 'invalid_agent_response');
+    }
+    return counts;
+}
+
+function parseEndpointExclusionDecision(value: unknown): EndpointExclusionDecision {
+    const object = requireObject(value, 'candidate networkIntelligence.exclusionDecision');
+    const classification = requireEnum(
+        object.classification,
+        'candidate networkIntelligence.exclusionDecision.classification',
+        ['hard_excluded', 'contextual', 'eligible'],
+    );
+    const basis = requireEnum(
+        object.basis,
+        'candidate networkIntelligence.exclusionDecision.basis',
+        ['runtime', 'registry', 'provider_fallback', 'enrichment', 'none'],
+    );
+    const rawReasonCodes = requireArray(
+        object.reasonCodes,
+        'candidate networkIntelligence.exclusionDecision.reasonCodes',
+        16,
+    );
+    if (rawReasonCodes.length === 0) {
+        throw new CaptureAgentClientError(
+            'Capture agent returned an invalid candidate networkIntelligence.exclusionDecision.reasonCodes',
+            502,
+            'invalid_agent_response',
+        );
+    }
+    const reasonCodes = rawReasonCodes.map((reason, index) => requireBoundedString(
+        reason,
+        `candidate networkIntelligence.exclusionDecision.reasonCodes[${index}]`,
+        128,
+    ));
+    const validReasons = reasonCodes.every(reason => /^[A-Z][A-Z0-9_]{2,127}$/.test(reason));
+    const uniqueReasons = new Set(reasonCodes).size === reasonCodes.length;
+    const coherentBasis = classification === 'eligible'
+        ? basis === 'none'
+        : classification === 'contextual'
+            ? ['registry', 'provider_fallback', 'enrichment'].includes(basis)
+            : ['runtime', 'registry', 'provider_fallback'].includes(basis);
+    if (!validReasons || !uniqueReasons || !coherentBasis) {
+        throw new CaptureAgentClientError(
+            'Capture agent returned an inconsistent candidate networkIntelligence.exclusionDecision',
+            502,
+            'invalid_agent_response',
+        );
+    }
+
+    return {
+        version: requireIntegerInRange(
+            object.version,
+            'candidate networkIntelligence.exclusionDecision.version',
+            ENDPOINT_EXCLUSION_DECISION_VERSION,
+            ENDPOINT_EXCLUSION_DECISION_VERSION,
+        ) as typeof ENDPOINT_EXCLUSION_DECISION_VERSION,
+        classification,
+        basis,
+        reasonCodes,
+    };
+}
+
+function parseNullableCode(value: unknown, field: string, maximum: number): string | null {
+    return value === null ? null : requireBoundedString(value, field, maximum);
+}
+
+function parseCandidateNetworkContext(value: unknown): CandidateNetworkContext {
+    const object = requireObject(value, 'candidate networkContext');
+    const reasonCodes = requireArray(object.reasonCodes, 'candidate networkContext.reasonCodes', 8)
+        .map((entry, index) => requireBoundedString(entry, `candidate networkContext.reasonCodes[${index}]`, 128));
+    const limitations = requireArray(object.limitations, 'candidate networkContext.limitations', 8)
+        .map((entry, index) => requireBoundedString(entry, `candidate networkContext.limitations[${index}]`, 128));
+    const targetCallingCode = parseNullableCode(object.targetCallingCode, 'candidate networkContext.targetCallingCode', 4);
+    const targetCountryCode = parseNullableCode(object.targetCountryCode, 'candidate networkContext.targetCountryCode', 8);
+    const observedCountryCode = parseNullableCode(object.observedCountryCode, 'candidate networkContext.observedCountryCode', 8);
+    const relationship = requireEnum(object.relationship, 'candidate networkContext.relationship', ['match', 'mismatch', 'unavailable']);
+    const expectedRelationship = targetCountryCode && observedCountryCode
+        ? targetCountryCode === observedCountryCode ? 'match' : 'mismatch'
+        : 'unavailable';
+    if (
+        object.affectsRouteScore !== false
+        || new Set(reasonCodes).size !== reasonCodes.length
+        || relationship !== expectedRelationship
+        || (targetCallingCode !== null && !/^\d{1,4}$/.test(targetCallingCode))
+        || (targetCountryCode !== null && !/^[A-Z]{2,8}$/.test(targetCountryCode))
+        || (observedCountryCode !== null && !/^[A-Z]{2,8}$/.test(observedCountryCode))
+    ) {
+        throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate networkContext', 502, 'invalid_agent_response');
+    }
+    return {
+        version: requireIntegerInRange(object.version, 'candidate networkContext.version', 1, 1) as 1,
+        targetCallingCode,
+        targetCountryCode,
+        observedCountryCode,
+        relationship,
+        affectsRouteScore: false,
+        reasonCodes,
+        limitations,
+    };
+}
+
+function parseCandidateScoreBreakdown(value: unknown): CandidateScoreBreakdown {
+    const object = requireObject(value, 'candidate scoreBreakdown');
+    const inputs = requireObject(object.inputs, 'candidate scoreBreakdown.inputs');
+    const components = requireArray(object.components, 'candidate scoreBreakdown.components', 32).map((entry, index) => {
+        const component = requireObject(entry, `candidate scoreBreakdown.components[${index}]`);
+        return {
+            code: requireBoundedString(component.code, `candidate scoreBreakdown.components[${index}].code`, 128),
+            label: requireBoundedString(component.label, `candidate scoreBreakdown.components[${index}].label`, 512),
+            delta: requireIntegerInRange(component.delta, `candidate scoreBreakdown.components[${index}].delta`, -100, 100),
+        };
+    });
+    const caps = requireArray(object.caps, 'candidate scoreBreakdown.caps', 8).map((entry, index) => {
+        const cap = requireObject(entry, `candidate scoreBreakdown.caps[${index}]`);
+        return {
+            code: requireBoundedString(cap.code, `candidate scoreBreakdown.caps[${index}].code`, 128),
+            maximum: requireIntegerInRange(cap.maximum, `candidate scoreBreakdown.caps[${index}].maximum`, 0, 100),
+            before: requireIntegerInRange(cap.before, `candidate scoreBreakdown.caps[${index}].before`, -1_000, 1_000),
+            after: requireIntegerInRange(cap.after, `candidate scoreBreakdown.caps[${index}].after`, -1_000, 100),
+        };
+    });
+    const rawScore = requireIntegerInRange(object.rawScore, 'candidate scoreBreakdown.rawScore', -1_000, 1_000);
+    const finalScore = requireIntegerInRange(object.finalScore, 'candidate scoreBreakdown.finalScore', 0, 100);
+    const componentTotal = components.reduce((total, component) => total + component.delta, 0);
+    let reconstructed = rawScore;
+    const capsCoherent = caps.every(item => {
+        const expected = Math.min(reconstructed, item.maximum);
+        const valid = item.before === reconstructed && item.after === expected && item.after < item.before;
+        reconstructed = item.after;
+        return valid;
+    });
+    const expectedFinal = Math.min(100, Math.max(0, reconstructed));
+    if (componentTotal !== rawScore || !capsCoherent || expectedFinal !== finalScore) {
+        throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate scoreBreakdown', 502, 'invalid_agent_response');
+    }
+
+    const protocolEvidence = requireArray(inputs.protocolEvidence, 'candidate scoreBreakdown.inputs.protocolEvidence', 16)
+        .map((entry, index) => requireEnum(entry, `candidate scoreBreakdown.inputs.protocolEvidence[${index}]`, [
+            'stun_binding_request', 'stun_binding_response', 'stun_other', 'transport_flow', 'frame_length_86',
+        ] as const));
+    return {
+        version: requireIntegerInRange(object.version, 'candidate scoreBreakdown.version', 3, 3) as 3,
+        rawScore,
+        finalScore,
+        inputs: {
+            packets: requireNonNegativeInteger(inputs.packets, 'candidate scoreBreakdown.inputs.packets'),
+            bytesTotal: requireNonNegativeInteger(inputs.bytesTotal, 'candidate scoreBreakdown.inputs.bytesTotal'),
+            durationSec: requireNumberInRange(inputs.durationSec, 'candidate scoreBreakdown.inputs.durationSec', 0, 604_800),
+            direction: requireEnum(inputs.direction, 'candidate scoreBreakdown.inputs.direction', ['incoming', 'outgoing', 'bidirectional']),
+            ports: requireArray(inputs.ports, 'candidate scoreBreakdown.inputs.ports', 16).map((entry, index) => (
+                requireIntegerInRange(entry, `candidate scoreBreakdown.inputs.ports[${index}]`, 0, 65_535)
+            )),
+            baselinePackets: requireNonNegativeInteger(inputs.baselinePackets, 'candidate scoreBreakdown.inputs.baselinePackets'),
+            baselineDurationSec: requireNumberInRange(inputs.baselineDurationSec, 'candidate scoreBreakdown.inputs.baselineDurationSec', 0, 604_800),
+            onsetDelayMs: inputs.onsetDelayMs === null
+                ? null
+                : requireIntegerInRange(inputs.onsetDelayMs, 'candidate scoreBreakdown.inputs.onsetDelayMs', 0, 604_800_000),
+            protocolEvidence,
+        },
+        components,
+        caps,
+    };
 }
 
 function requireFiniteNumber(value: unknown, field: string): number {
@@ -300,6 +478,7 @@ function parseCandidate(value: unknown): CandidateIP {
         throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate addressFamily', 502, 'invalid_agent_response');
     }
     const packets = requireNonNegativeInteger(object.packets, 'candidate packets');
+    const bytesTotal = requireNonNegativeInteger(object.bytesTotal, 'candidate bytesTotal');
     const baselinePackets = object.baselinePackets === undefined
         ? undefined
         : requireNonNegativeInteger(object.baselinePackets, 'candidate baselinePackets');
@@ -312,11 +491,61 @@ function parseCandidate(value: unknown): CandidateIP {
     if (baselinePackets !== undefined && activeCallPackets !== undefined && baselinePackets + activeCallPackets !== packets) {
         throw new CaptureAgentClientError('Capture agent returned inconsistent candidate phase counts', 502, 'invalid_agent_response');
     }
+    const phaseCounts = object.phaseCounts === undefined
+        ? undefined
+        : parsePhaseCounts(object.phaseCounts, 'candidate phaseCounts');
+    if (phaseCounts) {
+        const phaseTotals = sumCallCapturePhaseCounts(phaseCounts);
+        if (phaseTotals.packets !== packets || phaseTotals.bytes !== bytesTotal) {
+            throw new CaptureAgentClientError('Capture agent returned inconsistent candidate detailed phase counts', 502, 'invalid_agent_response');
+        }
+    }
+    const protocolEvidence = object.protocolEvidence === undefined
+        ? undefined
+        : requireArray(object.protocolEvidence, 'candidate protocolEvidence', 16).map((entry, index) => (
+            requireEnum(entry, `candidate protocolEvidence[${index}]`, [
+                'stun_binding_request',
+                'stun_binding_response',
+                'stun_other',
+                'transport_flow',
+                'frame_length_86',
+            ] as const)
+        ));
+    const scoreVersion = object.scoreVersion === undefined
+        ? undefined
+        : requireIntegerInRange(object.scoreVersion, 'candidate scoreVersion', 2, 3) as 2 | 3;
+    const networkContext = object.networkContext === undefined
+        ? undefined
+        : parseCandidateNetworkContext(object.networkContext);
+    const scoreBreakdown = object.scoreBreakdown === undefined
+        ? undefined
+        : parseCandidateScoreBreakdown(object.scoreBreakdown);
+    if (
+        (scoreVersion === 3 && (!networkContext || !scoreBreakdown))
+        || (scoreVersion !== 3 && (networkContext || scoreBreakdown))
+        || (scoreBreakdown && scoreBreakdown.finalScore !== object.confidenceScore)
+        || (scoreBreakdown && scoreBreakdown.inputs.packets !== (activeCallPackets ?? packets))
+        || (scoreVersion === 3 && (!phaseCounts || baselinePackets === undefined || activeCallPackets === undefined))
+        || (scoreBreakdown && baselinePackets !== undefined && scoreBreakdown.inputs.baselinePackets !== baselinePackets)
+        || (scoreBreakdown && phaseCounts && scoreBreakdown.inputs.bytesTotal !== (
+            phaseCounts.negotiation.bytes
+            + phaseCounts.active.bytes
+            + phaseCounts.postCall.bytes
+            + phaseCounts.unclassified.bytes
+        ))
+        || (scoreBreakdown && JSON.stringify(scoreBreakdown.components) !== JSON.stringify(reasonCodes))
+        || (scoreBreakdown && (
+            !protocolEvidence
+            || scoreBreakdown.inputs.protocolEvidence.some(item => !protocolEvidence.includes(item))
+        ))
+    ) {
+        throw new CaptureAgentClientError('Capture agent returned an inconsistent candidate scoring contract', 502, 'invalid_agent_response');
+    }
 
     return {
         ip,
         packets,
-        bytesTotal: requireNonNegativeInteger(object.bytesTotal, 'candidate bytesTotal'),
+        bytesTotal,
         firstSeen,
         lastSeen,
         avgSize: requireNumberInRange(object.avgSize, 'candidate avgSize', 0, 65_535),
@@ -362,6 +591,9 @@ function parseCandidate(value: unknown): CandidateIP {
             ...(networkIntelligenceObject.registryEvidence === undefined ? {} : {
                 registryEvidence: parseRegistryEvidence(networkIntelligenceObject.registryEvidence),
             }),
+            ...(networkIntelligenceObject.exclusionDecision === undefined ? {} : {
+                exclusionDecision: parseEndpointExclusionDecision(networkIntelligenceObject.exclusionDecision),
+            }),
         },
         geo: geoObject === null ? null : {
             country: requireBoundedString(geoObject.country, 'candidate geo.country', 128),
@@ -390,20 +622,11 @@ function parseCandidate(value: unknown): CandidateIP {
         }),
         ...(baselinePackets === undefined ? {} : { baselinePackets }),
         ...(activeCallPackets === undefined ? {} : { activeCallPackets }),
-        ...(object.protocolEvidence === undefined ? {} : {
-            protocolEvidence: requireArray(object.protocolEvidence, 'candidate protocolEvidence', 16).map((entry, index) => (
-                requireEnum(entry, `candidate protocolEvidence[${index}]`, [
-                    'stun_binding_request',
-                    'stun_binding_response',
-                    'stun_other',
-                    'transport_flow',
-                    'frame_length_86',
-                ])
-            )),
-        }),
-        ...(object.scoreVersion === undefined ? {} : {
-            scoreVersion: requireIntegerInRange(object.scoreVersion, 'candidate scoreVersion', 2, 2) as 2,
-        }),
+        ...(phaseCounts === undefined ? {} : { phaseCounts }),
+        ...(protocolEvidence === undefined ? {} : { protocolEvidence }),
+        ...(scoreVersion === undefined ? {} : { scoreVersion }),
+        ...(networkContext === undefined ? {} : { networkContext }),
+        ...(scoreBreakdown === undefined ? {} : { scoreBreakdown }),
         ...(correlationObject ? {
             correlation: {
                 classification: requireEnum(correlationObject.classification, 'candidate correlation.classification', [
@@ -458,7 +681,7 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
     }
 
     const phaseEvidenceVersion = hasVersionedEvidence
-        ? requireIntegerInRange(object.phaseEvidenceVersion, 'capturePhases.phaseEvidenceVersion', 1, 1)
+        ? requireIntegerInRange(object.phaseEvidenceVersion, 'capturePhases.phaseEvidenceVersion', 1, 2)
         : undefined;
     const callEndedAt = hasVersionedEvidence
         ? optionalDate(object.callEndedAt, 'capturePhases.callEndedAt')
@@ -467,7 +690,7 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
         ? optionalDate(object.captureEndedAt, 'capturePhases.captureEndedAt')
         : undefined;
     const phaseEvidence = hasVersionedEvidence
-        ? parseCallCapturePhaseEvidence(object.phaseEvidence)
+        ? parseCallCapturePhaseEvidence(object.phaseEvidence, phaseEvidenceVersion!)
         : undefined;
 
     if (baselineAvailable !== Boolean(baselineStartedAt && baselineEndedAt)) {
@@ -500,6 +723,17 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
         validatePhaseEvidenceTimestamp(phaseEvidence, 'active_started', activeCallStartedAt);
         validatePhaseEvidenceTimestamp(phaseEvidence, 'call_ended', callEndedAt ?? null);
         validatePhaseEvidenceTimestamp(phaseEvidence, 'capture_ended', captureEndedAt);
+        validatePhaseCorroborationBoundary(
+            phaseEvidence,
+            'negotiation_started',
+            activeCallStartedAt ?? callEndedAt ?? captureEndedAt,
+        );
+        validatePhaseCorroborationBoundary(
+            phaseEvidence,
+            'active_started',
+            callEndedAt ?? captureEndedAt,
+        );
+        validatePhaseCorroborationBoundary(phaseEvidence, 'call_ended', captureEndedAt);
     }
 
     return {
@@ -508,14 +742,14 @@ function parseCapturePhases(value: unknown): NonNullable<CallAnalysisResult['cap
         baselineEndedAt,
         negotiationStartedAt,
         activeCallStartedAt,
-        ...(phaseEvidenceVersion === undefined ? {} : { phaseEvidenceVersion: phaseEvidenceVersion as 1 }),
+        ...(phaseEvidenceVersion === undefined ? {} : { phaseEvidenceVersion: phaseEvidenceVersion as 1 | 2 }),
         ...(phaseEvidence === undefined ? {} : { phaseEvidence }),
         ...(callEndedAt === undefined ? {} : { callEndedAt }),
         ...(captureEndedAt === undefined ? {} : { captureEndedAt }),
     };
 }
 
-function parseCallCapturePhaseEvidence(value: unknown): CallCapturePhaseEvidence[] {
+function parseCallCapturePhaseEvidence(value: unknown, version: number): CallCapturePhaseEvidence[] {
     const events = requireArray(value, 'capturePhases.phaseEvidence', 16);
     let previousTimestamp = Number.NEGATIVE_INFINITY;
     const seenKinds = new Set<string>();
@@ -551,6 +785,12 @@ function parseCallCapturePhaseEvidence(value: unknown): CallCapturePhaseEvidence
                 `capturePhases.phaseEvidence[${index}].status`,
                 CALL_CAPTURE_PHASE_STATUSES,
             );
+        const corroborations = version === 2
+            ? parsePhaseCorroborations(object.corroborations, kind, at, source)
+            : undefined;
+        if (version === 1 && object.corroborations !== undefined) {
+            throw new CaptureAgentClientError('Capture agent returned corroborations in v1 phase evidence', 502, 'invalid_agent_response');
+        }
 
         if (sequence !== index + 1 || at.getTime() < previousTimestamp || seenKinds.has(kind)) {
             throw new CaptureAgentClientError('Capture agent returned unordered or duplicate phase evidence', 502, 'invalid_agent_response');
@@ -562,10 +802,12 @@ function parseCallCapturePhaseEvidence(value: unknown): CallCapturePhaseEvidence
         const terminalStatus = status === 'reject' || status === 'timeout' || status === 'terminate';
         const invalidSemantics = (
             (protocolSource && status === undefined)
+            || (!protocolSource && status !== undefined)
             || (kind === 'baseline_started' && (source !== 'capture_start' || status !== undefined))
             || (kind === 'capture_ended' && (source !== 'capture_stop' || status !== undefined))
             || (kind === 'active_started' && status !== undefined && status !== 'accept')
             || (kind === 'call_ended' && status !== undefined && !terminalStatus)
+            || (source === 'network_onset' && kind !== 'negotiation_started')
             || (source === 'capture_start' && kind !== 'baseline_started')
             || (source === 'capture_stop' && kind !== 'capture_ended')
         );
@@ -581,7 +823,61 @@ function parseCallCapturePhaseEvidence(value: unknown): CallCapturePhaseEvidence
             source,
             confidence,
             ...(status === undefined ? {} : { status }),
+            ...(corroborations === undefined || corroborations.length === 0 ? {} : { corroborations }),
         };
+    });
+}
+
+function parsePhaseCorroborations(
+    value: unknown,
+    kind: CallCapturePhaseEvidence['kind'],
+    transitionAt: Date,
+    transitionSource: CallCapturePhaseEvidenceSource,
+): NonNullable<CallCapturePhaseEvidence['corroborations']> {
+    if (value === undefined) return [];
+    const seenSources = new Set<CallCapturePhaseEvidenceSource>([transitionSource]);
+    let previousTimestamp = transitionAt.getTime();
+    return requireArray(value, 'phase evidence corroborations', 3).map((entry, index) => {
+        const object = requireObject(entry, `phase evidence corroborations[${index}]`);
+        const at = requireDate(object.at, `phase evidence corroborations[${index}].at`);
+        const source = requireEnum(
+            object.source,
+            `phase evidence corroborations[${index}].source`,
+            CALL_CAPTURE_PHASE_EVIDENCE_SOURCES,
+        );
+        const confidence = requireEnum(
+            object.confidence,
+            `phase evidence corroborations[${index}].confidence`,
+            CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES,
+        );
+        const status = object.status === undefined
+            ? undefined
+            : requireEnum(
+                object.status,
+                `phase evidence corroborations[${index}].status`,
+                CALL_CAPTURE_PHASE_STATUSES,
+            );
+        if (source === 'capture_start' || source === 'capture_stop' || seenSources.has(source)) {
+            throw new CaptureAgentClientError('Capture agent returned duplicate or invalid phase corroboration', 502, 'invalid_agent_response');
+        }
+        if (at.getTime() < previousTimestamp || !isValidCallCapturePhaseObservation(source, confidence)) {
+            throw new CaptureAgentClientError('Capture agent returned inconsistent phase corroboration', 502, 'invalid_agent_response');
+        }
+        const protocolSource = source === 'baileys_normalized' || source === 'baileys_raw';
+        const terminalStatus = status === 'reject' || status === 'timeout' || status === 'terminate';
+        if (
+            (protocolSource && status === undefined)
+            || (!protocolSource && status !== undefined)
+            || (kind === 'active_started' && status !== undefined && status !== 'accept')
+            || (kind === 'call_ended' && status !== undefined && !terminalStatus)
+            || (source === 'network_onset' && kind !== 'negotiation_started')
+            || (kind === 'baseline_started' || kind === 'capture_ended')
+        ) {
+            throw new CaptureAgentClientError('Capture agent returned invalid phase corroboration semantics', 502, 'invalid_agent_response');
+        }
+        seenSources.add(source);
+        previousTimestamp = at.getTime();
+        return { at, source, confidence, ...(status === undefined ? {} : { status }) };
     });
 }
 
@@ -593,6 +889,18 @@ function validatePhaseEvidenceTimestamp(
     const event = evidence.find(item => item.kind === kind);
     if (Boolean(event) !== Boolean(timestamp) || (event && timestamp && event.at.getTime() !== timestamp.getTime())) {
         throw new CaptureAgentClientError('Capture agent returned inconsistent phase evidence timestamps', 502, 'invalid_agent_response');
+    }
+}
+
+function validatePhaseCorroborationBoundary(
+    evidence: CallCapturePhaseEvidence[],
+    kind: CallCapturePhaseEvidence['kind'],
+    boundary: Date | null,
+): void {
+    if (!boundary) return;
+    const event = evidence.find(item => item.kind === kind);
+    if (event?.corroborations?.some(corroboration => corroboration.at.getTime() > boundary.getTime())) {
+        throw new CaptureAgentClientError('Capture agent returned a corroboration after the next phase', 502, 'invalid_agent_response');
     }
 }
 
@@ -665,6 +973,9 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     const captureBounds = object.captureBounds === undefined
         ? undefined
         : parseCaptureBounds(object.captureBounds);
+    const phaseCounts = object.phaseCounts === undefined
+        ? undefined
+        : parsePhaseCounts(object.phaseCounts, 'phaseCounts');
     const stunEndpoints = object.stunEndpoints === undefined
         ? undefined
         : parseStunEndpoints(object.stunEndpoints);
@@ -677,6 +988,9 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
             capturePhases.callEndedAt,
             capturePhases.captureEndedAt,
             ...(capturePhases.phaseEvidence?.map(event => event.at) ?? []),
+            ...(capturePhases.phaseEvidence?.flatMap(event => (
+                event.corroborations?.map(corroboration => corroboration.at) ?? []
+            )) ?? []),
         ].filter((value): value is Date => value instanceof Date);
         if (phaseDates.some(value => value.getTime() < startTime.getTime())) {
             throw new CaptureAgentClientError('Capture agent returned a phase before capture start', 502, 'invalid_agent_response');
@@ -685,7 +999,7 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
             throw new CaptureAgentClientError('Capture agent returned a phase after capture end', 502, 'invalid_agent_response');
         }
         if (
-            capturePhases.phaseEvidenceVersion === 1
+            capturePhases.phaseEvidenceVersion !== undefined
             && (!endTime || capturePhases.captureEndedAt?.getTime() !== endTime.getTime())
         ) {
             throw new CaptureAgentClientError('Capture agent returned capture phase evidence with a mismatched end', 502, 'invalid_agent_response');
@@ -693,6 +1007,11 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     }
     if (captureBounds && captureBounds.storedPackets + captureBounds.droppedPackets !== totalPackets) {
         throw new CaptureAgentClientError('Capture agent returned inconsistent packet totals', 502, 'invalid_agent_response');
+    }
+    if (phaseCounts) {
+        if (!captureBounds || sumCallCapturePhaseCounts(phaseCounts).packets !== captureBounds.storedPackets) {
+            throw new CaptureAgentClientError('Capture agent returned inconsistent detailed phase totals', 502, 'invalid_agent_response');
+        }
     }
     return {
         callId: requireCallId(object.callId, 'callId'),
@@ -716,6 +1035,7 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
         ...(capturePhases === undefined ? {} : { capturePhases }),
         ...(stunEndpoints === undefined ? {} : { stunEndpoints }),
         ...(captureBounds === undefined ? {} : { captureBounds }),
+        ...(phaseCounts === undefined ? {} : { phaseCounts }),
     };
 }
 
@@ -780,7 +1100,9 @@ export class CaptureAgentClient {
             return payload.status === 'ready'
                 && payload.capturePrivileges === true
                 && capabilities.callCapturePhases === CALL_CAPTURE_PHASE_CAPABILITY_VERSION
-                && capabilities.operatorCallMarkers === 1;
+                && capabilities.operatorCallMarkers === 1
+                && capabilities.endpointExclusionDecision === ENDPOINT_EXCLUSION_DECISION_VERSION
+                && capabilities.candidateScoring === 3;
         } catch {
             return false;
         }

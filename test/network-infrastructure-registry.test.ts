@@ -6,7 +6,7 @@ import {
     type InfrastructureRegistryDocument,
 } from '../src/network-infrastructure-registry.js';
 
-const NOW = new Date('2026-09-08T12:00:00.000Z');
+const NOW = new Date('2026-09-10T12:00:00.000Z');
 
 test('resolves versioned IPv4 and IPv6 infrastructure with exact endpoint roles', () => {
     const metaV4 = lookupInfrastructure('57.144.115.57', { now: NOW });
@@ -24,6 +24,12 @@ test('resolves versioned IPv4 and IPv6 infrastructure with exact endpoint roles'
     assert.equal(googleDns.category, 'dns');
     assert.equal(googleDns.endpointRole, 'dns');
     assert.equal(googleDns.matchedCidr, '8.8.8.8/32');
+
+    const googleService = lookupInfrastructure('172.217.118.4', { now: NOW });
+    assert.equal(googleService.provider, 'google');
+    assert.equal(googleService.category, 'cloud_hosting');
+    assert.equal(googleService.endpointRole, 'cloud_hosting');
+    assert.match(googleService.source?.label || '', /contextual, not STUN proof/i);
 
     const cloudflareDnsV6 = lookupInfrastructure('2606:4700:4700::1111', { now: NOW });
     assert.equal(cloudflareDnsV6.category, 'dns');

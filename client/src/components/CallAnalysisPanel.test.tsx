@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { expect, test, vi } from 'vitest';
 import { CallAnalysisPanel } from './CallAnalysisPanel';
-import type { CallAnalysisResult, CallRouteAssessment } from '../types';
+import type { CallAnalysisResult, CallRouteAssessment, CandidateIP } from '../types';
 
 function analysis(capturePhases?: CallAnalysisResult['capturePhases']): CallAnalysisResult {
     return {
@@ -63,6 +63,45 @@ function routeAssessment(
         primaryCandidateIp: classification === 'relay_confirmed' || classification === 'unresolved' ? null : '203.0.113.10',
         reasonCodes: ['STRONG_DIRECT_PACKET_PATTERN'],
         limitations: [],
+        ...overrides,
+    };
+}
+
+function endpoint(ip: string, overrides: Partial<CandidateIP> = {}): CandidateIP {
+    return {
+        ip,
+        packets: 20,
+        bytesTotal: 2400,
+        firstSeen: '2026-09-08T12:00:01.000Z',
+        lastSeen: '2026-09-08T12:00:09.000Z',
+        avgSize: 120,
+        ports: [40_000],
+        direction: 'bidirectional',
+        provider: 'unknown',
+        networkCategory: 'consumer_isp_or_unknown',
+        networkIntelligence: {
+            asn: null,
+            org: 'Synthetic public network',
+            category: 'consumer_isp_or_unknown',
+            source: 'local_rules',
+            isDatacenterLikely: false,
+            caution: 'Synthetic fixture.',
+            exclusionDecision: {
+                version: 1,
+                classification: 'eligible',
+                basis: 'none',
+                reasonCodes: ['NO_STRONG_EXCLUSION'],
+            },
+        },
+        geo: null,
+        confidence: 'low',
+        confidenceScore: 20,
+        reasonCodes: [],
+        technicalNote: 'Synthetic endpoint.',
+        isP2P: false,
+        addressFamily: 4,
+        endpointRole: 'unknown',
+        protocolEvidence: ['transport_flow'],
         ...overrides,
     };
 }
@@ -215,6 +254,79 @@ test('shows the registry version and freshness that support an infrastructure cl
     expect(screen.getByText(/Registro 2026\.09\.08\.1 · vigente · Google Public DNS endpoints/)).toBeInTheDocument();
 });
 
+test('renders every public endpoint in one exhaustive commercial group', () => {
+    const result = analysis();
+    result.totalPackets = 80;
+    result.candidateIps = [
+        endpoint('198.51.100.10', { isP2P: true, confidence: 'medium', confidenceScore: 55 }),
+        endpoint('192.0.2.20', {
+            endpointRole: 'relay',
+            networkCategory: 'meta',
+            provider: 'meta',
+            networkIntelligence: {
+                asn: 32_934,
+                org: 'Synthetic Meta infrastructure',
+                category: 'meta',
+                source: 'local_rules',
+                isDatacenterLikely: true,
+                caution: 'Synthetic fixture.',
+                exclusionDecision: {
+                    version: 1,
+                    classification: 'hard_excluded',
+                    basis: 'registry',
+                    reasonCodes: ['META_INFRASTRUCTURE'],
+                },
+            },
+        }),
+        endpoint('203.0.113.30', {
+            phaseCounts: {
+                version: 1,
+                baseline: { packets: 2, bytes: 240 },
+                negotiation: { packets: 3, bytes: 360 },
+                active: { packets: 10, bytes: 1200 },
+                postCall: { packets: 4, bytes: 480 },
+                unclassified: { packets: 1, bytes: 120 },
+            },
+        }),
+        endpoint('192.0.2.40', {
+            endpointRole: 'background',
+            networkCategory: 'cloud_hosting',
+            networkIntelligence: {
+                asn: 64_500,
+                org: 'Synthetic cloud network',
+                category: 'cloud_hosting',
+                source: 'enrichment',
+                isDatacenterLikely: true,
+                caution: 'Synthetic contextual fixture.',
+                exclusionDecision: {
+                    version: 1,
+                    classification: 'contextual',
+                    basis: 'enrichment',
+                    reasonCodes: ['ENRICHED_CLOUD_PROVIDER'],
+                },
+            },
+        }),
+    ];
+    result.metaIps = ['192.0.2.20'];
+
+    render(panel(result));
+
+    expect(screen.getByText('Endpoints publicos')).toBeInTheDocument();
+    expect(screen.getByText('IPs observadas candidatas')).toBeInTheDocument();
+    expect(screen.getByText('Observaciones no concluyentes (1)')).toBeInTheDocument();
+    expect(screen.getByText('IPs Infraestructura (2)')).toBeInTheDocument();
+    expect(screen.getByText('198.51.100.10')).toBeInTheDocument();
+    expect(screen.getByText('192.0.2.20')).toBeInTheDocument();
+    expect(screen.getByText('203.0.113.30')).toBeInTheDocument();
+    expect(screen.getByText('192.0.2.40')).toBeInTheDocument();
+    expect(screen.queryByText(/IPs Meta sin detalle historico/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('Evidencia tecnica del endpoint')).toHaveLength(4);
+    expect(screen.getByText('10 pkts · 1200 B')).toBeInTheDocument();
+    expect(screen.getByText(/Exclusión técnica fuerte · registro versionado/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Sin exclusión fuerte · sin coincidencia de infraestructura/)).toHaveLength(2);
+    expect(screen.getByText(/Clasificación contextual; requiere revisión · enriquecimiento externo/)).toBeInTheDocument();
+});
+
 test.each([
     ['direct_confirmed', 'Ruta directa confirmada'],
     ['direct_probable', 'Ruta directa probable'],
@@ -244,6 +356,55 @@ test('marks a bounded result as partial and explains its limitations', () => {
     expect(screen.getByRole('status')).toHaveTextContent('La captura alcanzó su límite');
     expect(screen.getByText('Resultado parcial')).toBeInTheDocument();
     expect(screen.getByText(/no constituye una segunda confirmación independiente/)).toBeInTheDocument();
+});
+
+test('separates route scoring from geographic context and declares unquantified uncertainty', () => {
+    const result = analysis();
+    result.routeAssessment = routeAssessment('direct_probable', { assessmentVersion: 3 });
+    result.candidateIps = [endpoint('198.51.100.77', {
+        confidence: 'medium',
+        confidenceScore: 45,
+        isP2P: true,
+        geo: { country: 'US', region: 'Synthetic region', city: 'Synthetic city', lat: 0, lon: 0, timezone: 'UTC' },
+        scoreVersion: 3,
+        networkContext: {
+            version: 1,
+            targetCallingCode: '57',
+            targetCountryCode: 'CO',
+            observedCountryCode: 'US',
+            relationship: 'mismatch',
+            affectsRouteScore: false,
+            reasonCodes: ['PHONE_GEO_CONTEXT_MISMATCH'],
+            limitations: ['phone_prefix_is_context_not_location'],
+        },
+        scoreBreakdown: {
+            version: 3,
+            rawScore: 60,
+            finalScore: 45,
+            inputs: {
+                packets: 20,
+                bytesTotal: 2400,
+                durationSec: 8,
+                direction: 'bidirectional',
+                ports: [40_000],
+                baselinePackets: 2,
+                baselineDurationSec: 4,
+                onsetDelayMs: 300,
+                protocolEvidence: ['transport_flow'],
+            },
+            components: [{ code: 'SYNTHETIC_ROUTE_SIGNAL', label: 'Señal de ruta sintética', delta: 60 }],
+            caps: [{ code: 'SYNTHETIC_CAP', maximum: 45, before: 60, after: 45 }],
+        },
+    })];
+
+    render(panel(result));
+
+    expect(screen.getByText('Contradicción contextual de red')).toBeInTheDocument();
+    expect(screen.getByText(/no modifica la conclusión de ruta/)).toBeInTheDocument();
+    expect(screen.getByText('Contexto geográfico de red · no afecta el score')).toBeInTheDocument();
+    expect(screen.getByText('No cuantificado por la fuente')).toBeInTheDocument();
+    expect(screen.getByText(/Puntaje bruto 60 · resultado final 45\/100/)).toBeInTheDocument();
+    expect(screen.getByText(/Tope 45: 60 → 45/)).toBeInTheDocument();
 });
 
 test('announces loading, calibration, capture, processing and errors accessibly', () => {

@@ -98,6 +98,19 @@ Los marcadores quedan asociados al caso y contacto activos. Expresan lo declarad
 por el operador; no significan que WhatsApp o Baileys hayan confirmado por si
 mismos esas fases.
 
+Si el marcador o la senal de Baileys no llega, una captura manual puede detectar
+un cambio de trafico despues de al menos cinco segundos de linea base. El
+detector exige durante dos segundos un aumento UDP sostenido y bidireccional
+frente a esa base. Esa fuente se etiqueta como inferida: separa la ventana para
+el analisis, pero no confirma conexion, contacto, ruta directa, IP ni ubicacion.
+El marcador del operador sigue siendo la referencia recomendada para una prueba
+controlada.
+
+Cuando detector, operador o Baileys observan la misma fase, el primer evento
+conserva el limite temporal y las demas fuentes aparecen como corroboraciones.
+Esto aumenta la trazabilidad sin presentar varias fases ni convertir una
+inferencia en confirmacion de protocolo.
+
 Con proveedor local o agente, el resultado separa paquetes previos y posteriores al
 inicio correlacionado de la llamada. Si la captura comienza automaticamente, la
 interfaz advierte que no hubo linea base previa y que el trafico de fondo limita
@@ -105,6 +118,21 @@ la confianza. Los resultados historicos sin fases se mantienen compatibles y no
 reciben una afirmacion inventada. En servidor, las transiciones viajan al agente
 por el canal HMAC interno; un fallo de ese canal conserva la actividad comercial
 pero puede dejar la evidencia tecnica sin separacion por fases.
+
+Los resultados nuevos conservan un desglose tecnico de paquetes y bytes
+almacenados en cinco ventanas: linea base, negociacion, llamada activa, posterior
+a la llamada y no clasificada. La suma global coincide con
+`captureBounds.storedPackets`; si el limite de memoria descarta metadata, esos
+paquetes se informan por separado y no se atribuyen a una fase. Este desglose es
+evidencia temporal de la captura, no prueba de identidad, ubicacion ni ruta
+directa. Los campos historicos de base/llamada continúan disponibles hasta que el
+modelo de scoring versionado migre en una tarea posterior.
+
+Al abrir un resultado anterior, la aplicacion no intenta completar este desglose
+con suposiciones. Si el registro es anterior a la separacion de cinco fases, se
+mantiene como historico sin conteos detallados. Si una extension guardada esta
+incompleta o sus sumas no coinciden, se omite de forma atomica durante la lectura
+sin cambiar la evidencia original almacenada.
 
 Al detener, el backend fusiona paquetes, fases, registro de infraestructura,
 STUN sanitizado, señalizacion Baileys y enriquecimiento. `Directa confirmada`
@@ -124,9 +152,37 @@ opaco, el sistema declara esa limitacion y no fabrica una confirmacion.
 | Candidata | IP publica no clasificada como infraestructura que obtuvo score |
 | Sin verificar | No existe corroboracion suficiente para atribucion |
 
+### Libro de endpoints observados
+
+El resultado conserva todas las IP publicas vistas por el analizador, incluso
+cuando corresponden a Meta, DNS, STUN/TURN, CDN/cloud o cuando la evidencia no
+permite clasificarlas. La pestaña `Llamada` presenta cada endpoint exactamente
+una vez en `Candidatas`, `Infraestructura` u `Observaciones no concluyentes`.
+Al desplegar `Evidencia tecnica del endpoint` se muestran conteos y bytes,
+puertos, familia IP, primera y ultima señal, rol, protocolos y, cuando existe,
+el desglose por fases.
+
+La linea `Tratamiento` diferencia:
+
+- `Exclusion tecnica fuerte`: Meta, DNS publico exacto o salida publica propia;
+- `Clasificacion contextual; requiere revision`: Google general, STUN/TURN,
+  CDN, cloud/hosting, proxy o una regla de enriquecimiento;
+- `Sin exclusion fuerte`: no existe una coincidencia suficiente de
+  infraestructura, pero esto no confirma que sea la IP del contacto.
+
+El Evidence Package incluye el libro completo en
+`annexes/observed-endpoints.csv`. `candidate-ips.csv` y
+`non-conclusive-ip-observations.csv` son vistas filtradas mantenidas por
+compatibilidad y no deben usarse por separado para afirmar que una IP no fue
+observada.
+
 ## Score de candidata
 
-El score pondera tipo de IP, proveedor, flujo bidireccional, volumen y penalizaciones por muestra pequena. Consulta la [metodologia completa](../reference/ip-candidate-scoring.md).
+El score v3 pondera exclusivamente evidencia tecnica de ruta: cambio frente a
+linea base, cercania al inicio, bidireccionalidad, volumen, densidad, protocolo
+y clasificacion de infraestructura. `Por que obtuvo este puntaje` muestra
+componentes, score bruto, topes y resultado final reconstruible. Consulta la
+[metodologia completa](../reference/ip-candidate-scoring.md).
 
 Cada coincidencia de infraestructura muestra version y vigencia del registro.
 `Vencido` o `fuente no disponible` significa que se conserva el ultimo dato de
@@ -144,6 +200,14 @@ Reglas de redaccion:
 ## GeoIP
 
 DB-IP es la fuente principal para pais/region/ciudad. ip-api complementa ASN, ISP y flags cuando esta disponible. Si proveedores contradicen ciudad/coordenadas, la interfaz debe omitir un mapa enganoso y explicar la discrepancia.
+
+La interfaz separa este contexto del score de ruta. Muestra prefijo objetivo,
+pais GeoIP y una relacion compatible, divergente o no comparable. Una
+divergencia puede responder a roaming, VPN, CGNAT, relay o imprecision GeoIP;
+no reduce ni aumenta el score. Como las fuentes actuales no entregan un radio
+de incertidumbre verificable, el producto muestra `No cuantificado por la
+fuente` en lugar de inventar una distancia. Las coordenadas son un punto de
+referencia de red, nunca una posicion del dispositivo.
 
 ## Resultado `solo relay`
 

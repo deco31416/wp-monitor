@@ -33,20 +33,26 @@ Invariantes:
 
 Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Mantiene disponibilidad observable sin conceder capabilities al backend.
 
-### `src/call-capture-phases.ts` y `src/operator-call-marker.ts`
+### `src/call-capture-phases.ts`, `src/operator-call-marker.ts` y `src/call-traffic-onset-detector.ts`
 
 Maquina de fases determinista para una unica captura. Correlaciona contacto y
 llamada observada, separa linea base, negociacion y llamada activa, rechaza
 retrocesos de reloj y eventos de otra llamada, y clasifica cada paquete sin
 retener contenido. Los proveedores local y agente usan la misma maquina; el
-backend transmite al sidecar cada transicion correlacionada mediante HMAC. Las
+backend transmite al sidecar cada transicion correlacionada mediante HMAC. El
+primer evento fija el limite canonico y las fuentes posteriores se conservan
+como corroboraciones acotadas, sin moverlo ni duplicar procedencia. Las
 capturas manuales aceptan ademas marcadores ordenados del operador para inicio,
 conexion y fin; su procedencia permanece diferenciada de la señalizacion de
-protocolo y exige coincidencia exacta del alcance autorizado.
+protocolo y exige coincidencia exacta del alcance autorizado. Como respaldo de
+una captura manual, el detector diferencial compara por endpoint una linea base
+fija con una ventana UDP movil, acotada y bidireccional. Solo puede producir una
+transicion `network_onset/inferred`; no clasifica el endpoint ni confirma llamada,
+ruta, identidad o ubicacion.
 
 ### `src/capture-agent-auth.ts`, `src/capture-agent-client.ts` y `src/capture-agent-app.ts`
 
-Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. Ademas de start/status/stop, `/v1/call/phase` correlaciona captura, contacto y llamada observada, declarando fuente y confianza; `/v1/call/marker` registra un marcador manual ordenado sin fingir evidencia de protocolo. El cliente aplica timeout, bloquea redirects, exige las capabilities `callCapturePhases: 2` y `operatorCallMarkers: 1`, y valida cada acuse antes de entregarlo al backend.
+Definen el contrato interno versionado `/v1`: HMAC SHA-256, timestamp, nonce anti-replay, raw body, limites de tamaño, validacion semantica y errores JSON controlados. Ademas de start/status/stop, `/v1/call/phase` correlaciona captura, contacto y llamada observada, declarando fuente y confianza; `/v1/call/marker` registra un marcador manual ordenado sin fingir evidencia de protocolo. El cliente aplica timeout, bloquea redirects, exige las capabilities `callCapturePhases: 4`, `operatorCallMarkers: 1`, `endpointExclusionDecision: 1` y `candidateScoring: 3`, y valida cada acuse antes de entregarlo al backend.
 
 ### `src/capture-agent.ts`
 
@@ -72,6 +78,29 @@ detener la captura. `call-analyzer` usa el filtro
 `(udp or tcp) and (ip or ip6)`, conserva solo metadata y limita la memoria a
 50.000 paquetes. `captureBounds` revela cuantas observaciones fueron descartadas
 al alcanzar ese limite; el contenido bruto nunca entra al resultado.
+`phaseCounts.version=1` reconcilia los paquetes almacenados y sus bytes entre
+linea base, negociacion, llamada activa, cierre y no clasificados, tanto para la
+captura completa como para cada endpoint publico. El scoring v3 usa la
+subventana posterior a la linea base y conserva sus insumos, componentes y
+topes en un libro reconstruible. Delta frente a baseline, inicio temporal,
+flujo, densidad, protocolo y tipo de red determinan la señal de ruta; el
+contexto E.164/GeoIP queda separado y declara contribucion cero.
+`call-analysis-history.ts` aplica en lectura una compatibilidad atomica: conserva
+el libro solo si todas sus sumas son validas, retira extensiones parciales o
+malformadas y nunca escribe una migracion ni inventa la fase de un historico.
+El arreglo historico `candidateIps` es el libro canonico de todos los endpoints
+publicos retenidos, incluidos infraestructura y resultados no concluyentes. La
+interfaz forma tres particiones exhaustivas y los reportes proyectan el mismo
+libro como `observedEndpoints` y `annexes/observed-endpoints.csv`; `metaIps` solo
+evita perder visibilidad en documentos antiguos sin endpoint detallado.
+La proyeccion de informe 1.3 añade `networkContextPresentation` y conserva
+`scoreBreakdown`: HTML y PDF declaran un limite visual comun de 10 endpoints
+por grupo, mientras JSON/CSV mantienen el conjunto estructurado e informan ese
+limite. Un radio GeoIP ausente se representa como `null`, nunca como cero.
+`networkIntelligence.exclusionDecision.version=1` añade una decision ortogonal
+al score: `hard_excluded`, `contextual` o `eligible`, con base y motivos
+acotados. La clasificacion contextual no se convierte en candidata por si sola,
+pero tampoco se presenta como una exclusion concluyente.
 
 ### `src/network-infrastructure-registry.ts` y `src/meta-ip-ranges.ts`
 
@@ -126,7 +155,12 @@ Compilan `cap`/libpcap y arrancan Node como UID/GID 1000. El entrypoint conserva
 
 ### `src/call-scoring.ts`
 
-Reglas deterministas para puntuar IPs y conservar reason codes. Separa score de confianza narrativa. Los pesos necesitan prueba y versionado cuando cambian.
+Reglas deterministas v3 para puntuar probabilidad de ruta y conservar un libro
+reconstruible de componentes/topes. `e164-country-context.ts` resuelve el
+prefijo del objetivo canonico mediante una tabla versionada; ese contexto y
+GeoIP nunca modifican el score. `call-route-correlator.ts` exige evidencia
+independiente Baileys para confirmar una ruta directa y conserva compatibilidad
+de lectura con evaluaciones v2.
 
 ### `src/meta-ip-ranges.ts`
 

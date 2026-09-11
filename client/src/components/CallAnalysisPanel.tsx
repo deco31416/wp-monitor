@@ -267,12 +267,14 @@ export function CallAnalysisPanel({
 
 function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) {
     const observedCandidates = analysis.candidateIps.filter(candidate => candidate.isP2P);
-    const infrastructureCandidates = analysis.candidateIps.filter(candidate => !candidate.isP2P);
-    const inconclusiveObservations = analysis.candidateIps.filter(candidate => (
-        !candidate.isP2P
-        && candidate.provider === 'unknown'
-        && candidate.correlation?.classification !== 'infrastructure'
+    const infrastructureCandidates = analysis.candidateIps.filter(candidate => (
+        !candidate.isP2P && isInfrastructureEndpoint(candidate)
     ));
+    const inconclusiveObservations = analysis.candidateIps.filter(candidate => (
+        !candidate.isP2P && !isInfrastructureEndpoint(candidate)
+    ));
+    const endpointIps = new Set(analysis.candidateIps.map(candidate => candidate.ip));
+    const legacyMetaIps = (analysis.metaIps || []).filter(ip => !endpointIps.has(ip));
 
     return (
         <div className="bg-surface-overlay rounded-xl border border-surface-border p-5">
@@ -285,8 +287,8 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
                 <SummaryStat value={analysis.totalPackets} label="Paquetes" tone="primary" />
-                <SummaryStat value={observedCandidates.length} label="Candidatas" tone="accent" />
-                <SummaryStat value={analysis.metaIps?.length || 0} label="IPs Meta" tone="danger" />
+                <SummaryStat value={analysis.candidateIps.length} label="Endpoints publicos" tone="accent" />
+                <SummaryStat value={observedCandidates.length} label="Candidatas" tone="primary" />
                 <SummaryStat value={`${analysis.durationSec || 0}s`} label="Duracion" tone="primary" />
             </div>
 
@@ -326,14 +328,14 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                 </details>
             )}
 
-            {analysis.metaIps?.length > 0 && (
+            {legacyMetaIps.length > 0 && (
                 <details className="mb-2">
                     <summary className="text-[11px] font-semibold text-red-400 uppercase tracking-wider cursor-pointer hover:text-red-300 transition-colors mb-2">
-                        IPs Meta/Relay filtradas ({analysis.metaIps.length})
+                        IPs Meta sin detalle historico ({legacyMetaIps.length})
                     </summary>
                     <div className="bg-surface-hover rounded-lg p-3 border border-surface-border">
                         <div className="flex flex-wrap gap-2">
-                            {analysis.metaIps.map((ip, index) => (
+                            {legacyMetaIps.map((ip, index) => (
                                 <span key={index} className="text-[10px] font-mono text-txt-dim bg-red-500/10 px-2 py-0.5 rounded">{ip}</span>
                             ))}
                         </div>
@@ -341,33 +343,14 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
                 </details>
             )}
 
-            {infrastructureCandidates.filter(candidate => candidate.provider !== 'unknown').length > 0 && (
+            {infrastructureCandidates.length > 0 && (
                 <details>
                     <summary className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider cursor-pointer hover:text-amber-300 transition-colors mb-2">
                         IPs Infraestructura ({infrastructureCandidates.length})
                     </summary>
-                    <div className="bg-surface-hover rounded-lg p-3 border border-surface-border space-y-1">
+                    <div className="space-y-2">
                         {infrastructureCandidates.map((candidate, index) => (
-                            <div key={index} className="flex flex-col gap-1 text-[10px] sm:flex-row sm:items-center sm:justify-between">
-                                <span className="font-mono text-txt-dim">{candidate.ip}</span>
-                                <span className="text-txt-muted sm:text-right">
-                                    {candidate.networkIntelligence?.org || candidate.provider} · {formatNetworkCategory(candidate.networkCategory)} · score {getCandidateScore(candidate)}/100 · {candidate.packets} pkts
-                                    {candidate.networkIntelligence?.registryEvidence && (
-                                        <span className={clsx(
-                                            'block',
-                                            candidate.networkIntelligence.registryEvidence.degraded
-                                                ? 'text-amber-300/80'
-                                                : 'text-emerald-300/80',
-                                        )}>
-                                            Registro {candidate.networkIntelligence.registryEvidence.registryVersion} ·{' '}
-                                            {formatRegistryStatus(candidate.networkIntelligence.registryEvidence.status)}
-                                            {candidate.networkIntelligence.registryEvidence.source?.label
-                                                ? ` · ${candidate.networkIntelligence.registryEvidence.source.label}`
-                                                : ''}
-                                        </span>
-                                    )}
-                                </span>
-                            </div>
+                            <CandidateCard key={`${candidate.ip}-infrastructure-${index}`} candidate={candidate} />
                         ))}
                     </div>
                 </details>
@@ -447,6 +430,8 @@ const ROUTE_REASON_LABELS: Record<string, string> = {
     NO_CONCLUSIVE_ROUTE_EVIDENCE: 'No se reunieron evidencias suficientes para determinar la ruta.',
     DNS_EXCLUDED_FROM_DIRECT_EVIDENCE: 'El tráfico DNS fue excluido de la evidencia de ruta directa.',
     STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
+    CANDIDATE_SCORING_V3: 'Las candidatas se evaluaron con el modelo de ruta v3 y su desglose reconstruible.',
+    GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE: 'El contexto geográfico se informó por separado y no alteró la conclusión de ruta.',
 };
 
 const ROUTE_LIMITATION_LABELS: Record<string, string> = {
@@ -501,6 +486,7 @@ function RouteAssessmentSummary({ analysis }: { analysis: CallAnalysisResult }) 
                 : 'border-surface-border bg-surface-hover';
     const limitations = assessment.limitations.map(item => ROUTE_LIMITATION_LABELS[item] || humanizeRouteCode(item));
     const reasons = assessment.reasonCodes.map(item => ROUTE_REASON_LABELS[item] || humanizeRouteCode(item));
+    const contextContradictions = analysis.candidateIps.filter(candidate => candidate.networkContext?.relationship === 'mismatch');
 
     return (
         <section aria-labelledby={`route-assessment-${analysis.callId}`} className={clsx('mb-4 rounded-lg border px-4 py-4', tone)}>
@@ -553,6 +539,18 @@ function RouteAssessmentSummary({ analysis }: { analysis: CallAnalysisResult }) 
                     <ul className="mt-1 space-y-1 text-[11px] text-txt-secondary">
                         {limitations.map(limitation => <li key={limitation}>• {limitation}</li>)}
                     </ul>
+                </div>
+            )}
+
+            {contextContradictions.length > 0 && (
+                <div role="note" className="mt-3 rounded-md border border-amber-500/20 bg-surface-overlay/40 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                        Contradicción contextual de red
+                    </p>
+                    <p className="mt-1 text-[11px] text-txt-secondary">
+                        {contextContradictions.length} endpoint(s) presentan un país GeoIP diferente al prefijo del número objetivo.
+                        Esto puede responder a roaming, VPN, CGNAT, relay o imprecisión GeoIP y no modifica la conclusión de ruta.
+                    </p>
                 </div>
             )}
 
@@ -628,11 +626,24 @@ function CandidateCard({ candidate }: { candidate: CandidateIP }) {
                                 : ''}
                         </p>
                     )}
+                    {candidate.networkIntelligence?.exclusionDecision && (
+                        <p className={clsx(
+                            'mt-1 text-[10px] font-medium',
+                            candidate.networkIntelligence.exclusionDecision.classification === 'hard_excluded'
+                                ? 'text-red-300/90'
+                                : candidate.networkIntelligence.exclusionDecision.classification === 'contextual'
+                                    ? 'text-amber-300/90'
+                                    : 'text-emerald-300/90',
+                        )}>
+                            Tratamiento: {formatExclusionDecision(candidate.networkIntelligence.exclusionDecision.classification)}
+                            {' · '}{formatExclusionBasis(candidate.networkIntelligence.exclusionDecision.basis)}
+                        </p>
+                    )}
                 </div>
                 <span className="text-[10px] text-txt-muted font-mono">{candidate.packets} pkts</span>
             </div>
 
-            {candidate.reasonCodes && candidate.reasonCodes.length > 0 && (
+            {candidate.reasonCodes && candidate.reasonCodes.length > 0 && !candidate.scoreBreakdown && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                     {candidate.reasonCodes.slice(-5).map(reason => (
                         <span
@@ -649,6 +660,8 @@ function CandidateCard({ candidate }: { candidate: CandidateIP }) {
                     ))}
                 </div>
             )}
+
+            {candidate.scoreBreakdown && <CandidateScoreExplanation candidate={candidate} />}
 
             {candidate.correlation && (
                 <div className={clsx(
@@ -685,6 +698,8 @@ function CandidateCard({ candidate }: { candidate: CandidateIP }) {
                     )}
                 </div>
             )}
+
+            {candidate.networkContext && <CandidateNetworkContext candidate={candidate} />}
 
             {candidate.geo ? (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
@@ -726,8 +741,164 @@ function CandidateCard({ candidate }: { candidate: CandidateIP }) {
                     {candidate.networkIntelligence.caution}
                 </p>
             )}
+
+            <details className="mt-3 border-t border-surface-border/70 pt-2">
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-txt-muted hover:text-txt-secondary">
+                    Evidencia tecnica del endpoint
+                </summary>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                    <CandidateGeo label="Bytes" value={candidate.bytesTotal.toLocaleString()} mono />
+                    <CandidateGeo label="Promedio" value={`${candidate.avgSize} B`} mono />
+                    <CandidateGeo label="Puertos" value={candidate.ports.length > 0 ? candidate.ports.join(', ') : '-'} mono />
+                    <CandidateGeo label="Familia" value={candidate.addressFamily ? `IPv${candidate.addressFamily}` : '-'} mono />
+                    <CandidateGeo label="Primera señal" value={formatEndpointDate(candidate.firstSeen)} />
+                    <CandidateGeo label="Última señal" value={formatEndpointDate(candidate.lastSeen)} />
+                    <CandidateGeo label="Rol" value={formatEndpointRole(candidate.endpointRole)} />
+                    <CandidateGeo label="Protocolos" value={formatProtocolEvidence(candidate.protocolEvidence)} />
+                </div>
+                {candidate.phaseCounts && (
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-5">
+                        <CandidateGeo label="Línea base" value={`${candidate.phaseCounts.baseline.packets} pkts · ${candidate.phaseCounts.baseline.bytes} B`} mono />
+                        <CandidateGeo label="Negociación" value={`${candidate.phaseCounts.negotiation.packets} pkts · ${candidate.phaseCounts.negotiation.bytes} B`} mono />
+                        <CandidateGeo label="Activa" value={`${candidate.phaseCounts.active.packets} pkts · ${candidate.phaseCounts.active.bytes} B`} mono />
+                        <CandidateGeo label="Cierre" value={`${candidate.phaseCounts.postCall.packets} pkts · ${candidate.phaseCounts.postCall.bytes} B`} mono />
+                        <CandidateGeo label="Sin fase" value={`${candidate.phaseCounts.unclassified.packets} pkts · ${candidate.phaseCounts.unclassified.bytes} B`} mono />
+                    </div>
+                )}
+            </details>
         </div>
     );
+}
+
+function CandidateScoreExplanation({ candidate }: { candidate: CandidateIP }) {
+    const breakdown = candidate.scoreBreakdown!;
+    return (
+        <details className="mb-2 rounded-lg border border-surface-border bg-surface-overlay/40 px-3 py-2">
+            <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-txt-muted hover:text-txt-secondary">
+                Por qué obtuvo este puntaje · modelo v{breakdown.version}
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+                {breakdown.components.map((component, index) => (
+                    <span
+                        key={`${component.code}-${index}`}
+                        className={clsx(
+                            'rounded border px-2 py-0.5 text-[10px]',
+                            component.delta > 0
+                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                                : component.delta < 0
+                                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                                    : 'border-surface-border bg-surface-hover text-txt-secondary',
+                        )}
+                    >
+                        {component.delta > 0 ? '+' : ''}{component.delta} · {component.label}
+                    </span>
+                ))}
+            </div>
+            <p className="mt-2 text-[10px] text-txt-secondary">
+                Puntaje bruto {breakdown.rawScore} · resultado final {breakdown.finalScore}/100
+            </p>
+            {breakdown.caps.length > 0 && (
+                <ul className="mt-1 space-y-1 text-[10px] text-amber-300/90">
+                    {breakdown.caps.map((cap, index) => (
+                        <li key={`${cap.code}-${index}`}>• Tope {cap.maximum}: {cap.before} → {cap.after}</li>
+                    ))}
+                </ul>
+            )}
+        </details>
+    );
+}
+
+function CandidateNetworkContext({ candidate }: { candidate: CandidateIP }) {
+    const context = candidate.networkContext!;
+    const relationshipLabel = context.relationship === 'match'
+        ? 'Contexto compatible'
+        : context.relationship === 'mismatch'
+            ? 'Contexto divergente'
+            : 'Contexto no comparable';
+    const summary = context.relationship === 'match'
+        ? 'El país GeoIP de la red coincide con el prefijo del objetivo. No confirma la ubicación del dispositivo.'
+        : context.relationship === 'mismatch'
+            ? 'El país GeoIP difiere del prefijo. Puede existir roaming, VPN, CGNAT, relay o imprecisión GeoIP.'
+            : 'No hay información suficiente para comparar el prefijo del objetivo con el país GeoIP de la red.';
+    const hasGeoReference = candidate.ipEnrichment?.status === 'success' || Boolean(candidate.geo);
+
+    return (
+        <div className={clsx(
+            'mb-2 rounded-lg border px-3 py-2',
+            context.relationship === 'mismatch'
+                ? 'border-amber-500/20 bg-amber-500/10'
+                : 'border-sky-500/20 bg-sky-500/10',
+        )}>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-txt-primary">
+                Contexto geográfico de red · no afecta el score
+            </p>
+            <div className="mt-2 grid grid-cols-1 gap-1 text-[10px] text-txt-secondary sm:grid-cols-2">
+                <p>Prefijo objetivo: <span className="font-mono text-txt-primary">{context.targetCallingCode ? `+${context.targetCallingCode}` : 'No disponible'}{context.targetCountryCode ? ` (${context.targetCountryCode})` : ''}</span></p>
+                <p>País GeoIP: <span className="font-mono text-txt-primary">{context.observedCountryCode || 'No disponible'}</span></p>
+                <p>Relación: <span className="font-semibold text-txt-primary">{relationshipLabel}</span></p>
+                <p>Radio de incertidumbre: <span className="font-semibold text-txt-primary">{hasGeoReference ? 'No cuantificado por la fuente' : 'No disponible'}</span></p>
+            </div>
+            <p className="mt-2 text-[10px] text-txt-secondary">{summary} Este contexto no suma, resta ni confirma la ruta.</p>
+        </div>
+    );
+}
+
+function isInfrastructureEndpoint(candidate: CandidateIP): boolean {
+    if (candidate.correlation?.classification === 'infrastructure') return true;
+    if (candidate.provider !== 'unknown') return true;
+    if (candidate.endpointRole && !['unknown', 'direct_candidate'].includes(candidate.endpointRole)) return true;
+    return ['meta', 'stun_turn', 'dns', 'cdn', 'cloud_hosting'].includes(candidate.networkCategory || '');
+}
+
+function formatEndpointDate(value: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('es-ES');
+}
+
+function formatEndpointRole(role?: CandidateIP['endpointRole']): string {
+    const labels: Record<NonNullable<CandidateIP['endpointRole']>, string> = {
+        direct_candidate: 'Candidata directa',
+        relay: 'Relay',
+        stun_turn: 'STUN/TURN',
+        dns: 'DNS',
+        background: 'Infraestructura auxiliar',
+        own_public_endpoint: 'Salida pública propia',
+        unknown: 'No determinado',
+    };
+    return role ? labels[role] : 'Histórico sin clasificación';
+}
+
+function formatProtocolEvidence(evidence?: CandidateIP['protocolEvidence']): string {
+    if (!evidence || evidence.length === 0) return '-';
+    const labels: Record<NonNullable<CandidateIP['protocolEvidence']>[number], string> = {
+        stun_binding_request: 'STUN request',
+        stun_binding_response: 'STUN response',
+        stun_other: 'STUN',
+        transport_flow: 'Flujo de transporte',
+        frame_length_86: 'Trama 86 B',
+    };
+    return evidence.map(item => labels[item]).join(', ');
+}
+
+function formatExclusionDecision(
+    classification: NonNullable<NonNullable<CandidateIP['networkIntelligence']>['exclusionDecision']>['classification'],
+): string {
+    if (classification === 'hard_excluded') return 'Exclusión técnica fuerte';
+    if (classification === 'contextual') return 'Clasificación contextual; requiere revisión';
+    return 'Sin exclusión fuerte';
+}
+
+function formatExclusionBasis(
+    basis: NonNullable<NonNullable<CandidateIP['networkIntelligence']>['exclusionDecision']>['basis'],
+): string {
+    const labels = {
+        runtime: 'evidencia de esta captura',
+        registry: 'registro versionado',
+        provider_fallback: 'clasificación de proveedor',
+        enrichment: 'enriquecimiento externo',
+        none: 'sin coincidencia de infraestructura',
+    } as const;
+    return labels[basis];
 }
 
 function CandidateGeo({ label, value, href, mono = false }: { label: string; value: string; href?: string | null; mono?: boolean }) {

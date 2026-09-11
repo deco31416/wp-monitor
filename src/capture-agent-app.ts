@@ -24,6 +24,7 @@ import {
 import type { NetworkInterface } from './packet-capture.js';
 import { cleanText, validateJid } from './validation.js';
 import { SOFTWARE_VERSION } from './version.js';
+import { ENDPOINT_EXCLUSION_DECISION_VERSION } from './call-scoring.js';
 
 export interface CaptureAgentAdapter {
     capturePrivilegesAvailable(): boolean;
@@ -154,6 +155,8 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
             capabilities: {
                 callCapturePhases: CALL_CAPTURE_PHASE_CAPABILITY_VERSION,
                 operatorCallMarkers: 1,
+                endpointExclusionDecision: ENDPOINT_EXCLUSION_DECISION_VERSION,
+                candidateScoring: 3,
             },
         });
     });

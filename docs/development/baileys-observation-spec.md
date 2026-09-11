@@ -169,6 +169,13 @@ Reglas:
 | BO-CALL-17 | Toda clasificacion local de infraestructura declara version, CIDR, fuente y vigencia; IPv4/IPv6, DNS, relay, CDN, cloud y endpoint publico propio degradan de forma visible cuando la fuente vence, falta o entra en conflicto, y nunca se convierten por ello en identidad del contacto. |
 | BO-CALL-18 | `direct_confirmed` exige coincidencia exacta entre flujo elegible y endpoint peer de Baileys; STUN sin esa fuente independiente permanece probable, y DNS, relay, infraestructura o GeoIP nunca confirman una ruta directa. |
 | BO-CALL-19 | Un marcador manual solo puede alterar la captura manual activa cuando coinciden caso, contacto y `callId`; conserva procedencia `operator_marker/operator_asserted`, no simula confirmacion de protocolo y viaja al agente mediante autenticacion HMAC y proteccion anti-replay. |
+| BO-CALL-20 | El detector diferencial usa una linea base fija y una ventana movil acotada; solo puede aportar `network_onset/inferred` ante un incremento UDP sostenido y bidireccional, sin promover endpoints, confirmar llamada activa, identidad, ruta o ubicacion. |
+| BO-CALL-21 | La primera fuente aceptada fija el limite temporal canonico de una fase; fuentes independientes posteriores se conservan como corroboraciones acotadas y monotonamente ordenadas, sin mover el limite, duplicar procedencia ni simular una confianza distinta. |
+| BO-CALL-22 | Cada resultado nuevo reconcilia paquetes y bytes almacenados globales y por endpoint entre linea base, negociacion, llamada activa, cierre y no clasificados; los descartes permanecen separados y el desglose no cambia por si mismo scoring, identidad, ruta ni ubicacion. |
+| BO-CALL-23 | La lectura historica no reescribe MongoDB ni inventa fases: conserva un libro versionado solo si captura y todos los endpoints reconcilian, mantiene pares legacy validos y omite de forma atomica extensiones parciales, desconocidas o malformadas. |
+| BO-CALL-24 | Toda IP publica conservada por el analizador permanece en el libro canonico con conteos, bytes, tiempos, puertos, direccion, protocolo, fases, inteligencia y decision; la UI la presenta exactamente en un grupo y los informes incluyen el libro completo sin depender de que sea candidata directa. |
+| BO-CALL-25 | La decision de exclusion es versionada y separa evidencia fuerte de contexto: Meta, DNS publico exacto y salida propia son exclusiones fuertes; rangos generales Google, STUN/TURN, CDN, cloud/hosting y clasificaciones por enriquecimiento permanecen contextuales, visibles y sin promocion automatica. |
+| BO-CALL-26 | El scoring v3 es determinista y reconstruible: puntua solo evidencia de ruta y calidad de captura, registra topes, conserva GeoIP/prefijo E.164 en un contexto separado con contribucion cero, reutiliza la misma subventana al enriquecer y mantiene lectura segura de v2. |
 
 ### Alcance, identidad e idempotencia
 
@@ -228,6 +235,12 @@ Reglas:
 - `call_analyses` conserva los campos historicos `verdict`, `candidateIps`,
   `metaIps` e `isP2P`. El subcontrato de ruta v2 es aditivo, opcional y no exige
   backfill de documentos anteriores.
+- Por compatibilidad, `candidateIps` conserva su nombre historico aunque contiene
+  el libro completo de endpoints publicos observados. `metaIps` solo respalda
+  historicos sin entrada detallada; no es una segunda fuente ni duplica el libro.
+- El reporte final proyecta ese libro como `observedEndpoints` y lo exporta en
+  `annexes/observed-endpoints.csv`. Los anexos filtrados historicos se mantienen
+  como vistas compatibles, no como fuentes completas.
 - Un historial opcional de perfil debe usar una coleccion e indices dedicados si
   guardar solo el ultimo valor no satisface `BO-PROF-01`.
 - No se ejecutara backfill especulativo para atribuir alcance o dispositivo a
@@ -245,7 +258,7 @@ Reglas:
 | Recibos | accepted, delivered, read, played, retroceso | unitaria |
 | Dispositivo | ios, web, android, desktop, unknown, fromMe | unitaria y UI |
 | Perfil | cambio, igualdad, privacidad, error parcial | unitaria e integracion |
-| Llamada | contestada, rechazada, perdida, parcial, replay, contrato de ruta v1/v2, IPv4/IPv6 y rechazo de conclusiones producidas por el agente | unitaria y contrato |
+| Llamada | contestada, rechazada, perdida, parcial, replay, contratos historicos v1/v2 y scoring/ruta v3, IPv4/IPv6 y rechazo de conclusiones producidas por el agente | unitaria y contrato |
 | Scope | dos contactos, dos casos, sesion cerrada, grupo | negativa de aislamiento |
 | UI | loading, vacio, parcial, desconectado, error, exito | componentes y accesibilidad |
 | Informes | datos 1.1, 1.2, truncados y sin RTT | contrato, snapshot e integridad |

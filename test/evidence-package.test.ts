@@ -6,7 +6,7 @@ function sampleEvidencePackage(): any {
     return {
         manifest: {
             packageType: 'evidence-package',
-            version: '1.2',
+            version: '1.3',
             software: {
                 name: 'WP MONITOR',
                 version: '2.6.0',
@@ -14,6 +14,12 @@ function sampleEvidencePackage(): any {
             },
             caseId: 'CASE-UNIT-001',
             generatedAt: '2026-06-18T00:00:00.000Z',
+            interpretation: {
+                candidateScoreCurrentVersion: 3,
+                geographicContextAffectsRouteScore: false,
+                geoIpUncertainty: { radiusKm: null, status: 'not_quantified_by_provider' },
+                humanEndpointPresentationLimitPerGroup: 10,
+            },
             contents: [],
             limitations: [
                 'Candidate IPs do not prove identity, exact location, or ownership by a person.',
@@ -83,12 +89,54 @@ function sampleEvidencePackage(): any {
                                 isDatacenterLikely: true,
                                 caution: 'Unit test caution',
                             },
-                            geo: null,
+                            geo: { country: 'US', region: 'Synthetic region', city: 'Synthetic city', lat: 0, lon: 0, timezone: 'UTC' },
                             confidence: 'medium',
                             confidenceScore: 55,
                             reasonCodes: [{ code: 'UNIT', label: 'Unit reason', delta: 1 }],
                             technicalNote: 'IP publica observada como candidata tecnica. No confirma identidad, ubicacion exacta ni titularidad.',
                             isP2P: true,
+                            addressFamily: 4,
+                            endpointRole: 'direct_candidate',
+                            baselinePackets: 10,
+                            activeCallPackets: 90,
+                            phaseCounts: {
+                                version: 1,
+                                baseline: { packets: 10, bytes: 1200 },
+                                negotiation: { packets: 10, bytes: 1200 },
+                                active: { packets: 70, bytes: 8400 },
+                                postCall: { packets: 10, bytes: 1200 },
+                                unclassified: { packets: 0, bytes: 0 },
+                            },
+                            protocolEvidence: ['transport_flow'],
+                            scoreVersion: 3,
+                            networkContext: {
+                                version: 1,
+                                targetCallingCode: '57',
+                                targetCountryCode: 'CO',
+                                observedCountryCode: 'US',
+                                relationship: 'mismatch',
+                                affectsRouteScore: false,
+                                reasonCodes: ['PHONE_GEO_CONTEXT_MISMATCH'],
+                                limitations: ['phone_prefix_is_context_not_location'],
+                            },
+                            scoreBreakdown: {
+                                version: 3,
+                                rawScore: 70,
+                                finalScore: 55,
+                                inputs: {
+                                    packets: 90,
+                                    bytesTotal: 10800,
+                                    durationSec: 8,
+                                    direction: 'bidirectional',
+                                    ports: [443],
+                                    baselinePackets: 10,
+                                    baselineDurationSec: 2,
+                                    onsetDelayMs: 250,
+                                    protocolEvidence: ['transport_flow'],
+                                },
+                                components: [{ code: 'UNIT', label: 'Unit reason', delta: 70 }],
+                                caps: [{ code: 'UNIT_CAP', maximum: 55, before: 70, after: 55 }],
+                            },
                         },
                         {
                             ip: '198.51.100.50',
@@ -107,6 +155,12 @@ function sampleEvidencePackage(): any {
                                 category: 'cdn',
                                 source: 'local_rules',
                                 isDatacenterLikely: true,
+                                exclusionDecision: {
+                                    version: 1,
+                                    classification: 'contextual',
+                                    basis: 'registry',
+                                    reasonCodes: ['CDN_CONTEXT'],
+                                },
                             },
                             geo: null,
                             confidence: 'low',
@@ -120,7 +174,7 @@ function sampleEvidencePackage(): any {
                     verdict: 'mixed',
                     captureInterface: 'unit0',
                     routeAssessment: {
-                        assessmentVersion: 2,
+                        assessmentVersion: 3,
                         classification: 'mixed',
                         confidenceScore: 82,
                         evidenceSources: ['packet_flow', 'baileys_transport'],
@@ -233,7 +287,7 @@ function sampleEvidencePackage(): any {
 test('builds final reports with candidate IP limitations and integrity', () => {
     const report = buildFinalCaseReport(sampleEvidencePackage());
 
-    assert.equal(report.version, '1.2');
+    assert.equal(report.version, '1.3');
     assert.equal(report.summary.caseId, 'CASE-UNIT-001');
     assert.equal(report.summary.candidateIpCount, 1);
     assert.equal(report.summary.nonConclusiveIpObservationCount, 1);
@@ -258,6 +312,8 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.ok(activityStats);
     assert.ok(candidateIp);
     assert.ok(nonConclusiveIp);
+    assert.equal(report.summary.observedEndpointCount, 2);
+    assert.equal(report.findings.observedEndpoints.length, 2);
     assert.equal(activityStats.reliability.score, 85);
     assert.equal(activityStats.calibratingPct, 5);
     assert.equal(activityStats.noAckPct, 30);
@@ -269,7 +325,20 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.equal(activityStats.observedBySource.receipt, 1);
     assert.equal(report.findings.observedSignals[1]?.label, 'Mensaje entregado');
     assert.equal(candidateIp.networkIntelligence.org, 'Google');
+    assert.equal(candidateIp.bytesTotal, 12000);
+    assert.equal(candidateIp.firstSeen.toISOString(), '2026-06-18T00:00:01.000Z');
+    assert.equal(candidateIp.endpointRole, 'direct_candidate');
+    assert.deepEqual(candidateIp.protocolEvidence, ['transport_flow']);
+    assert.equal(candidateIp.phaseCounts.active.packets, 70);
+    assert.equal(candidateIp.networkContext.relationship, 'mismatch');
+    assert.equal(candidateIp.networkContextPresentation.contradiction, true);
+    assert.equal(candidateIp.networkContextPresentation.affectsRouteScore, false);
+    assert.equal(candidateIp.networkContextPresentation.uncertainty.radiusKm, null);
+    assert.equal(candidateIp.networkContextPresentation.uncertainty.status, 'not_quantified_by_provider');
+    assert.equal(candidateIp.scoreBreakdown.finalScore, 55);
+    assert.equal(report.findings.callRoutes[0]?.contextContradictions.length, 1);
     assert.equal(nonConclusiveIp.networkIntelligence.org, 'Akamai');
+    assert.equal(nonConclusiveIp.networkIntelligence.exclusionDecision.classification, 'contextual');
     assert.match(report.integrity.reportHash, /^[a-f0-9]{64}$/);
 
     const html = renderFinalCaseReportHtml(report);
@@ -293,6 +362,9 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.match(html, /Ruta mixta observada/);
     assert.match(html, /Flujo de red observado · Señalización de llamada/);
     assert.match(html, /La ruta directa confirmada coexistió con tráfico de relay/);
+    assert.match(html, /Contexto de red divergente/);
+    assert.match(html, /Radio no cuantificado por la fuente GeoIP/);
+    assert.match(html, /Contradicciones contextuales: 1/);
     assert.doesNotMatch(html, />authorized</);
     assert.doesNotMatch(html, />consumer_isp_or_unknown</);
     assert.doesNotMatch(html, />Scope</);
@@ -306,6 +378,10 @@ test('builds final reports with candidate IP limitations and integrity', () => {
     assert.match(pdfText, /Captura de llamada finalizada/);
     assert.match(pdfText, /Ruta mixta observada - Alta 82\/100/);
     assert.match(pdfText, /Procedencia: Flujo de red observado, Senalizacion de llamada/);
+    assert.match(pdfText, /Radio no cuantificado por la/);
+    assert.match(pdfText, /fuente GeoIP/);
+    assert.match(pdfText, /Contexto: 1 contradiccion/);
+    assert.match(pdfText, /geografica/);
     const routePage = pdfText.split('endstream').find(page => page.includes('Ruta mixta observada'));
     assert.ok(routePage);
     assert.match(routePage, /RUTA DE LLAMADA OBSERVADA/);
@@ -321,6 +397,35 @@ test('bounds aggregate evidence allocation across all referenced targets', () =>
     assert.deepEqual(allocateEvidenceRecordLimits([3000, 3000, 50], 5000), [3000, 2000, 0]);
     assert.deepEqual(allocateEvidenceRecordLimits([2, Number.NaN, -4, 3], 10), [2, 0, 0, 3]);
     assert.deepEqual(allocateEvidenceRecordLimits([3, 4], 0), [0, 0]);
+});
+
+test('declares the same endpoint presentation limit in JSON, HTML and PDF', () => {
+    const evidencePackage = sampleEvidencePackage();
+    const [candidate, observation] = evidencePackage.sections.callAnalysis[0].candidateIps;
+    evidencePackage.sections.callAnalysis[0].candidateIps = [
+        ...Array.from({ length: 12 }, (_, index) => ({
+            ...candidate,
+            ip: `198.51.100.${index + 1}`,
+        })),
+        ...Array.from({ length: 12 }, (_, index) => ({
+            ...observation,
+            ip: `203.0.113.${index + 1}`,
+        })),
+    ];
+
+    const report = buildFinalCaseReport(evidencePackage);
+    assert.equal(report.findings.presentationLimits.candidateIps, 10);
+    assert.equal(report.findings.presentationLimits.nonConclusiveIpObservations, 10);
+    assert.equal(report.findings.candidateIps.length, 12);
+    assert.equal(report.findings.nonConclusiveIpObservations.length, 12);
+
+    const html = renderFinalCaseReportHtml(report);
+    assert.match(html, /se presentan 10 de 12 IPs candidatas/i);
+    assert.match(html, /se presentan 10 de 12 observaciones no concluyentes/i);
+
+    const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+    assert.match(pdf, /se presentan 10 de 12 IPs candidatas/i);
+    assert.match(pdf, /se presentan 10 de 12 observaciones no concluyentes/i);
 });
 
 test('fails evidence export closed when its database snapshot cannot be read', async () => {
@@ -361,6 +466,7 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
         'annexes/activity-stats.csv',
         'annexes/observed-activity.csv',
         'annexes/candidate-ips.csv',
+        'annexes/observed-endpoints.csv',
         'annexes/non-conclusive-ip-observations.csv',
         'annexes/network-captures.csv',
         'annexes/csv-integrity.json',
@@ -368,9 +474,17 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
         assert.match(zipText, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(zipText, /routeClassification/);
+    assert.match(zipText, /phaseCountsJson/);
+    assert.match(zipText, /bytesTotal/);
+    assert.match(zipText, /exclusionClassification/);
+    assert.match(zipText, /CDN_CONTEXT/);
     assert.match(zipText, /DIRECT_CONFIRMED_WITH_RELAY/);
     assert.match(zipText, /Ruta mixta observada/);
     assert.match(zipText, /Flujo de red observado/);
+    assert.match(zipText, /networkContextPresentationJson/);
+    assert.match(zipText, /scoreBreakdownJson/);
+    assert.match(zipText, /not_quantified_by_provider/);
+    assert.match(zipText, /geographicContextAffectsRouteScore/);
 });
 
 test('keeps route conclusions commercially equivalent across JSON, HTML and PDF', () => {
@@ -423,7 +537,7 @@ test('bounds route conclusions and declares partial coverage in every final repo
     const html = renderFinalCaseReportHtml(report);
     const pdf = renderFinalCaseReportPdf(report).toString('ascii');
 
-    assert.equal(report.version, '1.2');
+    assert.equal(report.version, '1.3');
     assert.equal(report.findings.callRoutes.length, 250);
     assert.deepEqual(report.findings.callRouteCoverage, {
         returned: 250,

@@ -23,7 +23,11 @@ const INFRASTRUCTURE_CATEGORIES = new Set([
 ]);
 
 function activePackets(candidate: CandidateIP): number {
-    return candidate.activeCallPackets ?? candidate.packets;
+    return candidate.scoreBreakdown?.inputs.packets ?? candidate.activeCallPackets ?? candidate.packets;
+}
+
+function scoringDirection(candidate: CandidateIP): CandidateIP['direction'] {
+    return candidate.scoreBreakdown?.inputs.direction ?? candidate.direction;
 }
 
 function isInfrastructure(candidate: CandidateIP): boolean {
@@ -36,7 +40,7 @@ function isInfrastructure(candidate: CandidateIP): boolean {
 function isDirectPacketCandidate(candidate: CandidateIP): boolean {
     return !isInfrastructure(candidate)
         && candidate.isP2P
-        && candidate.direction === 'bidirectional'
+        && scoringDirection(candidate) === 'bidirectional'
         && activePackets(candidate) >= 20
         && candidate.confidenceScore >= 35;
 }
@@ -155,6 +159,11 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         reasons.push('DNS_EXCLUDED_FROM_DIRECT_EVIDENCE');
     }
     if (result.stunEndpoints?.length && !exactStunCandidate) reasons.push('STUN_CONTEXT_ONLY');
+    const usesScoringV3 = result.candidateIps.some(candidate => candidate.scoreVersion === 3);
+    if (usesScoringV3) {
+        reasons.push('CANDIDATE_SCORING_V3');
+        reasons.push('GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE');
+    }
     if (!primaryCandidate) limitations.push('no_eligible_direct_candidate');
 
     let confidenceScore = classification === 'direct_confirmed'
@@ -172,7 +181,7 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
     }
 
     const routeAssessment: CallRouteAssessment = {
-        assessmentVersion: 2,
+        assessmentVersion: usesScoringV3 ? 3 : 2,
         classification,
         confidenceScore,
         evidenceSources: [...sources],

@@ -2,21 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyIP, isCloudflareIP, isGoogleSTUN, isKnownRelayIP, isMetaIP, isPrivateIP } from '../src/meta-ip-ranges.js';
 
-test('classifies known Meta, Google STUN, and Cloudflare ranges', () => {
+test('classifies provider ranges without claiming broad Google space is STUN', () => {
     assert.equal(isMetaIP('157.240.1.1'), true);
     assert.equal(classifyIP('157.240.1.1'), 'meta');
     assert.equal(isMetaIP('57.144.115.57'), true);
     assert.equal(classifyIP('57.144.115.57'), 'meta');
 
-    assert.equal(isGoogleSTUN('74.125.10.10'), true);
+    assert.equal(isGoogleSTUN('74.125.10.10'), false);
     assert.equal(classifyIP('74.125.10.10'), 'google');
-    assert.equal(isGoogleSTUN('216.239.36.223'), true);
+    assert.equal(isGoogleSTUN('216.239.36.223'), false);
     assert.equal(classifyIP('216.239.36.223'), 'google');
 
     assert.equal(isCloudflareIP('104.16.10.10'), true);
     assert.equal(classifyIP('104.16.10.10'), 'cloudflare');
 
-    assert.equal(isKnownRelayIP('104.16.10.10'), true);
+    assert.equal(isKnownRelayIP('104.16.10.10'), false);
+    assert.equal(isGoogleSTUN('8.8.8.8'), false);
 });
 
 test('keeps unknown public IPs outside relay classification', () => {

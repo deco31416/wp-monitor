@@ -24,6 +24,22 @@ test('preserves and deduplicates a valid stored route assessment', () => {
     });
 });
 
+test('preserves a valid v3 assessment without rewriting historical v2 records', () => {
+    const normalized = normalizeStoredRouteAssessment({
+        assessmentVersion: 3,
+        classification: 'direct_probable',
+        confidenceScore: 64,
+        evidenceSources: ['packet_flow', 'baseline'],
+        independentDirectEvidenceCount: 1,
+        primaryCandidateIp: '203.0.113.20',
+        reasonCodes: ['CANDIDATE_SCORING_V3'],
+        limitations: [],
+    });
+
+    assert.equal(normalized?.assessmentVersion, 3);
+    assert.equal(normalized?.classification, 'direct_probable');
+});
+
 test('keeps an absent assessment distinguishable from invalid stored data', () => {
     assert.equal(normalizeStoredRouteAssessment(undefined), undefined);
     assert.deepEqual(normalizeStoredRouteAssessment({

@@ -41,7 +41,7 @@ test('raw transport closes a manual baseline through the shared phase lifecycle'
         activeCallStartedAt: null,
         callEndedAt: null,
         captureEndedAt: null,
-        phaseEvidenceVersion: 1,
+        phaseEvidenceVersion: 2,
         phaseEvidence: [
             { sequence: 1, kind: 'baseline_started', at: new Date(1_000), source: 'capture_start', confidence: 'system' },
             { sequence: 2, kind: 'negotiation_started', at: new Date(4_000), source: 'baileys_raw', confidence: 'protocol', status: 'transport' },

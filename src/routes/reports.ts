@@ -140,6 +140,7 @@ export function registerReportRoutes(app: express.Express, deps: ReportRoutesDep
                     'annexes/activity-stats.csv',
                     'annexes/observed-activity.csv',
                     'annexes/candidate-ips.csv',
+                    'annexes/observed-endpoints.csv',
                     'annexes/non-conclusive-ip-observations.csv',
                     'annexes/network-captures.csv',
                     'annexes/csv-integrity.json',

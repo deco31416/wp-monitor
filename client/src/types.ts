@@ -7,6 +7,15 @@ export interface CallGeoInfo {
     timezone: string;
 }
 
+export interface CallCapturePhaseCounts {
+    version: 1;
+    baseline: { packets: number; bytes: number };
+    negotiation: { packets: number; bytes: number };
+    active: { packets: number; bytes: number };
+    postCall: { packets: number; bytes: number };
+    unclassified: { packets: number; bytes: number };
+}
+
 export interface CandidateIP {
     ip: string;
     packets: number;
@@ -25,6 +34,12 @@ export interface CandidateIP {
         source: 'local_rules' | 'enrichment';
         isDatacenterLikely: boolean;
         caution: string;
+        exclusionDecision?: {
+            version: 1;
+            classification: 'hard_excluded' | 'contextual' | 'eligible';
+            basis: 'runtime' | 'registry' | 'provider_fallback' | 'enrichment' | 'none';
+            reasonCodes: string[];
+        };
         registryEvidence?: {
             schemaVersion: 1;
             registryVersion: string;
@@ -107,8 +122,37 @@ export interface CandidateIP {
     endpointRole?: 'direct_candidate' | 'relay' | 'stun_turn' | 'dns' | 'background' | 'own_public_endpoint' | 'unknown';
     baselinePackets?: number;
     activeCallPackets?: number;
+    phaseCounts?: CallCapturePhaseCounts;
     protocolEvidence?: Array<'stun_binding_request' | 'stun_binding_response' | 'stun_other' | 'transport_flow' | 'frame_length_86'>;
-    scoreVersion?: 2;
+    scoreVersion?: 2 | 3;
+    networkContext?: {
+        version: 1;
+        targetCallingCode: string | null;
+        targetCountryCode: string | null;
+        observedCountryCode: string | null;
+        relationship: 'match' | 'mismatch' | 'unavailable';
+        affectsRouteScore: false;
+        reasonCodes: string[];
+        limitations: string[];
+    };
+    scoreBreakdown?: {
+        version: 3;
+        rawScore: number;
+        finalScore: number;
+        inputs: {
+            packets: number;
+            bytesTotal: number;
+            durationSec: number;
+            direction: 'incoming' | 'outgoing' | 'bidirectional';
+            ports: number[];
+            baselinePackets: number;
+            baselineDurationSec: number;
+            onsetDelayMs: number | null;
+            protocolEvidence: Array<'stun_binding_request' | 'stun_binding_response' | 'stun_other' | 'transport_flow' | 'frame_length_86'>;
+        };
+        components: Array<{ code: string; label: string; delta: number }>;
+        caps: Array<{ code: string; maximum: number; before: number; after: number }>;
+    };
 }
 
 export interface SanitizedCallEndpoint {
@@ -133,7 +177,7 @@ export interface CallTransportEvidence {
 }
 
 export interface CallRouteAssessment {
-    assessmentVersion: 2;
+    assessmentVersion: 2 | 3;
     classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
     confidenceScore: number;
     evidenceSources: Array<'baileys_transport' | 'packet_flow' | 'stun' | 'baseline' | 'infrastructure_registry' | 'ip_enrichment'>;
@@ -159,7 +203,7 @@ export interface CallCapturePhases {
     activeCallStartedAt: string | null;
     callEndedAt?: string | null;
     captureEndedAt?: string | null;
-    phaseEvidenceVersion?: 1;
+    phaseEvidenceVersion?: 1 | 2;
     phaseEvidence?: CallCapturePhaseEvidence[];
 }
 
@@ -170,6 +214,12 @@ export interface CallCapturePhaseEvidence {
     source: 'capture_start' | 'capture_stop' | 'baileys_normalized' | 'baileys_raw' | 'operator_marker' | 'network_onset';
     confidence: 'system' | 'protocol' | 'operator_asserted' | 'inferred';
     status?: 'offer' | 'ringing' | 'preaccept' | 'transport' | 'relaylatency' | 'accept' | 'reject' | 'timeout' | 'terminate';
+    corroborations?: Array<{
+        at: string;
+        source: 'baileys_normalized' | 'baileys_raw' | 'operator_marker' | 'network_onset';
+        confidence: 'protocol' | 'operator_asserted' | 'inferred';
+        status?: 'offer' | 'ringing' | 'preaccept' | 'transport' | 'relaylatency' | 'accept' | 'reject' | 'timeout' | 'terminate';
+    }>;
 }
 
 export interface CallAnalysisResult {
@@ -195,6 +245,7 @@ export interface CallAnalysisResult {
         droppedPackets: number;
         truncated: boolean;
     };
+    phaseCounts?: CallCapturePhaseCounts;
 }
 
 export interface CallEvent {

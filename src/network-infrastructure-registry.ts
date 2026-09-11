@@ -71,28 +71,29 @@ export interface InfrastructureRegistry {
     lookup(ip: string, options?: { now?: Date; ownPublicEndpoints?: ReadonlySet<string> }): InfrastructureRegistryEvidence;
 }
 
-const SNAPSHOT_RETRIEVED_AT = '2026-09-08T00:00:00.000Z';
+const SNAPSHOT_PUBLISHED_AT = '2026-09-10T00:00:00.000Z';
+const SOURCE_RETRIEVED_AT = '2026-09-08T00:00:00.000Z';
 const SNAPSHOT_VALID_UNTIL = '2026-12-07T00:00:00.000Z';
 
 export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
     schemaVersion: 1,
-    version: '2026.09.08.1',
-    publishedAt: SNAPSHOT_RETRIEVED_AT,
+    version: '2026.09.10.1',
+    publishedAt: SNAPSHOT_PUBLISHED_AT,
     sources: [
         {
             id: 'meta-community-routing',
             label: 'Meta AS32934/AS63293 routing snapshot',
             uri: 'https://www.facebook.com/peering/',
             kind: 'community_snapshot',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
         {
             id: 'google-observed-services',
-            label: 'Google service and STUN/TURN observed ranges',
+            label: 'Google service routing ranges; contextual, not STUN proof',
             uri: 'https://www.gstatic.com/ipranges/goog.json',
             kind: 'observed_heuristic',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
         {
@@ -100,7 +101,7 @@ export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
             label: 'Cloudflare published network ranges',
             uri: 'https://www.cloudflare.com/ips/',
             kind: 'authoritative',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
         {
@@ -108,7 +109,7 @@ export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
             label: 'Google Public DNS endpoints',
             uri: 'https://developers.google.com/speed/public-dns/docs/using',
             kind: 'authoritative',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
         {
@@ -116,7 +117,7 @@ export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
             label: 'Cloudflare 1.1.1.1 endpoints',
             uri: 'https://developers.cloudflare.com/1.1.1.1/ip-addresses/',
             kind: 'authoritative',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
         {
@@ -124,7 +125,7 @@ export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
             label: 'Curated CDN and cloud routing heuristics',
             uri: null,
             kind: 'observed_heuristic',
-            retrievedAt: SNAPSHOT_RETRIEVED_AT,
+            retrievedAt: SOURCE_RETRIEVED_AT,
             validUntil: SNAPSHOT_VALID_UNTIL,
         },
     ],
@@ -155,10 +156,10 @@ export const DEFAULT_INFRASTRUCTURE_REGISTRY: InfrastructureRegistryDocument = {
                 '172.217.0.0/16', '216.58.192.0/19', '216.239.32.0/19', '2001:4860::/32',
             ],
             provider: 'google',
-            category: 'stun_turn',
-            endpointRole: 'stun_turn',
+            category: 'cloud_hosting',
+            endpointRole: 'cloud_hosting',
             asn: 15169,
-            org: 'Google / Google Cloud',
+            org: 'Google service network',
             sourceId: 'google-observed-services',
             priority: 50,
         },

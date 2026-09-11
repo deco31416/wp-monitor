@@ -31,7 +31,7 @@ export function isCloudflareIP(ip: string): boolean {
 
 export function isKnownRelayIP(ip: string): boolean {
     const role = lookupInfrastructure(ip).endpointRole;
-    return role === 'relay' || role === 'stun_turn' || role === 'cdn';
+    return role === 'relay' || role === 'stun_turn';
 }
 
 export function classifyIP(ip: string): 'meta' | 'google' | 'cloudflare' | 'unknown' {

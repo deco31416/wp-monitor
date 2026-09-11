@@ -58,7 +58,8 @@ export function normalizeStoredRouteAssessment(value: unknown): CallRouteAssessm
     const reasonCodes = candidate.reasonCodes;
     const limitations = candidate.limitations;
 
-    const validShape = candidate.assessmentVersion === 2
+    const validAssessmentVersion = candidate.assessmentVersion === 2 || candidate.assessmentVersion === 3;
+    const validShape = validAssessmentVersion
         && typeof classification === 'string'
         && ROUTE_CLASSIFICATIONS.has(classification as CallRouteAssessment['classification'])
         && typeof confidenceScore === 'number'
@@ -99,7 +100,7 @@ export function normalizeStoredRouteAssessment(value: unknown): CallRouteAssessm
     }
 
     return {
-        assessmentVersion: 2,
+        assessmentVersion: candidate.assessmentVersion as 2 | 3,
         classification: classification as CallRouteAssessment['classification'],
         confidenceScore,
         evidenceSources: uniqueEvidenceSources,

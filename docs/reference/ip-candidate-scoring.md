@@ -1,6 +1,6 @@
 # Scoring Tecnico de IP Candidata
 
-Ultima actualizacion: 2026-09-08
+Ultima actualizacion: 2026-09-10
 
 ## Objetivo
 
@@ -49,14 +49,14 @@ El backend genera `ipInsights` con:
 Veredictos:
 
 - `Descartada`: red local, privada, CGNAT, reservada, multicast, link-local o rangos de documentacion.
-- `Infraestructura`: Meta/WhatsApp relay, Google STUN/TURN, DNS, Cloudflare,
+- `Infraestructura`: Meta/WhatsApp relay, red general de servicio Google, DNS, Cloudflare,
   GitHub, Akamai/CDN, DigitalOcean u otro servicio auxiliar catalogado.
 - `Candidata preliminar`: IP publica desconocida con flujo bidireccional y al menos 20 paquetes en los top origen/destino.
 - `Revisar`: IP publica desconocida que no cumple todavia condiciones fuertes de candidata preliminar.
 
 Esta capa no reemplaza el scoring de llamada. Solo prepara la lectura de la captura general. El scoring de llamada agrega ventana temporal, volumen, puertos, direccion, enriquecimiento IP, prefijo telefonico, topes por muestra pequena y limitaciones formales.
 
-## Reglas v1
+## Modelo de score v3
 
 Cuando existe una linea base valida, `packets`, bytes, direccion, puertos y
 densidad entregados al score proceden solo de la subventana de llamada. El
@@ -66,37 +66,45 @@ fases por compatibilidad historica, se mantiene la ventana completa. Una
 captura automatica sin linea base se marca explicitamente y no simula una
 comparacion inexistente.
 
-- IP publica desconocida inicia con score positivo porque no coincide con relays conocidos.
-- Infraestructura conocida inicia penalizada y queda limitada a score bajo.
-- ASN/ORG o rango asociado a cloud, CDN, relay o datacenter recibe penalizacion.
-- IP publica sin match local de ASN/ORG cloud o relay suma una senal leve, pero no concluyente.
-- Trafico bidireccional suma confianza.
-- Trafico en una sola direccion resta confianza.
-- Mayor volumen de paquetes durante la ventana suma confianza.
-- Muy pocos paquetes resta confianza.
-- Tamano promedio compatible con trafico UDP/multimedia suma confianza leve.
-- Puertos asociados a STUN/TURN/relay restan confianza.
-- Alta densidad temporal durante la ventana suma confianza leve.
-- Menos de 10 paquetes aplica un tope duro de 15/100 y clasifica la observacion como **no concluyente**.
-- Menos de 20 paquetes aplica un tope de 30/100.
-- Si el pais GeoIP observado no correlaciona con el prefijo telefonico y la muestra tiene menos de 50 paquetes, aplica tope de 20/100.
-- Trafico en una sola direccion no puede superar 45/100.
-- Una fuente vencida, ausente o ambigua limita el score a 20/100 y declara el
-  estado degradado.
-- Una direccion publica propia observada mediante STUN recibe score 0 y no es
-  P2P.
-- Rango GitHub se trata como infraestructura/herramientas del equipo, no como IP candidata.
-- Rango Akamai/CDN se trata como infraestructura, no como IP candidata, salvo que una fuente externa posterior contradiga claramente esa clasificacion.
+`scoreBreakdown.version=3` comienza en cero y registra cada componente aplicado.
+El valor bruto es exactamente la suma de sus deltas; cada tope conserva codigo,
+maximo, valor anterior y valor posterior. El score final es el resultado acotado
+entre 0 y 100, por lo que puede reconstruirse sin interpretar textos.
 
-## Correlacion telefonica/geografica
+- Un endpoint elegible suma 20; una red de acceso/ISP o aun desconocida suma 10.
+- Un incremento fuerte frente a la tasa de baseline suma 20 y uno moderado suma
+  10. Si la tasa activa no supera la base, resta 15. Sin baseline no se inventa
+  una comparacion ni un delta.
+- Flujo bidireccional suma 20; flujo unilateral resta 10 y queda limitado a 45.
+- El volumen suma 5, 10 o 15 a partir de 20, 75 o 250 paquetes. Una muestra por
+  debajo de 20 resta 15; menos de 10 queda limitada a 15 y menos de 20 a 30.
+- Densidad de al menos 0,5 paquetes/s suma 5 y de al menos 2 paquetes/s suma 10.
+- Aparicion hasta 3 segundos despues del inicio suma 10 y hasta 10 segundos suma
+  5; despues de 30 segundos resta 10. Sin limite de fase no se inventa onset.
+- Un flujo de transporte decodificado suma 5. STUN estructural suma solo 3 como
+  contexto y un puerto STUN/TURN resta 10; ninguna de estas señales confirma por
+  si sola al peer.
+- Datacenter/relay probable resta 10. Infraestructura contextual queda visible
+  y limitada a 30 sin promocion automatica. Meta, DNS publico exacto y salida
+  propia son exclusiones fuertes con score final 0.
+- Registro degradado e IPv6 sin clasificacion vigente limitan a 30 y declaran la
+  limitacion.
+
+## Contexto telefonico y geografico separado
 
 La correlacion por numero usa el prefijo telefonico internacional como contexto operativo, no como prueba de ubicacion fisica:
 
-- `+52` se interpreta como Mexico.
-- `+1` se interpreta como contexto NANP (Estados Unidos, Canada y Caribe).
-- `+58` se interpreta como Venezuela.
+- La tabla versionada resuelve codigos internacionales por coincidencia mas
+  especifica; `+52`, `+57` y `+58` son ejemplos, no una lista cerrada.
+- Zonas compartidas como `+1` (NANP) y `+7` no se convierten en un pais sin
+  resolver su plan nacional.
+- La relacion resultante es `match`, `mismatch` o `unavailable` y siempre declara
+  `affectsRouteScore=false`.
 
-Ejemplo profesional: si el objetivo observado es `+52` y aparece una IP de otro pais con solo 2 paquetes, el sistema no debe llamarla candidata media. Debe registrarla como observacion tecnica de baja muestra, explicar la divergencia y recomendar nueva captura/corroboracion.
+Ejemplo profesional: si el objetivo observado es `+52` y aparece una IP de otro
+pais con solo 2 paquetes, la muestra queda no concluyente por sus dos paquetes,
+no por el pais. La divergencia se muestra por separado y recomienda
+corroboracion, pero no altera retrospectivamente la probabilidad de ruta.
 
 ## Salida
 
@@ -106,12 +114,19 @@ Cada candidato incluye:
 - `confidence`: `high`, `medium` o `low`, derivado del score.
 - `networkCategory`: categoria tecnica inicial.
 - `networkIntelligence`: ASN, organizacion, categoria, fuente local, senal de datacenter probable y cautela.
+- `networkIntelligence.exclusionDecision`: decision versionada que distingue
+  exclusion fuerte, contexto de infraestructura y ausencia de exclusion fuerte;
+  incluye procedencia y codigos de motivo.
 - `ipEnrichment`: datos externos cacheados de geolocalizacion/ISP/ASN cuando el proveedor esta habilitado.
 - `reasonCodes`: razones explicables con delta positivo o negativo.
+- `scoreVersion: 3` y `scoreBreakdown`: insumos efectivos de subventana,
+  componentes, score bruto, topes y score final.
+- `networkContext`: prefijo del objetivo, pais GeoIP de red, relacion, motivos y
+  limitaciones, siempre con contribucion cero al score.
 - `correlation`: lectura operacional con clasificacion, resumen, pais del numero, pais GeoIP observado y topes aplicados.
 - `technicalNote`: limitacion tecnica para evitar sobreinterpretacion.
 
-## Correlacion de ruta v2
+## Correlacion de ruta v3
 
 El score de una IP y la conclusion de ruta son contratos distintos. El backend
 calcula `routeAssessment` despues del enriquecimiento y antes de persistir:
@@ -132,6 +147,27 @@ calcula `routeAssessment` despues del enriquecimiento y antes de persistir:
 `limitations`. DNS como `8.8.8.8`, STUN/TURN publico, Meta/relay, CDN, cloud,
 hosting, la salida publica propia y GeoIP nunca se promueven a evidencia directa
 por volumen, bidireccionalidad o coincidencia geografica.
+
+En v3, la seleccion usa la direccion y los paquetes de la subventana conservada
+en `scoreBreakdown`, no los totales contaminados por baseline. Una clasificacion
+contextual sigue sin promocion automatica. GeoIP y el prefijo no aparecen entre
+las fuentes de evidencia directa. Los historicos v2 permanecen legibles sin
+recalculo ni migracion destructiva.
+
+## Presentacion comercial y exportaciones
+
+La pestaña `Llamada` muestra el score v3 y su desglose dentro de la tarjeta del
+endpoint, sin crear una vista separada. El bloque `Contexto geografico de red`
+declara de forma visible que no afecta el score. Una relacion `mismatch` se
+presenta como contradiccion contextual, no como prueba de viaje, residencia o
+ubicacion.
+
+Las fuentes GeoIP actuales no aportan un radio de incertidumbre verificable.
+Por ello `networkContextPresentation.uncertainty.radiusKm` es `null` y su estado
+es `not_quantified_by_provider` cuando existe una referencia GeoIP, o
+`unavailable` cuando no existe. JSON, HTML, PDF y CSV mantienen esa misma
+semantica. Las vistas humanas muestran hasta 10 endpoints por grupo y declaran
+si el conjunto estructurado contiene mas.
 
 ## Interpretacion recomendada
 
@@ -161,5 +197,5 @@ por volumen, bidireccionalidad o coincidencia geografica.
   runtime ni omitir revision humana/versionado.
 - Ampliar cloud, VPN/proxy y datacenters solo con fuentes precisas y pruebas de
   no solapamiento.
-- Agregar pruebas unitarias para cada regla de scoring.
-- Incluir pruebas visuales del bloque ASN/ORG en UI y reportes.
+- Validar visualmente en el entorno objetivo los bloques de score, ASN/ORG y
+  contexto durante `OBS-20.12I`.

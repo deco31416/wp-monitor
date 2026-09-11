@@ -9,6 +9,7 @@ const EVIDENCE_TARGET_LIMIT = 250;
 const EVIDENCE_QUERY_CONCURRENCY = 8;
 const OBSERVED_ACTIVITY_TOTAL_LIMIT = 5000;
 const FINAL_REPORT_ROUTE_LIMIT = 250;
+const FINAL_REPORT_ENDPOINT_PRESENTATION_LIMIT = 10;
 
 async function mapWithConcurrency<T, R>(
     items: readonly T[],
@@ -181,7 +182,7 @@ export async function buildEvidencePackage(caseId: string) {
 
     const manifest = {
         packageType: 'evidence-package',
-        version: '1.2',
+        version: '1.3',
         software: {
             name: 'WP MONITOR',
             version: SOFTWARE_VERSION,
@@ -189,6 +190,15 @@ export async function buildEvidencePackage(caseId: string) {
         },
         caseId,
         generatedAt,
+        interpretation: {
+            candidateScoreCurrentVersion: 3,
+            geographicContextAffectsRouteScore: false,
+            geoIpUncertainty: {
+                radiusKm: null,
+                status: 'not_quantified_by_provider',
+            },
+            humanEndpointPresentationLimitPerGroup: FINAL_REPORT_ENDPOINT_PRESENTATION_LIMIT,
+        },
         contents: [
             { name: 'case', format: 'json', sha256: sectionHashes.case },
             { name: 'audit', format: 'json', sha256: sectionHashes.audit, count: auditEvents.length },
@@ -216,6 +226,7 @@ export async function buildEvidencePackage(caseId: string) {
             'Traffic analysis is based on observed metadata only.',
             'Candidate IPs do not prove identity, exact location, or ownership by a person.',
             'WhatsApp/WebRTC traffic may use relays, NAT, VPNs, CGNAT, or provider infrastructure.',
+            'GeoIP providers used by this report do not supply a verified uncertainty radius; coordinates are network reference points, not device positions.',
             ...(targetCoverage.truncated || observedActivityCoverage.truncated
                 ? ['Evidence package coverage is bounded; consult manifest.coverage before interpreting totals.']
                 : []),
@@ -352,6 +363,7 @@ const REPORT_LIMITATION_LABELS: Record<string, string> = {
     'Traffic analysis is based on observed metadata only.': 'El análisis de tráfico se basa únicamente en metadatos observados.',
     'Candidate IPs do not prove identity, exact location, or ownership by a person.': 'Las IP candidatas no prueban identidad, ubicación exacta ni titularidad de una persona.',
     'WhatsApp/WebRTC traffic may use relays, NAT, VPNs, CGNAT, or provider infrastructure.': 'El tráfico de WhatsApp/WebRTC puede utilizar relays, NAT, VPN, CGNAT o infraestructura del proveedor.',
+    'GeoIP providers used by this report do not supply a verified uncertainty radius; coordinates are network reference points, not device positions.': 'Las fuentes GeoIP del informe no entregan un radio de incertidumbre verificable; las coordenadas son referencias de red, no posiciones del dispositivo.',
 };
 
 const REPORT_ROUTE_CLASSIFICATION_LABELS: Record<string, string> = {
@@ -382,6 +394,8 @@ const REPORT_ROUTE_REASON_LABELS: Record<string, string> = {
     NO_CONCLUSIVE_ROUTE_EVIDENCE: 'No se reunieron evidencias suficientes para determinar la ruta.',
     DNS_EXCLUDED_FROM_DIRECT_EVIDENCE: 'El tráfico DNS fue excluido de la evidencia de ruta directa.',
     STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
+    CANDIDATE_SCORING_V3: 'Las candidatas se evaluaron con el modelo de ruta v3 y su desglose reconstruible.',
+    GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE: 'El contexto geográfico se informó por separado y no alteró la conclusión de ruta.',
 };
 
 const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
@@ -456,6 +470,49 @@ function getCandidateScore(candidate: any): number {
     return 25;
 }
 
+function buildNetworkContextPresentation(candidate: any) {
+    const context = candidate?.networkContext;
+    const targetCallingCode = typeof context?.targetCallingCode === 'string' ? context.targetCallingCode : null;
+    const targetCountryCode = typeof context?.targetCountryCode === 'string' ? context.targetCountryCode : null;
+    const observedCountryCode = typeof context?.observedCountryCode === 'string' ? context.observedCountryCode : null;
+    const relationship = ['match', 'mismatch', 'unavailable'].includes(context?.relationship)
+        ? context.relationship as 'match' | 'mismatch' | 'unavailable'
+        : 'unavailable';
+    const hasGeoReference = candidate?.ipEnrichment?.status === 'success' || candidate?.geo !== null && candidate?.geo !== undefined;
+    const relationshipLabel = relationship === 'match'
+        ? 'Contexto de red compatible'
+        : relationship === 'mismatch'
+            ? 'Contexto de red divergente'
+            : 'Contexto de red no comparable';
+    const summary = relationship === 'match'
+        ? 'El país GeoIP de la red coincide con el prefijo del número objetivo. Es contexto compatible, no confirmación de ubicación.'
+        : relationship === 'mismatch'
+            ? 'El país GeoIP de la red difiere del prefijo del número objetivo. Puede responder a roaming, VPN, CGNAT, relay o imprecisión GeoIP y no modifica el puntaje de ruta.'
+            : 'No existen datos suficientes para comparar el prefijo del objetivo con el país GeoIP de la red.';
+
+    return {
+        version: 1 as const,
+        targetCallingCode,
+        targetCountryCode,
+        observedCountryCode,
+        relationship,
+        relationshipLabel,
+        contradiction: relationship === 'mismatch',
+        affectsRouteScore: false as const,
+        uncertainty: {
+            radiusKm: null,
+            status: hasGeoReference ? 'not_quantified_by_provider' : 'unavailable',
+            label: hasGeoReference ? 'Radio no cuantificado por la fuente GeoIP' : 'Radio no disponible',
+        },
+        summary,
+        limitations: Array.from(new Set([
+            ...(Array.isArray(context?.limitations) ? context.limitations : []),
+            'geoip_is_network_context_not_device_location',
+            'verified_uncertainty_radius_unavailable',
+        ])),
+    };
+}
+
 function mapCallIpObservation(analysis: any, candidate: any) {
     return {
         callId: analysis.callId,
@@ -464,11 +521,26 @@ function mapCallIpObservation(analysis: any, candidate: any) {
         score: getCandidateScore(candidate),
         confidence: candidate.confidence || 'low',
         networkCategory: candidate.networkCategory || 'unknown_public',
-        packets: candidate.packets || 0,
+        packets: candidate.packets ?? 0,
+        bytesTotal: candidate.bytesTotal ?? 0,
+        firstSeen: candidate.firstSeen ?? null,
+        lastSeen: candidate.lastSeen ?? null,
+        avgSize: candidate.avgSize ?? 0,
         direction: candidate.direction || 'unknown',
         provider: candidate.provider || 'unknown',
         networkIntelligence: candidate.networkIntelligence || null,
         ports: candidate.ports || [],
+        addressFamily: candidate.addressFamily ?? null,
+        endpointRole: candidate.endpointRole || 'unknown',
+        baselinePackets: candidate.baselinePackets ?? null,
+        activeCallPackets: candidate.activeCallPackets ?? null,
+        phaseCounts: candidate.phaseCounts || null,
+        protocolEvidence: candidate.protocolEvidence || [],
+        scoreVersion: candidate.scoreVersion ?? null,
+        scoreBreakdown: candidate.scoreBreakdown || null,
+        networkContext: candidate.networkContext || null,
+        networkContextPresentation: buildNetworkContextPresentation(candidate),
+        correlation: candidate.correlation || null,
         geo: candidate.geo || null,
         ipEnrichment: candidate.ipEnrichment || null,
         reasonCodes: candidate.reasonCodes || [],
@@ -577,6 +649,19 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
     const nonConclusiveIpObservations = observedCallIps.filter((candidate: any) => !candidate.isP2P);
     const allCallRoutes = callAnalysis.map((analysis: any) => {
         const normalizedAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment);
+        const endpointContexts = observedCallIps
+            .filter((endpoint: any) => endpoint.callId === analysis.callId)
+            .map((endpoint: any) => ({
+                ip: endpoint.ip,
+                ...endpoint.networkContextPresentation,
+            }));
+        const contextContradictions = endpointContexts
+            .filter((context: any) => context.contradiction)
+            .map((context: any) => ({
+                ip: context.ip,
+                code: 'PHONE_GEO_CONTEXT_MISMATCH',
+                summary: context.summary,
+            }));
         const route = {
             callId: analysis.callId,
             targetJid: analysis.targetJid,
@@ -587,6 +672,8 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
             primaryCandidateIp: normalizedAssessment?.primaryCandidateIp || null,
             reasonCodes: normalizedAssessment?.reasonCodes || [],
             limitations: normalizedAssessment?.limitations || ['legacy_route_assessment_unavailable'],
+            endpointContexts,
+            contextContradictions,
         };
         return {
             ...route,
@@ -638,6 +725,7 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         networkCaptureCount: evidencePackage.sections.networkSummary?.captureStopCount || 0,
         candidateIpCount: candidateIps.length,
         nonConclusiveIpObservationCount: nonConclusiveIpObservations.length,
+        observedEndpointCount: observedCallIps.length,
         highestCandidateScore: candidateIps[0]?.score || 0,
         routeAssessmentCount: callRoutes.filter((route: any) => route.classification !== 'unresolved').length,
         callRouteTruncated: callRouteCoverage.truncated,
@@ -652,16 +740,22 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
         network: evidencePackage.sections.networkSummary,
         activityStats,
         observedSignals,
+        observedEndpoints: observedCallIps,
         candidateIps,
         nonConclusiveIpObservations,
         callRoutes,
         callRouteCoverage,
+        presentationLimits: {
+            callRoutes: FINAL_REPORT_ROUTE_LIMIT,
+            candidateIps: FINAL_REPORT_ENDPOINT_PRESENTATION_LIMIT,
+            nonConclusiveIpObservations: FINAL_REPORT_ENDPOINT_PRESENTATION_LIMIT,
+        },
         limitations: evidencePackage.manifest.limitations,
     };
 
     const reportWithoutIntegrity = {
         reportType: 'final-case-report',
-        version: '1.2',
+        version: '1.3',
         software: evidencePackage.manifest.software,
         summary,
         authorization: {
@@ -691,8 +785,9 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
 }
 
 export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCaseReport>): string {
-    const topCandidates = report.findings.candidateIps.slice(0, 10);
-    const topNonConclusive = (report.findings.nonConclusiveIpObservations || []).slice(0, 10);
+    const topCandidates = report.findings.candidateIps.slice(0, report.findings.presentationLimits.candidateIps);
+    const topNonConclusive = (report.findings.nonConclusiveIpObservations || [])
+        .slice(0, report.findings.presentationLimits.nonConclusiveIpObservations);
     const timelineRows = report.timeline.slice(-80);
     const scoreTone = report.summary.highestCandidateScore >= 75
         ? 'strong'
@@ -706,6 +801,12 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
         ? report.findings.callRouteCoverage.sourceIncomplete
             ? `<div class="notice">El informe presenta ${escapeHtml(report.findings.callRouteCoverage.returned)} ${routeReturnedUnit} de ruta ${routeAvailableAdjective}. El Evidence Package fuente declara cobertura parcial o referencias sin resultado; consulta su metadata de cobertura antes de interpretar el conjunto.</div>`
             : `<div class="notice">El informe presenta ${escapeHtml(report.findings.callRouteCoverage.returned)} de ${escapeHtml(report.findings.callRouteCoverage.knownTotal)} ${routeCoverageUnit} de ruta. Consulta el Evidence Package para revisar los anexos disponibles.</div>`
+        : '';
+    const candidateCoverageNotice = report.findings.candidateIps.length > topCandidates.length
+        ? `<div class="notice">Vista resumida: se presentan ${escapeHtml(topCandidates.length)} de ${escapeHtml(report.findings.candidateIps.length)} IPs candidatas. El JSON y los anexos CSV conservan el conjunto incluido en el informe.</div>`
+        : '';
+    const nonConclusiveCoverageNotice = report.findings.nonConclusiveIpObservations.length > topNonConclusive.length
+        ? `<div class="notice">Vista resumida: se presentan ${escapeHtml(topNonConclusive.length)} de ${escapeHtml(report.findings.nonConclusiveIpObservations.length)} observaciones no concluyentes. El JSON y los anexos CSV conservan el conjunto incluido en el informe.</div>`
         : '';
     const routeRows = report.findings.callRoutes.length
         ? report.findings.callRoutes.map((route: any) => {
@@ -722,7 +823,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
                 <td><span class="score ${routeTone}">${escapeHtml(presentation.confidenceLabel)} · ${escapeHtml(route.confidenceScore)}/100</span></td>
                 <td>${escapeHtml(presentation.evidenceLabels.join(' · ') || 'Sin fuentes concluyentes')}</td>
                 <td><code>${escapeHtml(route.primaryCandidateIp || 'No identificado')}</code><br><span class="muted">${escapeHtml(route.independentDirectEvidenceCount)} fuente(s) directa(s) independiente(s)</span></td>
-                <td>${escapeHtml(presentation.reasonLabels.join(' ') || 'Sin razones concluyentes')}<br><span class="muted">${escapeHtml(presentation.limitationLabels.join(' ') || 'Sin limitaciones adicionales registradas')}</span></td>
+                <td>${escapeHtml(presentation.reasonLabels.join(' ') || 'Sin razones concluyentes')}<br><span class="muted">${escapeHtml(presentation.limitationLabels.join(' ') || 'Sin limitaciones adicionales registradas')}</span>${route.contextContradictions?.length ? `<br><span class="muted">Contradicciones contextuales: ${escapeHtml(route.contextContradictions.length)}. No modifican la conclusión de ruta.</span>` : ''}</td>
             </tr>`;
         }).join('')
         : '<tr><td colspan="6" class="muted">No se registraron evaluaciones de ruta en los análisis vinculados.</td></tr>';
@@ -736,8 +837,8 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
                 <td>${escapeHtml(candidate.networkIntelligence?.asn ? `AS${candidate.networkIntelligence.asn}` : '-')}<br><span class="muted">${escapeHtml(candidate.networkIntelligence?.org || '-')}</span></td>
                 <td>${escapeHtml(reportLabel(candidate.direction, REPORT_DIRECTION_LABELS))}</td>
                 <td>${escapeHtml(candidate.packets)}</td>
-                <td>${escapeHtml(candidate.geo?.country || '-')} / ${escapeHtml(candidate.geo?.city || candidate.geo?.region || '-')}</td>
-                <td>${escapeHtml(candidate.technicalNote)}</td>
+                <td>${escapeHtml(candidate.geo?.country || candidate.ipEnrichment?.country || '-')} / ${escapeHtml(candidate.geo?.city || candidate.geo?.region || candidate.ipEnrichment?.city || candidate.ipEnrichment?.regionName || '-')}<br><span class="muted">${escapeHtml(candidate.networkContextPresentation.relationshipLabel)} · ${escapeHtml(candidate.networkContextPresentation.uncertainty.label)}</span></td>
+                <td>${escapeHtml(candidate.technicalNote)}<br><span class="muted">${escapeHtml(candidate.networkContextPresentation.summary)}</span></td>
             </tr>
         `).join('')
         : '<tr><td colspan="8" class="muted">No se registraron IPs candidatas en los analisis vinculados.</td></tr>';
@@ -750,7 +851,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
                 <td>${escapeHtml(reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS))}</td>
                 <td>${escapeHtml(reportLabel(candidate.direction, REPORT_DIRECTION_LABELS))}</td>
                 <td>${escapeHtml(candidate.packets)}</td>
-                <td>${escapeHtml(candidate.technicalNote)}</td>
+                <td>${escapeHtml(candidate.technicalNote)}<br><span class="muted">${escapeHtml(candidate.networkContextPresentation.relationshipLabel)} · ${escapeHtml(candidate.networkContextPresentation.uncertainty.label)}. ${escapeHtml(candidate.networkContextPresentation.summary)}</span></td>
             </tr>
         `).join('')
         : '<tr><td colspan="6" class="muted">No se registraron observaciones no concluyentes separadas.</td></tr>';
@@ -1043,8 +1144,9 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
   <section>
     <h2>Hallazgos de IP Candidata</h2>
     <div class="notice">
-      Las IPs listadas son observaciones tecnicas dentro de una ventana autorizada. No prueban identidad, ubicacion exacta ni titularidad de una persona.
+      Las IPs listadas son observaciones tecnicas dentro de una ventana autorizada. No prueban identidad, ubicacion exacta ni titularidad de una persona. Las fuentes GeoIP consultadas no entregan un radio de incertidumbre verificable; sus coordenadas son puntos de referencia de red.
     </div>
+    ${candidateCoverageNotice}
     <div class="table-wrap">
       <table>
         <thead><tr><th>IP</th><th>Puntaje</th><th>Categoría</th><th>ASN/ORG</th><th>Dirección</th><th>Paquetes</th><th>Geografía</th><th>Nota técnica</th></tr></thead>
@@ -1055,6 +1157,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
 
   <section>
     <h2>Observaciones No Concluyentes</h2>
+    ${nonConclusiveCoverageNotice}
     <div class="notice">
       Estas IPs quedaron documentadas por transparencia, pero no alcanzaron el criterio tecnico para presentarse como candidatas. Pueden corresponder a muestras pequenas, relays, cloud/CDN, trafico unidireccional o contexto geografico incoherente.
     </div>
@@ -1363,26 +1466,34 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
             const limitationText = presentation.limitationLabels.length > 0
                 ? `Alcance: ${presentation.limitationLabels.join(' ')}`
                 : null;
+            const contradictionText = route.contextContradictions?.length > 0
+                ? `Contexto: ${route.contextContradictions.length} contradiccion(es) geografica(s) de red. No modifican la conclusion de ruta.`
+                : null;
             const routeBlockHeight = 17
                 + (wrapPdfText(provenanceText, 92).length * 13 + 4)
                 + (reasonText ? wrapPdfText(reasonText, 92).length * 13 + 4 : 0)
-                + (limitationText ? wrapPdfText(limitationText, 92).length * 13 + 4 : 0);
+                + (limitationText ? wrapPdfText(limitationText, 92).length * 13 + 4 : 0)
+                + (contradictionText ? wrapPdfText(contradictionText, 92).length * 13 + 4 : 0);
             pdf.ensure(routeBlockHeight);
             pdf.text(pdf.margin, pdf.y, `${presentation.classificationLabel} - ${presentation.confidenceLabel} ${route.confidenceScore}/100`, 9, 'F2', route.classification === 'direct_confirmed' ? '166534' : route.classification === 'relay_confirmed' ? '0369A1' : '92400E');
             pdf.y -= 13;
             pdf.paragraph(provenanceText, 92, 8, '334155');
             if (reasonText) pdf.paragraph(reasonText, 92, 8, '334155');
             if (limitationText) pdf.paragraph(limitationText, 92, 8, '9A3412');
+            if (contradictionText) pdf.paragraph(contradictionText, 92, 8, '9A3412');
         }
     }
 
     pdf.heading('Hallazgos de IP candidata');
     pdf.rect(pdf.margin, pdf.y - 38, usable, 36, 'FFF7ED', 'FDBA74');
     pdf.text(pdf.margin + 10, pdf.y - 15, 'Nota tecnica', 8, 'F2', '9A3412');
-    pdf.text(pdf.margin + 10, pdf.y - 28, 'Las IPs candidatas no prueban identidad, ubicacion exacta ni titularidad de una persona.', 8, 'F1', '9A3412');
+    pdf.text(pdf.margin + 10, pdf.y - 28, 'Las IPs candidatas y GeoIP no prueban identidad o ubicacion exacta. Radio verificable no disponible.', 8, 'F1', '9A3412');
     pdf.y -= 54;
 
-    const candidates = report.findings.candidateIps.slice(0, 12);
+    const candidates = report.findings.candidateIps.slice(0, report.findings.presentationLimits.candidateIps);
+    if (report.findings.candidateIps.length > candidates.length) {
+        pdf.paragraph(`Vista resumida: se presentan ${candidates.length} de ${report.findings.candidateIps.length} IPs candidatas. El JSON y los anexos CSV conservan el conjunto incluido en el informe.`, 92, 8, '9A3412');
+    }
     // Keep the header with the first row so a page break never leaves an orphan table heading.
     pdf.ensure(candidates.length === 0 ? 34 : 74);
     pdf.text(pdf.margin, pdf.y, 'IP', 8, 'F2', '64748B');
@@ -1399,8 +1510,8 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     } else {
         for (const candidate of candidates) {
             const geo = `${candidate.geo?.country || '-'} / ${candidate.geo?.city || candidate.geo?.region || '-'}`;
-            const note = `${geo}. ${candidate.technicalNote}`;
-            const noteLines = wrapPdfText(note, 45).slice(0, 3);
+            const note = `${geo}. ${candidate.networkContextPresentation.relationshipLabel}. ${candidate.networkContextPresentation.uncertainty.label}. ${candidate.technicalNote}`;
+            const noteLines = wrapPdfText(note, 45).slice(0, 5);
             const categoryLines = wrapPdfText(
                 reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS),
                 27,
@@ -1423,13 +1534,17 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
 
     pdf.heading('Observaciones no concluyentes');
     pdf.paragraph('IPs documentadas por transparencia, pero sin criterio suficiente para presentarse como candidatas. Revisar si fueron muestras pequenas, relays, cloud/CDN, trafico unidireccional o contexto geografico incoherente.', 92, 8, '9A3412');
-    const nonConclusive = (report.findings.nonConclusiveIpObservations || []).slice(0, 12);
+    const nonConclusive = (report.findings.nonConclusiveIpObservations || [])
+        .slice(0, report.findings.presentationLimits.nonConclusiveIpObservations);
+    if (report.findings.nonConclusiveIpObservations.length > nonConclusive.length) {
+        pdf.paragraph(`Vista resumida: se presentan ${nonConclusive.length} de ${report.findings.nonConclusiveIpObservations.length} observaciones no concluyentes. El JSON y los anexos CSV conservan el conjunto incluido en el informe.`, 92, 8, '9A3412');
+    }
     if (nonConclusive.length === 0) {
         pdf.paragraph('No se registraron observaciones no concluyentes separadas.');
     } else {
         for (const candidate of nonConclusive) {
-            const note = `${reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS)} · ${reportLabel(candidate.direction, REPORT_DIRECTION_LABELS)} · ${candidate.technicalNote || ''}`;
-            const noteLines = wrapPdfText(note, 64).slice(0, 2);
+            const note = `${reportLabel(candidate.networkCategory, REPORT_NETWORK_CATEGORY_LABELS)} · ${reportLabel(candidate.direction, REPORT_DIRECTION_LABELS)} · ${candidate.networkContextPresentation.relationshipLabel} · ${candidate.networkContextPresentation.uncertainty.label} · ${candidate.technicalNote || ''}`;
+            const noteLines = wrapPdfText(note, 64).slice(0, 4);
             const rowHeight = Math.max(28, noteLines.length * 10 + 10);
             pdf.ensure(rowHeight + 8);
             pdf.rect(pdf.margin, pdf.y - rowHeight + 8, usable, rowHeight, 'FFFFFF', 'E2E8F0');
@@ -1656,6 +1771,7 @@ function buildCsvAnnexes(
             routeAssessment?.evidenceSources || [],
             routeAssessment?.reasonCodes || [],
             routeLimitations,
+            (analysis.candidateIps || []).filter((candidate: any) => candidate.networkContext?.relationship === 'mismatch').length,
         ];
     });
 
@@ -1693,6 +1809,18 @@ function buildCsvAnnexes(
         candidate.ipEnrichment?.hosting === undefined ? '' : candidate.ipEnrichment.hosting ? 'true' : 'false',
         candidate.ipEnrichment?.mapsUrl || '',
         candidate.ipEnrichment?.accuracyNote || '',
+        candidate.networkContext?.version ?? '',
+        candidate.networkContextPresentation.targetCallingCode || '',
+        candidate.networkContextPresentation.targetCountryCode || '',
+        candidate.networkContextPresentation.observedCountryCode || '',
+        candidate.networkContextPresentation.relationship,
+        candidate.networkContextPresentation.contradiction ? 'true' : 'false',
+        candidate.networkContextPresentation.affectsRouteScore ? 'true' : 'false',
+        candidate.networkContextPresentation.uncertainty.radiusKm ?? '',
+        candidate.networkContextPresentation.uncertainty.status,
+        candidate.networkContextPresentation.summary,
+        candidate.scoreVersion ?? '',
+        candidate.scoreBreakdown || '',
         candidate.reasonCodes?.map((reason: any) => `${reason.code}:${reason.delta}`).join('|') || '',
         candidate.technicalNote,
     ]);
@@ -1710,8 +1838,51 @@ function buildCsvAnnexes(
         candidate.direction,
         candidate.packets,
         candidate.ports?.join('|') || '',
+        candidate.networkContextPresentation.relationship,
+        candidate.networkContextPresentation.contradiction ? 'true' : 'false',
+        candidate.networkContextPresentation.uncertainty.radiusKm ?? '',
+        candidate.networkContextPresentation.uncertainty.status,
+        candidate.networkContextPresentation.summary,
+        candidate.scoreVersion ?? '',
+        candidate.scoreBreakdown || '',
         candidate.reasonCodes?.map((reason: any) => `${reason.code}:${reason.delta}`).join('|') || '',
         candidate.technicalNote,
+    ]);
+
+    const observedEndpointRows = (finalReport.findings.observedEndpoints || []).map((endpoint: any) => [
+        endpoint.callId,
+        endpoint.targetJid,
+        endpoint.ip,
+        endpoint.addressFamily ?? '',
+        endpoint.endpointRole,
+        endpoint.isP2P ? 'true' : 'false',
+        endpoint.score,
+        endpoint.confidence,
+        endpoint.provider,
+        endpoint.networkCategory,
+        endpoint.networkIntelligence?.asn ?? '',
+        endpoint.networkIntelligence?.org || '',
+        endpoint.networkIntelligence?.exclusionDecision?.classification || '',
+        endpoint.networkIntelligence?.exclusionDecision?.basis || '',
+        endpoint.networkIntelligence?.exclusionDecision?.reasonCodes?.join('|') || '',
+        endpoint.direction,
+        endpoint.packets,
+        endpoint.bytesTotal,
+        endpoint.avgSize,
+        endpoint.firstSeen || '',
+        endpoint.lastSeen || '',
+        endpoint.ports?.join('|') || '',
+        endpoint.protocolEvidence?.join('|') || '',
+        endpoint.baselinePackets ?? '',
+        endpoint.activeCallPackets ?? '',
+        endpoint.phaseCounts || '',
+        endpoint.scoreVersion ?? '',
+        endpoint.scoreBreakdown || '',
+        endpoint.networkContext || '',
+        endpoint.networkContextPresentation || '',
+        endpoint.correlation || '',
+        endpoint.reasonCodes?.map((reason: any) => `${reason.code}:${reason.delta}`).join('|') || '',
+        endpoint.technicalNote,
     ]);
 
     const networkRows = (evidencePackage.sections.networkSummary?.captures || []).map((capture: any) => [
@@ -1786,21 +1957,28 @@ function buildCsvAnnexes(
         {
             name: 'annexes/call-analysis.csv',
             data: toCsv(
-                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount', 'routeClassification', 'routeConfidenceScore', 'independentDirectEvidenceCount', 'primaryCandidateIp', 'routeEvidenceSources', 'routeReasonCodes', 'routeLimitations'],
+                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount', 'routeClassification', 'routeConfidenceScore', 'independentDirectEvidenceCount', 'primaryCandidateIp', 'routeEvidenceSources', 'routeReasonCodes', 'routeLimitations', 'networkContextContradictionCount'],
                 callRows
             ),
         },
         {
             name: 'annexes/candidate-ips.csv',
             data: toCsv(
-                ['callId', 'targetJid', 'ip', 'score', 'confidence', 'provider', 'networkCategory', 'asn', 'org', 'asnCategory', 'isDatacenterLikely', 'direction', 'packets', 'ports', 'geoCountry', 'geoRegion', 'geoCity', 'geoLat', 'geoLon', 'geoTimezone', 'enrichmentProvider', 'enrichmentStatus', 'enrichmentCity', 'enrichmentRegion', 'enrichmentPostalCode', 'enrichmentIsp', 'enrichmentOrg', 'enrichmentAsn', 'enrichmentMobile', 'enrichmentProxy', 'enrichmentHosting', 'enrichmentMapsUrl', 'enrichmentAccuracyNote', 'reasonCodes', 'technicalNote'],
+                ['callId', 'targetJid', 'ip', 'score', 'confidence', 'provider', 'networkCategory', 'asn', 'org', 'asnCategory', 'isDatacenterLikely', 'direction', 'packets', 'ports', 'geoCountry', 'geoRegion', 'geoCity', 'geoLat', 'geoLon', 'geoTimezone', 'enrichmentProvider', 'enrichmentStatus', 'enrichmentCity', 'enrichmentRegion', 'enrichmentPostalCode', 'enrichmentIsp', 'enrichmentOrg', 'enrichmentAsn', 'enrichmentMobile', 'enrichmentProxy', 'enrichmentHosting', 'enrichmentMapsUrl', 'enrichmentAccuracyNote', 'networkContextVersion', 'targetCallingCode', 'targetCountryCode', 'observedCountryCode', 'networkContextRelationship', 'networkContextContradiction', 'networkContextAffectsRouteScore', 'uncertaintyRadiusKm', 'uncertaintyStatus', 'networkContextSummary', 'scoreVersion', 'scoreBreakdownJson', 'reasonCodes', 'technicalNote'],
                 candidateRows
+            ),
+        },
+        {
+            name: 'annexes/observed-endpoints.csv',
+            data: toCsv(
+                ['callId', 'targetJid', 'ip', 'addressFamily', 'endpointRole', 'isDirectCandidate', 'score', 'confidence', 'provider', 'networkCategory', 'asn', 'org', 'exclusionClassification', 'exclusionBasis', 'exclusionReasonCodes', 'direction', 'packets', 'bytesTotal', 'avgSize', 'firstSeen', 'lastSeen', 'ports', 'protocolEvidence', 'baselinePackets', 'activeCallPackets', 'phaseCountsJson', 'scoreVersion', 'scoreBreakdownJson', 'networkContextJson', 'networkContextPresentationJson', 'correlationJson', 'reasonCodes', 'technicalNote'],
+                observedEndpointRows,
             ),
         },
         {
             name: 'annexes/non-conclusive-ip-observations.csv',
             data: toCsv(
-                ['callId', 'targetJid', 'ip', 'score', 'confidence', 'provider', 'networkCategory', 'asn', 'org', 'direction', 'packets', 'ports', 'reasonCodes', 'technicalNote'],
+                ['callId', 'targetJid', 'ip', 'score', 'confidence', 'provider', 'networkCategory', 'asn', 'org', 'direction', 'packets', 'ports', 'networkContextRelationship', 'networkContextContradiction', 'uncertaintyRadiusKm', 'uncertaintyStatus', 'networkContextSummary', 'scoreVersion', 'scoreBreakdownJson', 'reasonCodes', 'technicalNote'],
                 nonConclusiveRows
             ),
         },

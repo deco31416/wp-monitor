@@ -95,19 +95,53 @@ En modo agente, el sidecar valida privilegios, interfaz enumerada, JID, `callId`
 En proveedores `local` y `agent`, una captura manual comienza en fase de linea base. El
 primer evento correlacionado de oferta/negociacion cierra esa fase y `accept`
 marca el inicio activo. Los paquetes se conservan completos, pero el scoring usa
-los conteos posteriores a la linea base; cada candidata declara
-`baselinePackets` y `activeCallPackets`. Una captura automatica comienza sin
+los conteos posteriores a la linea base; cada candidata conserva por
+compatibilidad `baselinePackets` y `activeCallPackets`. Ademas, todo analisis
+nuevo publica `phaseCounts.version=1` globalmente y por endpoint, con paquetes y
+bytes separados en `baseline`, `negotiation`, `active`, `postCall` y
+`unclassified`. Estos conteos cubren exclusivamente metadata almacenada; los
+descartes por limite siguen declarados en `captureBounds` y no se asignan a una
+fase inventada. Una captura automatica comienza sin
 linea base y lo declara mediante `capturePhases.baselineAvailable=false`. Los
 duplicados son idempotentes y otra llamada no puede mover la captura activa. El
 proveedor `agent` recibe cada transicion en `/v1/call/phase`: el cuerpo firmado
 incluye captura, contacto, llamada observada, estado, fuente y confianza. Cada
-analisis nuevo conserva `phaseEvidenceVersion: 1` y una bitacora ordenada de
+analisis nuevo conserva `phaseEvidenceVersion: 2` y una bitacora ordenada de
 inicio de baseline, negociacion, fase activa, fin de llamada y fin de captura.
-Los historicos sin esta extension siguen siendo legibles. El agente rechaza firma o
+El primer evento fija el limite temporal de cada fase y las señales posteriores
+de otra fuente quedan como corroboraciones sin moverlo. Los historicos v1 o sin
+esta extension siguen siendo legibles. El agente rechaza firma o
 nonce invalidos, replay, correlacion incorrecta, procedencia incoherente y regresiones de fase. Un timeout
 o agente no disponible degrada la evidencia tecnica sin eliminar la actividad
-de llamada ya publicada. Readiness exige `callCapturePhases: 2`, por lo que una
-mezcla de versiones falla cerrada durante un despliegue gradual.
+de llamada ya publicada. Readiness exige `callCapturePhases: 4`,
+`operatorCallMarkers: 1`, `endpointExclusionDecision: 1` y
+`candidateScoring: 3`, por lo que una mezcla
+de versiones falla cerrada durante un despliegue gradual.
+
+Al leer MongoDB, el backend normaliza este contrato sin migracion destructiva.
+Un historico sin `phaseCounts` permanece sin desglose. Un libro C5 solo se
+conserva cuando la suma global coincide con `captureBounds.storedPackets` y cada
+endpoint reconcilia paquetes y bytes; si falta una parte o existe una
+inconsistencia, se retira el desglose completo en memoria. Los campos historicos
+`baselinePackets`/`activeCallPackets` se conservan exclusivamente cuando forman
+un par de enteros no negativos cuya suma coincide con el total del endpoint.
+Nada de esto modifica el documento almacenado ni reconstruye fases ausentes.
+
+Cada IP publica que supera el filtro basico de captura se conserva en el arreglo
+historico `candidateIps`, cuyo nombre se mantiene por compatibilidad aunque su
+contenido representa el libro completo de endpoints. UI e informes no vuelven a
+filtrar ese libro de forma destructiva: cada entrada queda exactamente en
+candidata, infraestructura u observacion no concluyente. El reporte final añade
+la proyeccion completa `observedEndpoints` y un CSV canonico; `metaIps` solo se
+usa como fallback para historicos que no contienen el registro detallado.
+
+Si una captura manual no recibe aun señalizacion ni marcador, el analizador
+entrena durante cinco segundos una base fija por endpoint y luego evalua ventanas
+moviles de dos segundos. Solo un aumento UDP sostenido, bidireccional y superior
+a limites absolutos y relativos cierra la linea base como
+`network_onset/inferred`. El detector se desactiva cuando una fuente de fase mas
+fuerte ya abrio la negociacion y nunca se ejecuta en capturas automaticas sin
+base. La inferencia delimita paquetes; no confirma conexion ni promueve una IP.
 
 Cuando la llamada se realiza desde `wa-browser` y el dispositivo Baileys no recibe
 su señalizacion, el operador autenticado puede marcar inicio, conexion y fin desde
@@ -127,6 +161,14 @@ y vigencia hasta la UI. Una fuente vencida, ausente o ambigua se conserva como
 evidencia degradada y limita la confianza; nunca transforma infraestructura o
 la salida publica propia en una IP atribuida al contacto.
 
+La decision de exclusion se calcula por separado del score. Meta, un resolvedor
+DNS publico con match exacto y la salida publica propia observada en runtime son
+`hard_excluded`. Rangos generales de Google, STUN/TURN, CDN, cloud/hosting y
+etiquetas externas de proxy o hosting son `contextual`: permanecen visibles con
+fuente y motivo, pero el modelo v3 no las promueve automaticamente. Una IP sin
+esas señales es `eligible`, que solo significa ausencia de exclusion fuerte y
+no confirma ruta, identidad ni ubicacion.
+
 En paralelo, el backend interpreta solo metadata permitida de `CB:call` y guarda
 temporalmente en Redis evidencia de negociacion sanitizada. La clave HMAC aisla
 llamada, contacto, caso y sesion; una operacion Lua deduplica, limita y renueva
@@ -141,7 +183,16 @@ Al terminar cualquier captura, el backend consume el estado correspondiente de
 forma atomica y lo agrega como `transportEvidence` v2. Una caida de Redis
 degrada esa evidencia secundaria, no la actividad de llamada.
 
-El correlador v2 se ejecuta en backend despues del enriquecimiento y antes de
+El scoring v3 se calcula primero en el agente o proveedor local con un libro
+determinista de insumos, deltas y topes. Compara tasas por endpoint frente a una
+linea base real cuando existe, mide cercania al inicio de la subventana y evalua
+bidireccionalidad, densidad, volumen, protocolo y tipo de red. El
+enriquecimiento reutiliza esos mismos insumos y no vuelve a introducir paquetes
+de baseline. Prefijo E.164 del objetivo y GeoIP forman un bloque de contexto
+separado con `affectsRouteScore=false`; coincidencia o divergencia no cambia la
+probabilidad de ruta.
+
+El correlador v3 se ejecuta en backend despues del enriquecimiento y antes de
 persistir, auditar o emitir. Fusiona flujo de paquetes, fases, STUN sanitizado,
 señalizacion Baileys, registro de infraestructura y enriquecimiento. Una ruta
 `direct_confirmed` exige coincidencia exacta de IP entre flujo bidireccional
@@ -150,7 +201,16 @@ STUN sin peer Baileys permanece `direct_probable`. DNS, relay, CDN/cloud, salida
 publica propia y GeoIP solo clasifican o limitan; nunca prueban una ruta directa.
 El resultado `routeAssessment` conserva score, fuentes, cantidad de evidencias
 directas independientes, candidata principal, razones y limitaciones. Los
-veredictos historicos se mantienen como alias compatibles.
+veredictos historicos se mantienen como alias compatibles. Las evaluaciones y
+scores v2 almacenados siguen legibles; una extension v3 incompleta o incoherente
+se retira en memoria sin modificar MongoDB.
+
+La proyeccion comercial agrega `networkContextPresentation` sin mutar la
+evidencia canonica. Declara relacion y contradiccion, contribucion cero al
+score y `radiusKm: null` porque las fuentes GeoIP actuales no ofrecen un radio
+verificable. El informe 1.3 conserva `scoreBreakdown` y `networkContext` en
+JSON/CSV; HTML y PDF comparten el mismo limite visible y lo anuncian cuando se
+resume el conjunto.
 
 El ciclo de evento de llamada y el ciclo de captura no son el mismo objeto. Una llamada puede no producir captura si falta autorizacion/capacidad; una captura manual puede existir sin evento de llamada.
 
