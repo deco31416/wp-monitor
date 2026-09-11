@@ -752,12 +752,22 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     frontend; typechecks, lint, builds y documentacion en verde el 2026-09-10. La
     validacion visual/runtime E3/E4 queda reservada para `OBS-20.12I`.
 
-- [ ] **OBS-20.12H — Matriz automatizada de regresion** — `TODO`
+- [x] **OBS-20.12H — Matriz automatizada de regresion** — `DONE (E2 LOCAL)`
   - Cubrir relay, directa probable/confirmada, mixta, sin correlacion, trafico de
     fondo, ASN residencial/movil, cloud ambiguo, roaming, IPv4/IPv6, historicos,
     duplicados, eventos fuera de orden e informes.
   - Cierre: QA completa y contratos afectados en verde, sin secretos ni contenido
     privado en logs o artefactos.
+  - Implementado: `test/call-route-regression-matrix.test.ts` ejecuta una matriz
+    declarativa de diez escenarios sobre scoring v3, correlacion de ruta y
+    presentacion comercial. El fixture usa exclusivamente rangos de documentacion
+    RFC 5737/RFC 3849 e identificadores sinteticos; valida ademas neutralidad del
+    contexto geografico, compatibilidad v2, rechazo conservador de extensiones v3
+    incoherentes, idempotencia, orden monotono y paridad JSON/HTML/PDF.
+  - Evidencia local: 5/5 specs de matriz y 72/72 contratos dirigidos; 369/369
+    backend y 41/41 frontend, typechecks, lint, builds, documentacion,
+    contenedores, Compose sintetico y licencias en verde el 2026-09-10. La
+    evidencia runtime E3/E4 queda reservada para `OBS-20.12I`.
 
 - [ ] **OBS-20.12I — Runtime, E4 y cierre** — `TODO`
   - Repetir ciclos sinteticos, stop idempotente, staging aislado, persistencia y

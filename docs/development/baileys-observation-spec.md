@@ -258,13 +258,17 @@ Reglas:
 | Recibos | accepted, delivered, read, played, retroceso | unitaria |
 | Dispositivo | ios, web, android, desktop, unknown, fromMe | unitaria y UI |
 | Perfil | cambio, igualdad, privacidad, error parcial | unitaria e integracion |
-| Llamada | contestada, rechazada, perdida, parcial, replay, contratos historicos v1/v2 y scoring/ruta v3, IPv4/IPv6 y rechazo de conclusiones producidas por el agente | unitaria y contrato |
+| Llamada | contestada, rechazada, perdida, parcial, replay, contratos historicos v1/v2 y scoring/ruta v3, IPv4/IPv6 y rechazo de conclusiones producidas por el agente | unitaria, contrato y matriz `test/call-route-regression-matrix.test.ts` |
 | Scope | dos contactos, dos casos, sesion cerrada, grupo | negativa de aislamiento |
 | UI | loading, vacio, parcial, desconectado, error, exito | componentes y accesibilidad |
 | Informes | datos 1.1, 1.2, truncados y sin RTT | contrato, snapshot e integridad |
 
-Los nombres concretos de archivos se fijan al implementar cada modulo; la matriz
-maestra registra el vinculo final antes de marcarlo `DONE`.
+La matriz maestra de ruta usa el fixture declarativo y sanitizado
+`test/fixtures/call-route-regression-matrix-v3.json`. Cubre relay, ruta directa
+probable y confirmada, ruta mixta, ausencia de correlacion, trafico de fondo,
+red residencial/movil, cloud ambiguo, roaming, IPv4/IPv6, historicos, duplicados,
+eventos fuera de orden y paridad de informes. No contiene capturas, credenciales,
+contenido de mensajes ni identificadores reales.
 
 ## Puerta de aceptacion del contrato 1.2
 

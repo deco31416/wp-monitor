@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Synthetic RFC 5737/RFC 3849 regression data only; no production capture, credentials, message content, or real contact identifiers.",
+  "scenarios": [
+    {
+      "id": "relay-only-ipv4",
+      "targetJid": "573000000001@s.whatsapp.net",
+      "endpointKind": "meta_relay",
+      "ip": "192.0.2.10",
+      "addressFamily": 4,
+      "observedCountryCode": "CO",
+      "expectedClassification": "relay_confirmed",
+      "expectedContext": "match"
+    },
+    {
+      "id": "direct-probable-ipv4",
+      "targetJid": "573000000002@s.whatsapp.net",
+      "endpointKind": "consumer",
+      "ip": "198.51.100.20",
+      "addressFamily": 4,
+      "observedCountryCode": "CO",
+      "expectedClassification": "direct_probable",
+      "expectedContext": "match"
+    },
+    {
+      "id": "direct-confirmed-ipv4",
+      "targetJid": "521000000003@s.whatsapp.net",
+      "endpointKind": "consumer",
+      "ip": "198.51.100.30",
+      "addressFamily": 4,
+      "observedCountryCode": "MX",
+      "transportPeer": true,
+      "expectedClassification": "direct_confirmed",
+      "expectedContext": "match"
+    },
+    {
+      "id": "mixed-ipv4",
+      "targetJid": "581000000004@s.whatsapp.net",
+      "endpointKind": "consumer_with_relay",
+      "ip": "198.51.100.40",
+      "addressFamily": 4,
+      "observedCountryCode": "VE",
+      "transportPeer": true,
+      "expectedClassification": "mixed",
+      "expectedContext": "match"
+    },
+    {
+      "id": "background-only",
+      "targetJid": "573000000005@s.whatsapp.net",
+      "endpointKind": "background",
+      "ip": "203.0.113.50",
+      "addressFamily": 4,
+      "observedCountryCode": "CO",
+      "expectedClassification": "unresolved",
+      "expectedContext": "match"
+    },
+    {
+      "id": "mobile-asn-roaming",
+      "targetJid": "573000000006@s.whatsapp.net",
+      "endpointKind": "mobile",
+      "ip": "198.51.100.60",
+      "addressFamily": 4,
+      "observedCountryCode": "US",
+      "expectedClassification": "direct_probable",
+      "expectedContext": "mismatch",
+      "scoreEquivalenceGroup": "geo-context-neutral"
+    },
+    {
+      "id": "mobile-asn-local-context",
+      "targetJid": "573000000007@s.whatsapp.net",
+      "endpointKind": "mobile",
+      "ip": "198.51.100.70",
+      "addressFamily": 4,
+      "observedCountryCode": "CO",
+      "expectedClassification": "direct_probable",
+      "expectedContext": "match",
+      "scoreEquivalenceGroup": "geo-context-neutral"
+    },
+    {
+      "id": "ambiguous-cloud",
+      "targetJid": "521000000008@s.whatsapp.net",
+      "endpointKind": "cloud",
+      "ip": "203.0.113.80",
+      "addressFamily": 4,
+      "observedCountryCode": "MX",
+      "expectedClassification": "unresolved",
+      "expectedContext": "match"
+    },
+    {
+      "id": "ipv6-registry-pending",
+      "targetJid": "581000000009@s.whatsapp.net",
+      "endpointKind": "ipv6_pending",
+      "ip": "2001:db8::90",
+      "addressFamily": 6,
+      "observedCountryCode": "VE",
+      "expectedClassification": "unresolved",
+      "expectedContext": "match"
+    },
+    {
+      "id": "ipv6-eligible",
+      "targetJid": "581000000010@s.whatsapp.net",
+      "endpointKind": "ipv6_eligible",
+      "ip": "2001:db8::100",
+      "addressFamily": 6,
+      "observedCountryCode": "VE",
+      "expectedClassification": "direct_probable",
+      "expectedContext": "match"
+    }
+  ]
+}
