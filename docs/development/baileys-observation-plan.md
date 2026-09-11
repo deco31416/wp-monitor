@@ -4,7 +4,7 @@ Estado del plan: `EN EJECUCION`
 
 Rama de trabajo: `develop`
 
-Ultima revision: `2026-09-10`
+Ultima revision: `2026-09-11`
 
 Este archivo es un tablero de ingenieria, no una declaracion de funcionalidad
 publicada. Una tarea solo cambia a `DONE` cuando su criterio de aceptacion tiene
@@ -78,7 +78,7 @@ integran en las pestanas actuales.
 Estos cambios permanecen locales hasta completar revision final, documentacion
 de comportamiento y proceso de release autorizado.
 
-## Matriz maestra de 28 tareas
+## Matriz maestra de 29 iniciativas
 
 ### A. Contrato y arquitectura
 
@@ -866,6 +866,36 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     informes, reconexion y observabilidad pasan en el entorno objetivo.
   - Afecta: release; requiere autorizacion explicita de despliegue.
 
+### I. Correlacion WebRTC y rutas de llamada
+
+- [ ] **OBS-29 — Observabilidad WebRTC y correlacion de ruta v4** — `PLANNED (E1 DESIGN)`
+  - Objetivo: complementar el motor libpcap/Baileys existente con evidencia
+    WebRTC sanitizada del navegador, flujos de cinco tuplas y correlacion
+    STUN/TURN. No reemplaza la captura actual ni promete que WhatsApp exponga
+    una direccion remota cuando la llamada usa relay o aplica protecciones de
+    privacidad.
+  - Alcance comercial: ampliar exclusivamente la pestana `Llamada` y sus
+    informes; no agrega una nueva pestana, un segundo modo de seguimiento ni
+    cambia los totales de Actividad, Resumen, Patrones o Perfil.
+  - Dependencia demostrada: `OBS-20.12I` probo la captura e informes en E4, y
+    `OBS-20.12B` documento que Baileys no aporto fases para una llamada realizada
+    por el otro dispositivo vinculado. Esta iniciativa conserva ambos hechos y
+    agrega una fuente perteneciente al navegador observado.
+  - Regla de verdad: una direccion WebRTC puede estar ausente, anonimizada o ser
+    infraestructura. Solo una coincidencia exacta y versionada entre candidato
+    WebRTC elegible y flujo activo observado puede elevar la confianza; GeoIP,
+    E.164, traceroute, volumen o proximidad geografica nunca descubren ni
+    confirman por si solos la IP de un contacto.
+  - Arquitectura propuesta: sidecar `webrtc-observer` no privilegiado, CDP solo
+    por loopback dentro del namespace de `wa-browser`, contrato interno firmado
+    y correlacion en backend. `capture-agent` conserva exclusivamente su
+    responsabilidad libpcap y sus capabilities actuales.
+  - Estado y desglose: [plan incremental OBS-29](webrtc-call-observation-plan.md).
+  - Decision arquitectonica: [ADR 0006](../adr/0006-webrtc-observer-sidecar.md).
+  - Cierre: nueve tareas verificadas, compatibilidad historica, degradacion al
+    motor actual cuando el observer no aporte evidencia, QA E2/E3 y una unica
+    validacion E4 autorizada antes de cualquier promocion.
+
 ## Orden de ejecucion
 
 1. Cerrar `OBS-02` y `OBS-03` antes de ampliar contratos.
@@ -875,6 +905,9 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
 4. Aplicar el agregador a las pestanas existentes.
 5. Alinear todos los informes y la documentacion.
 6. Ejecutar QA, runtime local, staging y finalmente VPS con autorizacion.
+7. Ejecutar `OBS-29` de forma incremental: primero la PoC aislada; solo si esta
+   demuestra acceso estable a WebRTC se autoriza implementar el nuevo sidecar y
+   los contratos persistentes.
 
 ## Puerta de cierre por tarea
 

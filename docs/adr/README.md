@@ -9,3 +9,4 @@ Los ADR registran decisiones estables y su contexto. No se reescriben para ocult
 | [0003](0003-evidence-package-integrity.md) | Accepted | JSON canonico, manifiesto y SHA-256 |
 | [0004](0004-browser-capture-sidecar.md) | Accepted | Aislar WhatsApp Web y captura de llamada en un sidecar de minimo privilegio |
 | [0005](0005-baileys-observation-hub.md) | Accepted | Centralizar observacion pasiva en un hub unico por socket Baileys |
+| [0006](0006-webrtc-observer-sidecar.md) | Proposed | Separar observabilidad WebRTC del agente privilegiado de captura |

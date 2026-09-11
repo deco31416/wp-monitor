@@ -78,4 +78,5 @@ Incluye objetivo, archivos, riesgo, pruebas, capturas anonimizadas si cambia UI,
 - [Especificacion de actividad pasiva e informes](passive-activity-report-spec.md)
 - [Especificacion de observacion unificada Baileys](baileys-observation-spec.md)
 - [Plan controlado de observacion unificada](baileys-observation-plan.md)
+- [Plan OBS-29 de observabilidad WebRTC y correlacion de ruta](webrtc-call-observation-plan.md)
 - [Proceso de release](release-process.md)
