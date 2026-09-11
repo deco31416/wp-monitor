@@ -509,7 +509,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     regenerada e inspeccionada visualmente. No se tocaron produccion ni Docker
     runtime; E3/E4 quedan para `OBS-20.12`.
 
-- [ ] **OBS-20.12 — Regresion, runtime y cierre operacional** — `IN PROGRESS (E3 LOCAL)`
+- [x] **OBS-20.12 — Regresion, runtime y cierre operacional** — `DONE (E4, LIMITACION DECLARADA)`
   - Alcance: completar documentacion, matriz automatizada, smoke local, staging,
     rollback y una validacion VPS autorizada.
   - Aceptacion: sin regresiones en sesiones Baileys, captura manual/automatica,
@@ -529,7 +529,8 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     autenticado respondieron 200 en loopback. El readiness general quedo 503
     solo por la sesion WhatsApp sintetica no enlazada, condicion esperada en
     este harness. Produccion, sesiones y volumenes reales no se tocaron.
-    Quedan staging y E4 autorizada antes de marcar la tarea como terminada.
+    Esa evidencia local se complemento posteriormente con staging, rollback y
+    la validacion E4 autorizada registrada en `OBS-20.12I`.
   - Evidencia VPS parcial del 2026-09-09: captura manual e informes operaron con
     5.197 paquetes y el registro de infraestructura separo cinco endpoints Meta
     y tres endpoints Google/STUN/cloud. La llamada iniciada desde WhatsApp Web no
@@ -575,8 +576,14 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     dispositivo Baileys no aporta las fases de la llamada ejecutada por el otro
     dispositivo vinculado `wa-browser`. No se repetiran llamadas hasta agregar
     una fuente de fase perteneciente a la captura.
+  - Evidencia E4 del 2026-09-11: el marcador autorizado del operador aporto la
+    fuente de fase perteneciente a la captura y permitio separar linea base,
+    negociacion, llamada activa y cierre sin atribuir señalizacion a Baileys.
+    Baileys/raw siguio sin emitir una fase adicional en esa llamada; por eso esta
+    subtarea conserva la limitacion declarada y no se presenta como correlacion
+    automatica entre dispositivos vinculados.
 
-- [ ] **OBS-20.12C — Ventana diferencial confiable** — `IN PROGRESS (C3 E2 LOCAL)`
+- [x] **OBS-20.12C — Ventana diferencial confiable** — `DONE (E4)`
   - Separar de forma verificable linea base, negociacion, llamada activa y cierre.
   - Cierre: una llamada correlacionada produce paquetes activos; una captura sin
     correlacion permanece no atribuible y nunca fabrica una ruta.
@@ -653,6 +660,11 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     - Evidencia local: 33/33 specs dirigidos, 354/354 backend, 39/39 frontend,
       typechecks, lint, builds, documentacion, contenedores, Compose sintetico y
       licencias en verde el 2026-09-10.
+  - Evidencia E4 del 2026-09-11: una llamada autorizada y contestada conservo 49
+    paquetes de linea base, 1.946 de negociacion, 1.564 de llamada activa y 37
+    posteriores, con cero sin clasificar, cero descartados y sin truncamiento.
+    Las transiciones fueron monotonas y su procedencia distinguio marcadores del
+    operador de inicio/cierre del sistema; no se invento evidencia Baileys/raw.
 
 - [x] **OBS-20.12D — Libro completo de endpoints** — `DONE (E2 LOCAL)`
   - Conservar para cada IP publica conteos totales/base/llamada, bytes, direccion,
@@ -769,12 +781,36 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     contenedores, Compose sintetico y licencias en verde el 2026-09-10. La
     evidencia runtime E3/E4 queda reservada para `OBS-20.12I`.
 
-- [ ] **OBS-20.12I — Runtime, E4 y cierre** — `TODO`
+- [x] **OBS-20.12I — Runtime, E4 y cierre** — `DONE (E4)`
   - Repetir ciclos sinteticos, stop idempotente, staging aislado, persistencia y
     una llamada VPS autorizada; revisar tambien deriva Compose antes de promover.
   - Cierre: evidencia E4 coherente con la ruta realmente observada. Un resultado
     solo relay es valido; una candidata directa no es requisito ni puede
     fabricarse.
+  - Procedencia: el VPS fue alineado mediante el flujo normal de Dokploy con el
+    commit exacto `f908a9dd7f1e8af395197b87d85fa8233477883f`. Preview Compose,
+    backup cifrado nuevo y copia externa verificada, rollback reconstruido,
+    redes, volumenes y persistencia historica pasaron antes del smoke final.
+  - Evidencia previa: dos ciclos UDP posteriores al despliegue conservaron 10 y
+    8 paquetes, stop idempotente, reutilizacion del agente y cero captura
+    residual. Backend, frontend, navegador, agente, MongoDB, Redis y Baileys
+    quedaron saludables.
+  - Evidencia E4 del 2026-09-11: una unica llamada autorizada, contestada y
+    finalizada produjo 3.596 paquetes en 260 segundos, cero descartados y captura
+    no truncada. El libro por fases reconcilio exactamente 49 de linea base,
+    1.946 de negociacion, 1.564 activos, 37 posteriores y cero sin clasificar.
+  - La conclusion backend fue `relay_confirmed` con score v3 de 78/100: diez
+    endpoints observados, siete Meta/relay, tres Google/cloud, cero candidatas
+    directas y cero evidencia directa independiente. STUN y E.164/GeoIP quedaron
+    como contexto con aporte cero al score; ninguna IP fue atribuida al contacto.
+  - Persistencia e informes: el analisis aumento el historial durable en una
+    unidad; Evidence Package 1.3, JSON, HTML, PDF, ZIP, nueve anexos CSV, hashes,
+    checksums y paridad semantica pasaron sin secretos detectados. No quedo
+    captura activa, no hubo reinicios nuevos, errores ni crecimiento de zombies.
+  - Riesgos residuales declarados: fases dependientes de marcadores del operador
+    en esta llamada, ausencia de muestra IPv6, imagen activa del navegador
+    equivalente pero distinta de la etiqueta reconstruida y 28 zombies estables
+    pendientes de investigacion operacional separada.
 
 ### F. Experiencia comercial unificada
 
