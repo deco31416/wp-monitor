@@ -25,6 +25,15 @@ interface RawWebRtcSnapshot {
 
 const CDP_COMMAND_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 256 * 1_024;
+const WEBRTC_PROBE_RUNTIME_VERSION = 2;
+const WEBRTC_PROBE_IMPLEMENTATION = 'bounded-periodic-stats-v2';
+
+function buildProbeReadyExpression(): string {
+    return `Boolean(
+        globalThis.__wpMonitorWebRtcProbe?.version === ${WEBRTC_PROBE_RUNTIME_VERSION}
+        && globalThis.__wpMonitorWebRtcProbe?.implementation === '${WEBRTC_PROBE_IMPLEMENTATION}'
+    )`;
+}
 
 export interface WebRtcObservationAdapter {
     ready(): Promise<boolean>;
@@ -44,6 +53,14 @@ class CdpClient {
     }>();
 
     constructor(private readonly url: string) {}
+
+    isOpen(): boolean {
+        return this.socket?.readyState === WebSocket.OPEN;
+    }
+
+    matches(url: string): boolean {
+        return this.url === url;
+    }
 
     async connect(): Promise<void> {
         const socket = new WebSocket(this.url);
@@ -117,35 +134,149 @@ class CdpClient {
 
 export function buildProductionObserverInjection(): string {
     return `(() => {
-        if (globalThis.__wpMonitorWebRtcProbe) return;
-        const Native = globalThis.RTCPeerConnection;
+        const existingProbe = globalThis.__wpMonitorWebRtcProbe;
+        if (
+            existingProbe?.version === ${WEBRTC_PROBE_RUNTIME_VERSION}
+            && existingProbe?.implementation === '${WEBRTC_PROBE_IMPLEMENTATION}'
+        ) return;
+        let Native = globalThis.RTCPeerConnection;
+        if (existingProbe && typeof Native === 'function') {
+            existingProbe.disarm?.();
+            if (existingProbe.version === 1) {
+                const inheritedConstructor = Object.getPrototypeOf(Native);
+                if (typeof inheritedConstructor === 'function' && inheritedConstructor !== Function.prototype) {
+                    Native = inheritedConstructor;
+                }
+            }
+        }
         if (typeof Native !== 'function') return;
         let armed = false;
         let connections = [];
         let transitions = [];
+        let selectedPairs = new Map();
+        let statsFailureIds = new Set();
+        let samplingTimer = null;
+        let samplingInFlight = null;
         let sequence = 0;
         let generation = 0;
+        let connectionLimitReached = false;
+        let transitionLimitReached = false;
+        let pairLimitReached = false;
+        function stopSamplingTimer() {
+            if (samplingTimer !== null) clearInterval(samplingTimer);
+            samplingTimer = null;
+        }
         function clearConnections() {
             for (const item of connections) {
                 item.connection.removeEventListener('iceconnectionstatechange', item.observe);
             }
             connections = [];
         }
+        async function collectSelectedPairs(item, connectionGeneration) {
+            let report;
+            try {
+                report = await item.connection.getStats();
+            } catch {
+                if (armed && connectionGeneration === generation) statsFailureIds.add(item.id);
+                return;
+            }
+            if (!armed || connectionGeneration !== generation) return;
+            const stats = new Map();
+            report.forEach((value, key) => stats.set(key, value));
+            const selectedIds = new Set();
+            for (const value of stats.values()) {
+                if (value.type === 'transport' && typeof value.selectedCandidatePairId === 'string') {
+                    selectedIds.add(value.selectedCandidatePairId);
+                }
+            }
+            if (selectedIds.size === 0) {
+                for (const value of stats.values()) {
+                    if (value.type === 'candidate-pair' && value.state === 'succeeded' && value.nominated === true) {
+                        selectedIds.add(value.id);
+                    }
+                }
+            }
+            const observedAt = new Date().toISOString();
+            for (const id of selectedIds) {
+                const pair = stats.get(id);
+                if (!pair || pair.type !== 'candidate-pair') continue;
+                const key = item.id + ':' + id;
+                const previous = selectedPairs.get(key);
+                if (!previous && selectedPairs.size >= 16) {
+                    pairLimitReached = true;
+                    continue;
+                }
+                const local = stats.get(pair.localCandidateId) || {};
+                const remote = stats.get(pair.remoteCandidateId) || {};
+                selectedPairs.set(key, {
+                    peerConnectionId: item.id,
+                    state: pair.state,
+                    nominated: pair.nominated === true,
+                    selected: true,
+                    firstObservedAt: previous?.firstObservedAt || observedAt,
+                    lastObservedAt: observedAt,
+                    local: {
+                        candidateType: local.candidateType,
+                        protocol: local.protocol,
+                        relayProtocol: local.relayProtocol,
+                        address: local.address || local.ip,
+                        port: local.port,
+                    },
+                    remote: {
+                        candidateType: remote.candidateType,
+                        protocol: remote.protocol,
+                        relayProtocol: remote.relayProtocol,
+                        address: remote.address || remote.ip,
+                        port: remote.port,
+                    },
+                    packetsSent: pair.packetsSent,
+                    packetsReceived: pair.packetsReceived,
+                    bytesSent: pair.bytesSent,
+                    bytesReceived: pair.bytesReceived,
+                    currentRoundTripTime: pair.currentRoundTripTime,
+                });
+            }
+        }
+        async function sampleAll() {
+            if (!armed) return;
+            if (samplingInFlight) return samplingInFlight;
+            const connectionGeneration = generation;
+            const work = (async () => {
+                for (const item of connections.slice()) {
+                    await collectSelectedPairs(item, connectionGeneration);
+                }
+            })();
+            samplingInFlight = work;
+            try {
+                await work;
+            } finally {
+                if (samplingInFlight === work) samplingInFlight = null;
+            }
+        }
         function record(connection) {
             if (!armed) return;
-            if (connections.length >= 32) return;
+            if (connections.length >= 32) {
+                connectionLimitReached = true;
+                return;
+            }
             const id = 'pc-' + (++sequence);
             const connectionGeneration = generation;
+            let item;
             const observe = () => {
                 if (!armed || connectionGeneration !== generation) return;
-                if (transitions.length >= 64) return;
-                transitions.push({
-                    peerConnectionId: id,
-                    state: connection.iceConnectionState || connection.connectionState || 'unknown',
-                    observedAt: new Date().toISOString(),
-                });
+                if (transitions.length >= 64) {
+                    transitionLimitReached = true;
+                } else {
+                    transitions.push({
+                        peerConnectionId: id,
+                        state: connection.iceConnectionState || connection.connectionState || 'unknown',
+                        observedAt: new Date().toISOString(),
+                    });
+                }
+                void sampleAll();
             };
-            connections.push({ id, connection, observe });
+            item = { id, connection, observe };
+            connections.push(item);
             observe();
             connection.addEventListener('iceconnectionstatechange', observe);
         }
@@ -162,87 +293,43 @@ export function buildProductionObserverInjection(): string {
             value: ObservedPeerConnection,
         });
         globalThis.__wpMonitorWebRtcProbe = Object.freeze({
-            version: 1,
+            version: ${WEBRTC_PROBE_RUNTIME_VERSION},
+            implementation: '${WEBRTC_PROBE_IMPLEMENTATION}',
             arm() {
+                stopSamplingTimer();
                 clearConnections();
                 generation += 1;
                 sequence = 0;
                 transitions = [];
+                selectedPairs = new Map();
+                statsFailureIds = new Set();
+                samplingInFlight = null;
+                connectionLimitReached = false;
+                transitionLimitReached = false;
+                pairLimitReached = false;
                 armed = true;
+                samplingTimer = setInterval(() => { void sampleAll(); }, 1000);
                 return true;
             },
             disarm() {
                 armed = false;
                 generation += 1;
+                stopSamplingTimer();
                 clearConnections();
                 transitions = [];
+                selectedPairs = new Map();
+                statsFailureIds = new Set();
+                samplingInFlight = null;
                 return true;
             },
             async snapshot() {
-                const selectedPairs = [];
-                let statsFailures = 0;
-                for (const item of connections) {
-                    let report;
-                    try {
-                        report = await item.connection.getStats();
-                    } catch {
-                        statsFailures += 1;
-                        continue;
-                    }
-                    const stats = new Map();
-                    report.forEach((value, key) => stats.set(key, value));
-                    const selectedIds = new Set();
-                    for (const value of stats.values()) {
-                        if (value.type === 'transport' && typeof value.selectedCandidatePairId === 'string') {
-                            selectedIds.add(value.selectedCandidatePairId);
-                        }
-                    }
-                    if (selectedIds.size === 0) {
-                        for (const value of stats.values()) {
-                            if (value.type === 'candidate-pair' && value.state === 'succeeded' && value.nominated === true) {
-                                selectedIds.add(value.id);
-                            }
-                        }
-                    }
-                    for (const id of selectedIds) {
-                        if (selectedPairs.length >= 16) break;
-                        const pair = stats.get(id);
-                        if (!pair || pair.type !== 'candidate-pair') continue;
-                        const local = stats.get(pair.localCandidateId) || {};
-                        const remote = stats.get(pair.remoteCandidateId) || {};
-                        selectedPairs.push({
-                            peerConnectionId: item.id,
-                            state: pair.state,
-                            nominated: pair.nominated === true,
-                            selected: true,
-                            local: {
-                                candidateType: local.candidateType,
-                                protocol: local.protocol,
-                                relayProtocol: local.relayProtocol,
-                                address: local.address || local.ip,
-                                port: local.port,
-                            },
-                            remote: {
-                                candidateType: remote.candidateType,
-                                protocol: remote.protocol,
-                                relayProtocol: remote.relayProtocol,
-                                address: remote.address || remote.ip,
-                                port: remote.port,
-                            },
-                            packetsSent: pair.packetsSent,
-                            packetsReceived: pair.packetsReceived,
-                            bytesSent: pair.bytesSent,
-                            bytesReceived: pair.bytesReceived,
-                            currentRoundTripTime: pair.currentRoundTripTime,
-                        });
-                    }
-                }
+                await sampleAll();
                 return {
                     connectionCount: connections.length,
-                    selectedPairs,
+                    selectedPairs: Array.from(selectedPairs.values()),
                     stateTransitions: transitions.slice(),
-                    statsFailures,
-                    truncated: connections.length >= 32 || selectedPairs.length >= 16 || transitions.length >= 64,
+                    statsFailures: statsFailureIds.size,
+                    truncated: connectionLimitReached || pairLimitReached || transitionLimitReached,
                 };
             },
         });
@@ -318,8 +405,8 @@ function sanitizeSnapshot(raw: RawWebRtcSnapshot, startedAt: Date, endedAt: Date
                 state: pair.state,
                 nominated: pair.nominated === true,
                 selected: pair.selected === true,
-                firstObservedAt: startedAt,
-                lastObservedAt: endedAt,
+                firstObservedAt: pair.firstObservedAt,
+                lastObservedAt: pair.lastObservedAt,
                 local: candidate(local),
                 remote: candidate(remote),
                 packetsSent: finite(pair.packetsSent),
@@ -350,6 +437,7 @@ function sanitizeSnapshot(raw: RawWebRtcSnapshot, startedAt: Date, endedAt: Date
 
 export class WebRtcCdpObserver implements WebRtcObservationAdapter {
     private client: CdpClient | null = null;
+    private registeredClient: CdpClient | null = null;
     private active: { callId: string; targetJid: string; startedAt: Date; expiresAt: number } | null = null;
     private expiryTimer: NodeJS.Timeout | null = null;
     private lifecycleTail: Promise<void> = Promise.resolve();
@@ -377,20 +465,18 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
 
     async ready(): Promise<boolean> {
         return this.withLifecycleLock(async () => {
+            if (this.active) return this.client?.isOpen() === true;
             try {
-                const client = await this.connectToWhatsappTarget();
-                try {
-                    await this.installProbe(client);
-                    if (!this.initialized && !this.active) {
-                        const disarmed = await this.disarmProbe(client);
-                        if (!disarmed) throw new Error('webrtc_probe_disarm_failed');
-                    }
-                    this.initialized = true;
-                    return true;
-                } finally {
-                    client.close();
+                const client = await this.getWhatsappClient();
+                await this.installProbe(client);
+                if (!this.initialized) {
+                    const disarmed = await this.disarmProbe(client);
+                    if (!disarmed) throw new Error('webrtc_probe_disarm_failed');
                 }
+                this.initialized = true;
+                return true;
             } catch {
+                this.releaseClient();
                 return false;
             }
         });
@@ -399,7 +485,7 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
     async start(callId: string, targetJid: string, ttlMs: number): Promise<void> {
         return this.withLifecycleLock(async () => {
             if (this.active) throw new Error('observer_already_active');
-            const client = await this.connectToWhatsappTarget();
+            const client = await this.getWhatsappClient();
             try {
                 await this.installProbe(client);
                 const armed = await client.send('Runtime.evaluate', {
@@ -409,13 +495,12 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
                 const result = armed.result as Record<string, unknown> | undefined;
                 if (result?.value !== true) throw new Error('webrtc_probe_arm_failed');
             } catch (error) {
-                client.close();
+                this.releaseClient(client);
                 throw error;
             }
             const startedAt = new Date(this.now());
             const generation = ++this.generation;
             this.initialized = true;
-            this.client = client;
             this.active = { callId, targetJid, startedAt, expiresAt: this.now() + ttlMs };
             this.expiryTimer = setTimeout(() => { void this.expireActiveScope(generation); }, ttlMs);
             this.expiryTimer.unref();
@@ -449,9 +534,8 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
                     : {};
                 return sanitizeSnapshot(raw, active.startedAt, new Date(this.now()));
             } finally {
-                await this.disarmProbe(client);
-                client.close();
-                if (this.client === client) this.client = null;
+                const reusable = await this.disarmProbe(client);
+                if (!reusable) this.releaseClient(client);
                 if (this.active === active) this.active = null;
             }
         });
@@ -461,11 +545,9 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
         return this.withLifecycleLock(async () => {
             this.clearExpiryTimer();
             const client = this.client;
-            this.client = null;
             this.active = null;
-            if (!client) return;
-            await this.disarmProbe(client);
-            client.close();
+            if (client) await this.disarmProbe(client);
+            this.releaseClient(client ?? undefined);
         });
     }
 
@@ -483,7 +565,7 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
         return parsed as CdpTarget[];
     }
 
-    private async connectToWhatsappTarget(): Promise<CdpClient> {
+    private async getWhatsappClient(): Promise<CdpClient> {
         const targets = await this.readTargets();
         const target = selectWhatsappCdpTarget(targets);
         if (!target || typeof target.webSocketDebuggerUrl !== 'string') throw new Error('whatsapp_cdp_target_unavailable');
@@ -499,9 +581,13 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
             || debuggerUrl.search
             || debuggerUrl.hash
         ) throw new Error('whatsapp_cdp_debugger_url_invalid');
-        const client = new CdpClient(debuggerUrl.toString());
+        const debuggerEndpoint = debuggerUrl.toString();
+        if (this.client?.isOpen() && this.client.matches(debuggerEndpoint)) return this.client;
+        this.releaseClient();
+        const client = new CdpClient(debuggerEndpoint);
         try {
             await client.connect();
+            this.client = client;
             return client;
         } catch (error) {
             client.close();
@@ -513,10 +599,13 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
         await client.send('Page.enable');
         await client.send('Runtime.enable');
         const source = buildProductionObserverInjection();
-        await client.send('Page.addScriptToEvaluateOnNewDocument', { source });
+        if (this.registeredClient !== client) {
+            await client.send('Page.addScriptToEvaluateOnNewDocument', { source });
+            this.registeredClient = client;
+        }
         await client.send('Runtime.evaluate', { expression: source, returnByValue: true });
         const probe = await client.send('Runtime.evaluate', {
-            expression: 'Boolean(globalThis.__wpMonitorWebRtcProbe?.version === 1)',
+            expression: buildProbeReadyExpression(),
             returnByValue: true,
         });
         const result = probe.result as Record<string, unknown> | undefined;
@@ -528,12 +617,20 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
             if (!this.active || generation !== this.generation) return;
             const client = this.client;
             this.clearExpiryTimer();
-            this.client = null;
             this.active = null;
             if (!client) return;
-            await this.disarmProbe(client);
-            client.close();
+            const reusable = await this.disarmProbe(client);
+            if (!reusable) this.releaseClient(client);
         });
+    }
+
+    private releaseClient(expected?: CdpClient): void {
+        const client = this.client;
+        if (!client || (expected && client !== expected)) return;
+        client.close();
+        this.client = null;
+        if (this.registeredClient === client) this.registeredClient = null;
+        this.initialized = false;
     }
 
     private clearExpiryTimer(): void {

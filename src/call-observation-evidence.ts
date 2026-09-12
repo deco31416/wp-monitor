@@ -141,6 +141,7 @@ export interface ObservedCallPacketMetadata {
 
 const MAX_FLOW_COUNT = 1_024;
 const MAX_STUN_TRANSACTIONS = 256;
+const STUN_TRANSACTION_MAX_SPAN_MS = 39_500;
 const MAX_TURN_CHANNELS = 64;
 const MAX_WEBRTC_PAIRS = 16;
 const MAX_WEBRTC_STATES = 64;
@@ -282,8 +283,20 @@ function packetDirection(packet: ObservedCallPacketMetadata, isLocalIp: (ip: str
     const localDestination = isLocalIp(packet.dstIp);
     if (localSource === localDestination) return null;
     return localSource
-        ? { direction: 'outgoing' as const, localPort: packet.srcPort, remoteIp: packet.dstIp, remotePort: packet.dstPort }
-        : { direction: 'incoming' as const, localPort: packet.dstPort, remoteIp: packet.srcIp, remotePort: packet.srcPort };
+        ? {
+            direction: 'outgoing' as const,
+            localIp: packet.srcIp,
+            localPort: packet.srcPort,
+            remoteIp: packet.dstIp,
+            remotePort: packet.dstPort,
+        }
+        : {
+            direction: 'incoming' as const,
+            localIp: packet.dstIp,
+            localPort: packet.dstPort,
+            remoteIp: packet.srcIp,
+            remotePort: packet.srcPort,
+        };
 }
 
 export function buildCallFlowEvidence(
@@ -353,22 +366,52 @@ export function buildStunTurnEvidence(
     transactionLimit = MAX_STUN_TRANSACTIONS,
 ): StunTurnEvidence {
     const boundedLimit = Math.max(1, Math.min(MAX_STUN_TRANSACTIONS, Math.floor(transactionLimit)));
-    const transactions = new Map<string, StunTransactionEvidence>();
-    const droppedTransactionKeys = new Set<string>();
+    const transactions: StunTransactionEvidence[] = [];
+    const transactionBuckets = new Map<string, StunTransactionEvidence[]>();
+    const droppedTransactionStarts = new Map<string, number[]>();
+    let droppedTransactions = 0;
     let droppedTransactionCountCapped = false;
     const channelBindings = new Map<number, string>();
     const channels = new Map<number, TurnChannelEvidence>();
-    for (const packet of packets) {
+    const orderedPackets = [...packets].sort((left, right) => (
+        left.timestamp.getTime() - right.timestamp.getTime()
+    ));
+    for (const packet of orderedPackets) {
         const direction = packetDirection(packet, isLocalIp);
         if (!direction) continue;
         const stun = packet.stun;
         if (stun) {
-            const key = `${stun.transactionFingerprint}|${stun.method}`;
-            let transaction = transactions.get(key);
+            const observedAt = packet.timestamp.getTime();
+            if (!Number.isFinite(observedAt)) continue;
+            const key = [
+                stun.transactionFingerprint,
+                stun.method,
+                packet.addressFamily,
+                packet.protocol,
+                direction.localIp,
+                direction.localPort,
+                direction.remoteIp,
+                direction.remotePort,
+            ].join('|');
+            const bucket = transactionBuckets.get(key) ?? [];
+            const latest = bucket[bucket.length - 1];
+            let transaction = latest
+                && observedAt - latest.firstObservedAt.getTime() <= STUN_TRANSACTION_MAX_SPAN_MS
+                ? latest
+                : undefined;
             if (!transaction) {
-                if (transactions.size >= boundedLimit) {
-                    if (droppedTransactionKeys.size < MAX_STUN_TRANSACTIONS) droppedTransactionKeys.add(key);
-                    else droppedTransactionCountCapped = true;
+                if (transactions.length >= boundedLimit) {
+                    const starts = droppedTransactionStarts.get(key) ?? [];
+                    const latestStart = starts[starts.length - 1];
+                    if (latestStart === undefined || observedAt - latestStart > STUN_TRANSACTION_MAX_SPAN_MS) {
+                        if (droppedTransactions < MAX_STUN_TRANSACTIONS) {
+                            starts.push(observedAt);
+                            droppedTransactionStarts.set(key, starts);
+                            droppedTransactions += 1;
+                        } else {
+                            droppedTransactionCountCapped = true;
+                        }
+                    }
                     continue;
                 }
                 transaction = {
@@ -386,7 +429,9 @@ export function buildStunTurnEvidence(
                     channelNumber: stun.channelNumber ?? null,
                     endpointKeys: [],
                 };
-                transactions.set(key, transaction);
+                transactions.push(transaction);
+                bucket.push(transaction);
+                transactionBuckets.set(key, bucket);
             }
             if (packet.timestamp < transaction.firstObservedAt) transaction.firstObservedAt = packet.timestamp;
             if (packet.timestamp > transaction.lastObservedAt) transaction.lastObservedAt = packet.timestamp;
@@ -432,7 +477,6 @@ export function buildStunTurnEvidence(
     }
 
     const limitations = new Set<string>();
-    const droppedTransactions = droppedTransactionKeys.size;
     if (droppedTransactions > 0) limitations.add('stun_transaction_limit_reached');
     if (droppedTransactionCountCapped) limitations.add('stun_dropped_transaction_count_capped');
     if (packets.some(packet => packet.turnChannelData) && channels.size === 0) {
@@ -441,10 +485,10 @@ export function buildStunTurnEvidence(
     return {
         version: 1,
         transactionLimit: boundedLimit,
-        storedTransactions: transactions.size,
+        storedTransactions: transactions.length,
         droppedTransactions,
         truncated: droppedTransactions > 0,
-        transactions: [...transactions.values()],
+        transactions,
         channels: [...channels.values()],
         limitations: [...limitations],
     };

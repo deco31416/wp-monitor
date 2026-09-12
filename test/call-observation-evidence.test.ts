@@ -120,6 +120,8 @@ test('STUN request and response correlation is stable when observations arrive o
             timestamp: new Date('2026-09-11T12:00:02.000Z'),
             srcIp: remoteIp,
             dstIp: localIp,
+            srcPort: 34_78,
+            dstPort: 50_000,
             stun: base,
         }),
         packet({
@@ -133,6 +135,119 @@ test('STUN request and response correlation is stable when observations arrive o
     assert.equal(evidence.transactions[0]?.iceRole, 'controlled');
     assert.equal(evidence.transactions[0]?.firstObservedAt.toISOString(), '2026-09-11T12:00:01.000Z');
     assert.equal(evidence.transactions[0]?.lastObservedAt.toISOString(), '2026-09-11T12:00:02.000Z');
+});
+
+test('STUN transactions with the same fingerprint stay isolated by transport tuple', () => {
+    const alternateLocalIp = '192.168.1.11';
+    const base: ParsedStunMessage = {
+        messageClass: 'request',
+        method: 'binding',
+        methodCode: 1,
+        messageType: 0x0001,
+        transactionFingerprint: 'c'.repeat(64),
+        endpoints: [],
+        attributeCount: 0,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_binding_request',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: null,
+        limitations: [],
+    };
+    const evidence = buildStunTurnEvidence([
+        packet({ stun: base }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.050Z'),
+            srcIp: '198.51.100.40',
+            dstIp: localIp,
+            srcPort: 4_500,
+            dstPort: 50_000,
+            stun: { ...base, messageClass: 'success_response', messageType: 0x0101 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.100Z'),
+            srcIp: remoteIp,
+            dstIp: alternateLocalIp,
+            srcPort: 34_78,
+            dstPort: 50_000,
+            stun: { ...base, messageClass: 'success_response', messageType: 0x0101 },
+        }),
+    ], ip => ip === localIp || ip === alternateLocalIp);
+
+    assert.equal(evidence.transactions.length, 3);
+    assert.equal(evidence.transactions.some(item => item.requestObserved && item.successResponseObserved), false);
+});
+
+test('STUN fingerprint reuse on the same tuple starts a new transaction after 39.5 seconds', () => {
+    const base: ParsedStunMessage = {
+        messageClass: 'request',
+        method: 'binding',
+        methodCode: 1,
+        messageType: 0x0001,
+        transactionFingerprint: 'd'.repeat(64),
+        endpoints: [],
+        attributeCount: 0,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_binding_request',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: null,
+        limitations: [],
+    };
+    const evidence = buildStunTurnEvidence([
+        packet({
+            timestamp: new Date('2026-09-11T12:00:39.500Z'),
+            srcIp: remoteIp,
+            dstIp: localIp,
+            srcPort: 34_78,
+            dstPort: 50_000,
+            stun: { ...base, messageClass: 'success_response', messageType: 0x0101 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:39.501Z'),
+            stun: base,
+        }),
+        packet({ stun: base }),
+    ], ip => ip === localIp);
+
+    assert.equal(evidence.transactions.length, 2);
+    assert.equal(evidence.transactions[0]?.requestObserved, true);
+    assert.equal(evidence.transactions[0]?.successResponseObserved, true);
+    assert.equal(evidence.transactions[1]?.requestObserved, true);
+    assert.equal(evidence.transactions[1]?.successResponseObserved, false);
+});
+
+test('STUN transaction limits count dropped windows without fixed-bucket duplication', () => {
+    const base: ParsedStunMessage = {
+        messageClass: 'request',
+        method: 'binding',
+        methodCode: 1,
+        messageType: 0x0001,
+        transactionFingerprint: 'e'.repeat(64),
+        endpoints: [],
+        attributeCount: 0,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_binding_request',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: null,
+        limitations: [],
+    };
+    const dropped = { ...base, transactionFingerprint: 'f'.repeat(64) };
+    const evidence = buildStunTurnEvidence([
+        packet({ timestamp: new Date(0), stun: base }),
+        packet({ timestamp: new Date(39_499), stun: dropped }),
+        packet({ timestamp: new Date(39_501), stun: dropped }),
+        packet({ timestamp: new Date(79_001), stun: dropped }),
+    ], ip => ip === localIp, 1);
+
+    assert.equal(evidence.storedTransactions, 1);
+    assert.equal(evidence.droppedTransactions, 2);
+    assert.equal(evidence.truncated, true);
+    assert.deepEqual(evidence.limitations, ['stun_transaction_limit_reached']);
 });
 
 test('stored browser evidence fails closed without retaining SDP or arbitrary fields', () => {
