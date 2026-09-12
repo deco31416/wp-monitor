@@ -157,6 +157,8 @@ export function createCaptureAgentApp(options: CaptureAgentAppOptions): Express 
                 operatorCallMarkers: 1,
                 endpointExclusionDecision: ENDPOINT_EXCLUSION_DECISION_VERSION,
                 candidateScoring: 3,
+                flowEvidence: 1,
+                stunTurnEvidence: 1,
             },
         });
     });

@@ -21,7 +21,9 @@ flowchart LR
     API <--> Redis[(Redis privado/AOF)]
     API <--> WA[WhatsApp/Baileys]
     API -->|HMAC privado| Agent[Capture agent UID 1000]
+    API -->|HMAC privado| Observer[WebRTC observer sin capabilities]
     Browser --> Agent
+    Browser --> Observer
     Browser <--> Profile[(Perfil persistente)]
     Agent -->|NET_RAW + NET_ADMIN| Namespace[Namespace de red compartido]
 ```
@@ -66,6 +68,11 @@ CALL_CAPTURE_MODE=agent
 CAPTURE_AGENT_URL=http://wa-browser:4100
 CAPTURE_AGENT_SHARED_SECRET=generate-a-different-64-character-secret
 CAPTURE_AGENT_TIMEOUT_MS=5000
+WEBRTC_OBSERVER_ENABLED=false
+WEBRTC_OBSERVER_URL=http://wa-browser:4200
+WEBRTC_OBSERVER_SHARED_SECRET=
+WEBRTC_OBSERVER_TIMEOUT_MS=5000
+WEBRTC_OBSERVER_TTL_MS=900000
 BROWSER_UI_PORT=7900
 BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 SELKIES_UI_PORT=7901
@@ -94,7 +101,7 @@ TRUST_PROXY=1
 ENABLE_SWAGGER=false
 ```
 
-`INITIAL_ADMIN_*` solo crea la cuenta si MongoDB esta vacio. Cambiar estos valores no recupera una cuenta existente. Tras el primer acceso, rota las credenciales desde **Account**. Elimina cualquier `DASHBOARD_TOKEN` heredado cuando termine la migracion.
+`INITIAL_ADMIN_*` solo crea la cuenta si MongoDB esta vacio. Cambiar estos valores no recupera una cuenta existente. Tras el primer acceso, rota las credenciales desde **Account**. Elimina cualquier `DASHBOARD_TOKEN` heredado cuando termine la migracion. Mantén `WEBRTC_OBSERVER_ENABLED=false` hasta una promoción controlada; al habilitarlo asigna un secreto aleatorio distinto de `CAPTURE_AGENT_SHARED_SECRET`.
 
 Construye el frontend con `VITE_API_URL=https://monitor.example.com`. Nunca pongas secretos en variables `VITE_*`: quedan incluidos en el bundle descargable.
 
@@ -126,7 +133,7 @@ En **Advanced > Command**, copia primero el comando actual mostrado por Dokploy.
 compose -p NOMBRE_EXISTENTE -f ./docker-compose.yml -f ./deploy/docker-compose.dokploy.yml up -d --build --remove-orphans
 ```
 
-Dokploy antepone `docker` al campo. No inventes ni cambies `NOMBRE_EXISTENTE` durante la migración. Antes de desplegar usa **Preview Compose** y comprueba: cuatro servicios activos de aplicación, ningún `redis` nuevo, red externa `wp-monitor-data`, ningún puerto host para backend/cliente, y los tres volúmenes marcados `external: true` con los nombres exactos declarados. No compartas el render porque contiene configuración interpolada.
+Dokploy antepone `docker` al campo. No inventes ni cambies `NOMBRE_EXISTENTE` durante la migración. Antes de desplegar usa **Preview Compose** y comprueba: cinco servicios activos de aplicación (`backend`, `client`, `wa-browser`, `capture-agent`, `webrtc-observer`), ningún `redis` nuevo, red externa `wp-monitor-data`, ningún puerto host para backend/cliente/observer, y los tres volúmenes marcados `external: true` con los nombres exactos declarados. No compartas el render porque contiene configuración interpolada.
 
 En **Domains** configura el mismo host HTTPS, sin `Strip Path`, con estas rutas:
 
@@ -135,13 +142,13 @@ En **Domains** configura el mismo host HTTPS, sin `Strip Path`, con estas rutas:
 | `backend` | `4000` | `/api`, `/socket.io`, `/checkin`, `/public`, `/uploads` |
 | `client` | `4001` | `/` |
 
-Las rutas especificas del backend deben tener prioridad sobre `/`. No publiques `backend`, `client` ni `capture-agent` mediante **Advanced > Ports**. Dokploy genera las etiquetas y la conectividad de Traefik desde Domains; valida el resultado en Preview Compose.
+Las rutas especificas del backend deben tener prioridad sobre `/`. No publiques `backend`, `client`, `capture-agent` ni `webrtc-observer` mediante **Advanced > Ports**. Dokploy genera las etiquetas y la conectividad de Traefik desde Domains; valida el resultado en Preview Compose.
 
 El acceso gráfico es un contrato independiente de las rutas de aplicación: proveedor de identidad/acceso → tunel administrado → red externa configurada → alias privado de `wa-browser:8080` → Selkies → Chromium. La identidad concreta del tunel, el hostname, el alias operativo y las políticas de acceso pertenecen al gestor privado del despliegue. Selkies aporta una segunda autenticación; no sustituye la puerta de identidad externa.
 
 ## Servicios y privilegios
 
-No otorgues capacidades al backend. En Compose queda no-root, `cap_drop: ALL`, `no-new-privileges`, limites y healthcheck. Solo el entrypoint de `capture-agent` recibe temporalmente `SETUID/SETGID/SETPCAP` para bajar a UID/GID 1000 y descarta esas capacidades antes de ejecutar Node; PID 1 conserva exclusivamente `NET_RAW/NET_ADMIN`, `NoNewPrivs=1` y rootfs de solo lectura.
+No otorgues capacidades al backend ni al observer. En Compose ambos quedan con `cap_drop: ALL`, `no-new-privileges`, limites y healthcheck. Solo el entrypoint de `capture-agent` recibe temporalmente `SETUID/SETGID/SETPCAP` para bajar a UID/GID 1000 y descarta esas capacidades antes de ejecutar Node; PID 1 conserva exclusivamente `NET_RAW/NET_ADMIN`, `NoNewPrivs=1` y rootfs de solo lectura.
 
 Chromium corre como UID 10001, sin capabilities, con `no-new-privileges` y sin `--no-sandbox`. Su excepcion `seccomp=unconfined` esta limitada al contenedor del navegador para permitir el sandbox de namespaces de Chromium; AppArmor, rootfs de solo lectura, volumen dedicado y limites de recursos permanecen activos. No asignes capabilities al binario global de Node ni ejecutes builds/MongoDB/Redis como root.
 
@@ -159,6 +166,8 @@ Para esa prueba:
 5. realiza una llamada entre cuentas propias/autorizadas;
 6. detiene la captura y revisa relays, infraestructura y candidatas sin afirmar identidad.
 
+Con `WEBRTC_OBSERVER_ENABLED=true`, readiness instala una sonda dormida antes de habilitar el backend. Cada captura la arma por alcance firmado y la desarma al detenerse. CDP `9222` y observer `4200` existen solo dentro del namespace compartido; comprueba que ninguno se publique. La ausencia de direcciones en `getStats()` es una limitación explícita, no autorización para deducirlas desde SDP o payload.
+
 WhatsApp/WebRTC puede usar relays. El resultado puede ser `solo relay` o no contener una IP directa; eso es una limitacion tecnica valida, no un error que deba forzarse.
 
 ## Smoke E4 obligatorio
@@ -170,12 +179,13 @@ WhatsApp/WebRTC puede usar relays. El resultado puede ser `solo relay` o no cont
 5. Socket.IO conecta con sesion valida y se desconecta al revocarla;
 6. health no expone URI, claves ni contrasenas;
 7. reiniciar backend conserva cuenta, sesion Baileys, uploads y contadores/sesiones Redis vigentes;
-8. `27017`, `6379`, `4000`, `4001`, `4100`, `7900`, `7901` y `8080` no responden directamente desde Internet; no existe un segundo Redis;
+8. `27017`, `6379`, `4000`, `4001`, `4100`, `4200`, `7900`, `7901`, `8080` y `9222` no responden directamente desde Internet; no existe un segundo Redis;
 9. agente sin privilegios falla cerrado; PID 1 con capabilities minimas ve la interfaz y el primer paquete del namespace del navegador;
 10. backup cifrado se verifica y la restauracion MongoDB se prueba en staging;
 11. logs, bundle frontend y Git se revisan contra secretos;
 12. QR, contacto sintetico, caso, reporte y paquete de evidencia se validan con datos propios.
 13. los procesos zombie preexistentes, si los hubiera, no crecen durante la ventana; MongoDB recibe un init/reaper o healthcheck corregido antes del PASS si vuelven a aumentar.
+14. con observer habilitado, prueba armado/lectura/desarmado, aislamiento entre generaciones, par relay y par directo sintético; una llamada real autorizada debe conservar par WebRTC, cinco-tuplas y STUN/TURN con paridad JSON/HTML/PDF/ZIP.
 
 No declares captura de llamada operativa hasta completar la prueba en el VPS real. Tampoco publiques el servicio antes de rotar cualquier secreto que haya sido mostrado en una terminal o canal no controlado.
 

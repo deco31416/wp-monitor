@@ -58,6 +58,14 @@ import type {
     NetworkIntelligence,
 } from './call-scoring.js';
 import type { IpEnrichment } from './ip-enrichment.js';
+import {
+    buildCallFlowEvidence,
+    buildStunTurnEvidence,
+    type BrowserWebRtcEvidence,
+    type CallFlowEvidence,
+    type StunTurnEvidence,
+} from './call-observation-evidence.js';
+import type { ParsedStunMessage, TurnChannelData } from './stun-parser.js';
 
 const geoip = (geoipModule as any)?.default ?? geoipModule as any;
 const { Cap, findDevice } = capModule as any;
@@ -96,7 +104,10 @@ export type CallRouteEvidenceSource =
     | 'stun'
     | 'baseline'
     | 'infrastructure_registry'
-    | 'ip_enrichment';
+    | 'ip_enrichment'
+    | 'browser_webrtc'
+    | 'five_tuple_flow'
+    | 'stun_turn';
 
 export interface SanitizedCallEndpoint {
     ip: string;
@@ -128,7 +139,7 @@ export interface CallTransportEvidence {
 }
 
 export interface CallRouteAssessment {
-    assessmentVersion: 2 | 3;
+    assessmentVersion: 2 | 3 | 4;
     classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
     confidenceScore: number;
     evidenceSources: CallRouteEvidenceSource[];
@@ -190,6 +201,9 @@ export interface CallAnalysisResult {
     routeAssessment?: CallRouteAssessment;
     captureBounds?: CallCaptureBounds;
     phaseCounts?: CallCapturePhaseCounts;
+    browserWebRtcEvidence?: BrowserWebRtcEvidence;
+    flowEvidence?: CallFlowEvidence;
+    stunTurnEvidence?: StunTurnEvidence;
 }
 
 export interface CallCaptureBounds {
@@ -223,6 +237,8 @@ interface RawCallPacket {
     protocolEvidence: CallProtocolEvidence[];
     ownPublicEndpoints: string[];
     stunEndpoints: SanitizedStunEndpoint[];
+    stun: ParsedStunMessage | null;
+    turnChannelData: TurnChannelData | null;
 }
 
 // ── State ──────────────────────────────────────────────────────
@@ -438,6 +454,8 @@ export function startCallCapture(
                         role: endpoint.role,
                         source: 'stun' as const,
                     })),
+                    stun: observed.stun,
+                    turnChannelData: observed.turnChannelData,
                 };
 
                 if (!capturedPacketCollector.add(packet)) return;
@@ -595,6 +613,8 @@ function analyzePackets(
             packet.length,
         );
     }
+    const flowEvidence = buildCallFlowEvidence(packets, isLocalOrPrivateIP, capturePhases);
+    const stunTurnEvidence = buildStunTurnEvidence(packets, isLocalOrPrivateIP);
     if (packets.length === 0) {
         return {
             callId,
@@ -612,6 +632,8 @@ function analyzePackets(
             ...(capturePhases ? { capturePhases } : {}),
             captureBounds,
             phaseCounts,
+            flowEvidence,
+            stunTurnEvidence,
         };
     }
 
@@ -871,6 +893,8 @@ function analyzePackets(
         ...(stunEndpointMap.size > 0 ? { stunEndpoints: [...stunEndpointMap.values()] } : {}),
         captureBounds,
         phaseCounts,
+        flowEvidence,
+        stunTurnEvidence,
     };
 
     console.log(`[CALL-ANALYZER] Analysis complete: ${verdict} | ${p2pCandidates.length} direct-path candidates | ${metaIpSet.size} Meta IPs | ${totalObservedPackets} observed packets`);

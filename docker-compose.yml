@@ -23,10 +23,17 @@ services:
       - CAPTURE_AGENT_URL=http://wa-browser:4100
       - CAPTURE_AGENT_SHARED_SECRET=${CAPTURE_AGENT_SHARED_SECRET:-}
       - CAPTURE_AGENT_TIMEOUT_MS=${CAPTURE_AGENT_TIMEOUT_MS:-5000}
+      - WEBRTC_OBSERVER_ENABLED=${WEBRTC_OBSERVER_ENABLED:-false}
+      - WEBRTC_OBSERVER_URL=http://wa-browser:4200
+      - WEBRTC_OBSERVER_SHARED_SECRET=${WEBRTC_OBSERVER_SHARED_SECRET:-}
+      - WEBRTC_OBSERVER_TIMEOUT_MS=${WEBRTC_OBSERVER_TIMEOUT_MS:-5000}
+      - WEBRTC_OBSERVER_TTL_MS=${WEBRTC_OBSERVER_TTL_MS:-900000}
     depends_on:
       redis:
         condition: service_healthy
       capture-agent:
+        condition: service_healthy
+      webrtc-observer:
         condition: service_healthy
     init: true
     cap_drop:
@@ -63,6 +70,7 @@ services:
       - BROWSER_VNC_PASSWORD_FILE=${BROWSER_VNC_PASSWORD_FILE:-}
       - BROWSER_SCREEN=${BROWSER_SCREEN:-1440x900x24}
       - SELKIES_BASIC_AUTH_USER=${SELKIES_BASIC_AUTH_USER:-browser}
+      - WEBRTC_CDP_ENABLED=${WEBRTC_OBSERVER_ENABLED:-false}
     ports:
       - "127.0.0.1:${BROWSER_UI_PORT:-7900}:7900"
       - "127.0.0.1:${SELKIES_UI_PORT:-7901}:8080"
@@ -120,6 +128,35 @@ services:
     mem_reservation: ${CAPTURE_AGENT_MEMORY_RESERVATION:-256m}
     pids_limit: ${CAPTURE_AGENT_PIDS_LIMIT:-256}
     stop_grace_period: 20s
+    restart: unless-stopped
+
+  webrtc-observer:
+    build:
+      context: .
+      dockerfile: Dockerfile.webrtc-observer
+    environment:
+      - WEBRTC_OBSERVER_ENABLED=${WEBRTC_OBSERVER_ENABLED:-false}
+      - WEBRTC_OBSERVER_BIND=0.0.0.0
+      - WEBRTC_OBSERVER_PORT=4200
+      - WEBRTC_OBSERVER_SHARED_SECRET=${WEBRTC_OBSERVER_SHARED_SECRET:-}
+      - WEBRTC_CDP_URL=http://127.0.0.1:9222
+    depends_on:
+      wa-browser:
+        condition: service_healthy
+    network_mode: "service:wa-browser"
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    cpus: ${WEBRTC_OBSERVER_CPU_LIMIT:-0.5}
+    mem_limit: ${WEBRTC_OBSERVER_MEMORY_LIMIT:-256m}
+    mem_reservation: ${WEBRTC_OBSERVER_MEMORY_RESERVATION:-64m}
+    pids_limit: ${WEBRTC_OBSERVER_PIDS_LIMIT:-128}
+    stop_grace_period: 15s
     restart: unless-stopped
 
   redis:

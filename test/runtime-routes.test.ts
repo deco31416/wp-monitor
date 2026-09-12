@@ -45,6 +45,8 @@ test('GET /api/runtime-capabilities returns Railway dashboard capabilities over 
             callCaptureMode: 'disabled',
             passiveMessageReceipts: true,
             experimentalProbes: false,
+            browserWebRtcObservation: false,
+            browserWebRtcObservationAvailable: false,
             authRequired: true,
         });
     });
@@ -218,6 +220,31 @@ test('health reports an isolated call capture agent independently from local cap
     assert.equal(unavailable.runtime.networkMonitor, false);
     assert.equal(unavailable.runtime.callTrafficAnalysis, false);
     assert.equal(available.runtime.callTrafficAnalysis, true);
+});
+
+test('health reports WebRTC observation availability independently and without leaking configuration', () => {
+    const config = buildRuntimeConfig({
+        DEPLOYMENT_MODE: 'server-full',
+        CALL_CAPTURE_MODE: 'agent',
+        WEBRTC_OBSERVER_ENABLED: 'true',
+    });
+    const unavailable = buildRuntimeHealth(config, {
+        whatsappConnected: () => true,
+        callCaptureAvailable: () => true,
+        browserWebRtcObservationAvailable: () => false,
+    });
+    const available = buildRuntimeHealth(config, {
+        whatsappConnected: () => true,
+        callCaptureAvailable: () => true,
+        browserWebRtcObservationAvailable: () => true,
+    });
+
+    assert.ok(unavailable.degradedReasons.includes('browser_webrtc_observer_unavailable'));
+    assert.deepEqual(unavailable.dependencies.browserWebRtcObservation, { enabled: true, available: false });
+    assert.equal(unavailable.runtime.browserWebRtcObservationAvailable, false);
+    assert.equal(available.dependencies.browserWebRtcObservation.available, true);
+    assert.equal(available.runtime.browserWebRtcObservationAvailable, true);
+    assert.equal(JSON.stringify(available).includes('WEBRTC_OBSERVER_SHARED_SECRET'), false);
 });
 
 test('localCaptureGuard blocks capture routes in Railway mode over HTTP', async () => {

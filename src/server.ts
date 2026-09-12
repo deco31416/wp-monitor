@@ -80,6 +80,7 @@ import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
 import { CallCaptureService } from './call-capture-service.js';
+import { WebRtcObserverClient } from './webrtc-observer-client.js';
 import { isOperatorCallMarker, type OperatorCallMarker } from './call-capture-phases.js';
 import {
     getOperatorCallMarkerDisposition,
@@ -165,6 +166,7 @@ const DEPLOYMENT_MODE = RUNTIME_CONFIG.deploymentMode;
 const LOCAL_CAPTURE_ENABLED = RUNTIME_CONFIG.localCaptureEnabled;
 const CALL_CAPTURE_MODE = RUNTIME_CONFIG.callCaptureMode;
 const EXPERIMENTAL_PROBES_ENABLED = RUNTIME_CONFIG.experimentalProbesEnabled;
+const WEBRTC_OBSERVER_ENABLED = RUNTIME_CONFIG.browserWebRtcObservationEnabled;
 const PROBE_INTERVAL_MS = parsePositiveInteger(process.env.PROBE_INTERVAL_MS, 30_000, 10_000);
 const PROBE_TIMEOUT_MS = parsePositiveInteger(process.env.PROBE_TIMEOUT_MS, 10_000, 3_000);
 const PROBE_MAX_BACKOFF_MS = parsePositiveInteger(process.env.PROBE_MAX_BACKOFF_MS, 5 * 60_000, PROBE_INTERVAL_MS);
@@ -350,14 +352,23 @@ const captureAgentClient = CALL_CAPTURE_MODE === 'agent'
         timeoutMs: parsePositiveInteger(process.env.CAPTURE_AGENT_TIMEOUT_MS, 5_000, 500),
     })
     : undefined;
+const webRtcObserverClient = WEBRTC_OBSERVER_ENABLED
+    ? new WebRtcObserverClient({
+        baseUrl: process.env.WEBRTC_OBSERVER_URL!,
+        sharedSecret: process.env.WEBRTC_OBSERVER_SHARED_SECRET!,
+        timeoutMs: parsePositiveInteger(process.env.WEBRTC_OBSERVER_TIMEOUT_MS, 5_000, 500),
+    })
+    : undefined;
 const callCaptureService = new CallCaptureService({
     mode: CALL_CAPTURE_MODE,
     ...(captureAgentClient ? { agent: captureAgentClient } : {}),
+    ...(webRtcObserverClient ? { observer: webRtcObserverClient } : {}),
+    observerTtlMs: parsePositiveInteger(process.env.WEBRTC_OBSERVER_TTL_MS, 15 * 60_000, 30_000),
 });
 let callCaptureAvailabilityTimer: NodeJS.Timeout | null = null;
 
 function startCallCaptureAvailabilityMonitor(): void {
-    if (CALL_CAPTURE_MODE !== 'agent' || callCaptureAvailabilityTimer) return;
+    if ((CALL_CAPTURE_MODE !== 'agent' && !WEBRTC_OBSERVER_ENABLED) || callCaptureAvailabilityTimer) return;
     callCaptureAvailabilityTimer = setInterval(() => {
         void callCaptureService.refreshAvailability();
     }, 30_000);
@@ -3597,6 +3608,7 @@ registerRuntimeRoutes(app, RUNTIME_CONFIG, {
     whatsappConnected: () => isWhatsAppConnected,
     localCaptureAvailable: () => hasPacketCapturePrivileges(),
     callCaptureAvailable: () => callCaptureService.isAvailable(),
+    browserWebRtcObservationAvailable: () => callCaptureService.isObserverAvailable(),
 });
 
 registerCaseRoutes(app);

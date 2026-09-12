@@ -46,8 +46,21 @@ export interface ParsedStunMessage {
     ignoredAttributeCount: number;
     unknownAttributeCount: number;
     protocolEvidence: 'stun_binding_request' | 'stun_binding_response' | 'stun_other';
+    useCandidate: boolean;
+    iceRole: 'controlling' | 'controlled' | 'unknown';
+    channelNumber: number | null;
     limitations: string[];
 }
+
+export interface TurnChannelData {
+    channelNumber: number;
+    payloadLength: number;
+}
+
+export type TurnChannelDataParseResult =
+    | { status: 'parsed'; channelData: TurnChannelData }
+    | { status: 'not_channel_data' }
+    | { status: 'malformed'; reason: 'truncated_channel_data' | 'invalid_channel_length' };
 
 export type StunParseResult =
     | { status: 'parsed'; message: ParsedStunMessage }
@@ -106,7 +119,6 @@ const KNOWN_IGNORED_ATTRIBUTES = new Set([
     0x0008, // MESSAGE-INTEGRITY
     0x0009, // ERROR-CODE
     0x000a, // UNKNOWN-ATTRIBUTES
-    0x000c, // CHANNEL-NUMBER
     0x000d, // LIFETIME
     0x0013, // DATA
     0x0014, // REALM
@@ -121,7 +133,6 @@ const KNOWN_IGNORED_ATTRIBUTES = new Set([
     0x001e, // USERHASH
     0x0022, // RESERVATION-TOKEN
     0x0024, // PRIORITY
-    0x0025, // USE-CANDIDATE
     0x0026, // PADDING
     0x0027, // RESPONSE-PORT
     0x002a, // CONNECTION-ID
@@ -132,8 +143,6 @@ const KNOWN_IGNORED_ATTRIBUTES = new Set([
     0x8004, // ICMP
     0x8022, // SOFTWARE
     0x8028, // FINGERPRINT
-    0x8029, // ICE-CONTROLLED
-    0x802a, // ICE-CONTROLLING
     0x802d, // ECN-CHECK
     0x802e, // THIRD-PARTY-AUTHORIZATION
     0x8030, // MOBILITY-TICKET
@@ -251,6 +260,9 @@ export function parseStunMessage(input: unknown): StunParseResult {
     let attributeCount = 0;
     let ignoredAttributeCount = 0;
     let unknownAttributeCount = 0;
+    let useCandidate = false;
+    let iceRole: ParsedStunMessage['iceRole'] = 'unknown';
+    let channelNumber: number | null = null;
     let offset = STUN_HEADER_BYTES;
 
     while (offset < declaredBytes) {
@@ -271,6 +283,19 @@ export function parseStunMessage(input: unknown): StunParseResult {
                 `${endpoint.ip}\0${endpoint.port}\0${endpoint.role}\0${endpoint.attribute}`,
                 endpoint,
             );
+        } else if (attributeType === 0x0025) {
+            if (attributeLength !== 0) return { status: 'malformed', reason: 'truncated_attribute' };
+            useCandidate = true;
+        } else if (attributeType === 0x8029 || attributeType === 0x802a) {
+            if (attributeLength !== 8) return { status: 'malformed', reason: 'truncated_attribute' };
+            iceRole = attributeType === 0x802a ? 'controlling' : 'controlled';
+        } else if (attributeType === 0x000c) {
+            if (attributeLength !== 4) return { status: 'malformed', reason: 'truncated_attribute' };
+            const parsedChannel = readUInt16(input, valueStart);
+            if (parsedChannel < 0x4000 || parsedChannel > 0x7fff) {
+                return { status: 'malformed', reason: 'invalid_address_attribute' };
+            }
+            channelNumber = parsedChannel;
         } else if (KNOWN_IGNORED_ATTRIBUTES.has(attributeType)) {
             ignoredAttributeCount += 1;
         } else {
@@ -297,7 +322,24 @@ export function parseStunMessage(input: unknown): StunParseResult {
             ignoredAttributeCount,
             unknownAttributeCount,
             protocolEvidence: protocolEvidence(method, messageClass),
+            useCandidate,
+            iceRole,
+            channelNumber,
             limitations: [...limitations],
         },
     };
+}
+
+/**
+ * Recognizes the RFC 5766 ChannelData envelope only. Media bytes are never
+ * decoded or retained.
+ */
+export function parseTurnChannelData(input: unknown): TurnChannelDataParseResult {
+    if (!(input instanceof Uint8Array) || input.byteLength < 2) return { status: 'not_channel_data' };
+    const channelNumber = readUInt16(input, 0);
+    if (channelNumber < 0x4000 || channelNumber > 0x7fff) return { status: 'not_channel_data' };
+    if (input.byteLength < 4) return { status: 'malformed', reason: 'truncated_channel_data' };
+    const payloadLength = readUInt16(input, 2);
+    if (payloadLength > input.byteLength - 4) return { status: 'malformed', reason: 'invalid_channel_length' };
+    return { status: 'parsed', channelData: { channelNumber, payloadLength } };
 }

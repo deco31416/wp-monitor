@@ -9,6 +9,8 @@ export interface RuntimeCapabilities {
     passiveMessageReceipts?: boolean;
     experimentalProbes?: boolean;
     authRequired?: boolean;
+    browserWebRtcObservation?: boolean;
+    browserWebRtcObservationAvailable?: boolean;
 }
 
 export interface CaptureIndicator {

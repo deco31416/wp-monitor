@@ -13,8 +13,9 @@ Ejecutar WP MONITOR con procesos aislados, persistencia explicita y captura de l
 | `redis` | Sesiones y limites compartidos en Compose local | Solo `data-network` | `redis_data`, AOF, sin puerto host; PID final sin capabilities |
 | `wa-browser` | Chromium/WhatsApp Web, Xvfb, audio virtual y Selkies | `127.0.0.1:7900/7901`; `8080` solo en red de tunel | `whatsapp_browser_profile`; UID 10001, sin capabilities |
 | `capture-agent` | Captura UDP de la ventana de llamada | Sin puerto host | Comparte namespace de `wa-browser`; PID 1 UID 1000 con solo `NET_RAW/NET_ADMIN` |
+| `webrtc-observer` | Metadata sanitizada del par ICE seleccionado | Sin puerto host | Comparte namespace de `wa-browser`; sin capabilities, rootfs de solo lectura |
 
-El agente recibe inicialmente capacidades auxiliares de Docker para bajar UID/GID; su entrypoint elimina `SETUID`, `SETGID` y `SETPCAP` antes de ejecutar Node. Redis recibe durante bootstrap `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` y `SETPCAP`: su entrypoint oficial corrige un volumen AOF nuevo, cambia a UID 999/GID 1000 y elimina todo el bounding set antes de ejecutar el servidor. El backend nunca recibe privilegios de captura en este modelo.
+El agente recibe inicialmente capacidades auxiliares de Docker para bajar UID/GID; su entrypoint elimina `SETUID`, `SETGID` y `SETPCAP` antes de ejecutar Node. El observer no necesita capabilities: controla una sonda dormida mediante CDP loopback, se arma con HMAC/nonce/TTL y conserva solo `getStats()` sanitizado. Redis recibe durante bootstrap `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` y `SETPCAP`: su entrypoint oficial corrige un volumen AOF nuevo, cambia a UID 999/GID 1000 y elimina todo el bounding set antes de ejecutar el servidor. El backend nunca recibe privilegios de captura en este modelo.
 
 El Compose fuerza `LOCAL_CAPTURE_ENABLED=false` y `CALL_CAPTURE_MODE=agent` aunque la plantilla nativa indique modo local; no otorgues capabilities al backend para reactivar el Monitor de red general. La URL del agente tambien queda fijada a su origen interno. El secreto y timeout siguen viniendo del entorno privado.
 
@@ -26,7 +27,7 @@ En Dokploy aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`
 
 1. Crea `.env` desde `.env.example`.
 2. Configura una URI MongoDB privada alcanzable desde `backend`. Si MongoDB corre en el mismo host Linux, usa `host.docker.internal` en la URI y limita el listener/firewall al host; `127.0.0.1` dentro del contenedor apunta al propio backend.
-3. Genera valores distintos para `AUTH_IDENTITY_SECRET` y `CAPTURE_AGENT_SHARED_SECRET`, ambos de 32 bytes o mas.
+3. Genera valores distintos para `AUTH_IDENTITY_SECRET` y `CAPTURE_AGENT_SHARED_SECRET`, ambos de 32 bytes o mas. Si habilitas el observer, `WEBRTC_OBSERVER_SHARED_SECRET` debe ser un tercer valor distinto.
 4. Define una contraseña aleatoria de 15 o mas caracteres. El servicio falla cerrado con una menor; la puerta de identidad/tunel y los binds loopback son límites de acceso independientes.
 5. Verifica que MongoDB no publique `27017` y que ningún servicio exponga directamente `4000`, `4001`, `7900`, `7901` o `8080` a Internet.
 6. En Dokploy define `BAILEYS_AUTH_VOLUME_NAME`, `CHECKIN_UPLOADS_VOLUME_NAME` y `WHATSAPP_BROWSER_PROFILE_VOLUME_NAME` con nombres inspeccionados, distintos y preexistentes.
@@ -46,7 +47,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Estados esperados: `backend`, `client`, `redis`, `wa-browser` y `capture-agent` en `healthy`. El backend espera Redis y el agente; el agente espera el navegador.
+Estados esperados: `backend`, `client`, `redis`, `wa-browser`, `capture-agent` y `webrtc-observer` en `healthy`. El backend espera Redis, agente y observer; con la función apagada el observer permanece saludable en modo deshabilitado y no exige secreto. Agente y observer esperan el navegador.
 
 En Dokploy/VPS valida e inicia con ambos archivos. Conservar el `-p` real mantiene identidad de proyecto, contenedores y redes, pero la reutilización de datos depende de las tres variables de volumen explícitas:
 
@@ -55,7 +56,7 @@ pnpm run compose:dokploy:check -- --require-existing-volumes
 docker compose -p NOMBRE_EXISTENTE -f docker-compose.yml -f deploy/docker-compose.dokploy.yml up -d --build --remove-orphans
 ```
 
-Alli se esperan cuatro contenedores nuevos/actualizados (`backend`, `client`, `wa-browser`, `capture-agent`) y los MongoDB/Redis privados ya operativos. `redis` no debe aparecer como servicio nuevo.
+Alli se esperan cinco contenedores nuevos/actualizados (`backend`, `client`, `wa-browser`, `capture-agent`, `webrtc-observer`) y los MongoDB/Redis privados ya operativos. `redis` no debe aparecer como servicio nuevo.
 
 ## Primer enlace de WhatsApp Web
 
@@ -83,6 +84,7 @@ Comprueba ademas:
 8. dos ciclos consecutivos de inicio, captura UDP sintetica y parada; ambos
    deben devolver resultado y el agente debe permanecer `healthy`, sin reinicios;
 9. caso, llamada, persistencia, informe y auditoria con datos de prueba.
+10. si `WEBRTC_OBSERVER_ENABLED=true`, readiness del observer, CDP `9222` solo en loopback del namespace, puertos `4200/9222` ausentes del host y evidencia degradada —no una confirmacion inventada— cuando Chromium oculte direcciones.
 
 `docker exec capture-agent id` abre por defecto un proceso auxiliar como root y no demuestra el usuario del servicio. Consulta `/proc/1/status` para auditar PID 1.
 
@@ -93,6 +95,7 @@ flowchart LR
     Backend[Backend]
     Browser[WhatsApp Web]
     Agent[Capture agent]
+    Observer[WebRTC observer]
     Auth[(baileys_auth)]
     Profile[(whatsapp_browser_profile)]
     Uploads[(checkin_uploads)]
@@ -104,7 +107,9 @@ flowchart LR
     Backend <--> Mongo
     Browser <--> Profile
     Browser --> Agent
+    Browser --> Observer
     Backend -->|HMAC| Agent
+    Backend -->|HMAC| Observer
 ```
 
 No montes un volumen sobre `/app` completo. No uses `docker compose down -v` durante actualizaciones: elimina sesiones, uploads, Redis y el perfil WhatsApp Web.

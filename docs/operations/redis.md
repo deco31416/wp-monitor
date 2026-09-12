@@ -52,7 +52,7 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config
 docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml config --services
 ```
 
-La segunda orden debe listar `wa-browser`, `capture-agent`, `backend` y `client`, pero no `redis`. La URI usa el DNS interno/credencial que entrega Dokploy, nunca `127.0.0.1` desde el contenedor ni un puerto publico. No habilites el perfil `bundled-state-do-not-enable-on-vps`.
+La segunda orden debe listar `wa-browser`, `capture-agent`, `webrtc-observer`, `backend` y `client`, pero no `redis`. La URI usa el DNS interno/credencial que entrega Dokploy, nunca `127.0.0.1` desde el contenedor ni un puerto publico. No habilites el perfil `bundled-state-do-not-enable-on-vps`.
 
 Antes de reutilizar la instancia confirma que sea dedicada a WP MONITOR. El backup incluido pausa Redis para copiar un AOF consistente; pausar un Redis compartido con otras aplicaciones causaria impacto fuera del alcance y requiere otra estrategia de backup.
 

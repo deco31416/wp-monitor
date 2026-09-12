@@ -4,7 +4,7 @@ Estado: `DRAFT — NO PUBLICADA`
 
 Version propuesta del contrato: `1.2`
 
-Ultima revision: `2026-09-02`
+Ultima revision: `2026-09-11`
 
 ## Proposito
 
@@ -50,6 +50,7 @@ Queda fuera de alcance afirmar:
 | `contacts.upsert/update` | `profile_metadata` | alta para visibilidad | Cambio de dato visible, no identidad real. |
 | `getDevice(messageId)` | `direct_interaction` | estimada | Dispositivo probable del emisor atribuible. |
 | captura libpcap | `local_call_traffic` | tecnica | Infraestructura observada desde la sesion local. |
+| Chromium `getStats()` acotado | `local_call_traffic` | tecnica | Par WebRTC seleccionado cuando el navegador lo expone; no contiene SDP ni contenido. |
 | conexion/reconexion | `system_health` | operacional | Salud; nunca actividad del contacto. |
 | RTT experimental | `technical_measurement` | segun confirmacion | Solo pestana Medicion y evidencia tecnica. |
 
@@ -176,6 +177,14 @@ Reglas:
 | BO-CALL-24 | Toda IP publica conservada por el analizador permanece en el libro canonico con conteos, bytes, tiempos, puertos, direccion, protocolo, fases, inteligencia y decision; la UI la presenta exactamente en un grupo y los informes incluyen el libro completo sin depender de que sea candidata directa. |
 | BO-CALL-25 | La decision de exclusion es versionada y separa evidencia fuerte de contexto: Meta, DNS publico exacto y salida propia son exclusiones fuertes; rangos generales Google, STUN/TURN, CDN, cloud/hosting y clasificaciones por enriquecimiento permanecen contextuales, visibles y sin promocion automatica. |
 | BO-CALL-26 | El scoring v3 es determinista y reconstruible: puntua solo evidencia de ruta y calidad de captura, registra topes, conserva GeoIP/prefijo E.164 en un contexto separado con contribucion cero, reutiliza la misma subventana al enriquecer y mantiene lectura segura de v2. |
+| BO-CALL-27 | `browserWebRtcEvidence.version=1` solo conserva tipos de candidato, protocolo, direccion/puerto expuestos, contadores, RTT, estados y limites; SDP, ICE credentials, URLs, audio, mensajes y payload quedan excluidos. |
+| BO-CALL-28 | El observer se instala dormido antes de habilitar el backend, se arma por alcance firmado y generacion, impide contaminacion entre llamadas, expira por TTL y degrada al motor libpcap si falla. |
+| BO-CALL-29 | `flowEvidence.version=1` reconcilia cada cinco-tupla IPv4/IPv6 por protocolo, puerto local, IP/puerto remoto, direccion, tiempos, bytes, paquetes y fase, con limite y truncamiento declarados. |
+| BO-CALL-30 | `stunTurnEvidence.version=1` correlaciona request/response por huella opaca y conserva clase, metodo, rol ICE, `USE-CANDIDATE` y `CHANNEL-NUMBER`; ChannelData no retiene payload ni se relaciona con un peer sin `CHANNEL-BIND` observado. |
+| BO-CALL-31 | Una confirmacion v4 por navegador exige par seleccionado y exitoso sin candidato relay, una IP ya elegible y coincidencia exacta de IP, puerto y protocolo con al menos 20 paquetes bidireccionales en negociacion o llamada activa. |
+| BO-CALL-32 | Una captura automatica declara que la sonda pudo armarse despues de la primera señal; conexiones no observadas, candidatos ocultos, libros truncados y fallos parciales aparecen como limitaciones y nunca se reparan mediante inferencia. |
+| BO-CALL-33 | Historicos v2/v3 permanecen legibles; una conclusion v4 almacenada solo sobrevive si los libros declarados son validos y la coincidencia directa puede reconstruirse. |
+| BO-CALL-34 | La flag WebRTC desactivada no requiere secreto, no abre CDP, rechaza control y conserva el motor E4 anterior; activada exige secreto distinto al del capture-agent y nunca publica CDP ni el puerto del observer. |
 
 ### Alcance, identidad e idempotencia
 

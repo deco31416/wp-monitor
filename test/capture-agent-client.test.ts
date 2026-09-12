@@ -91,6 +91,24 @@ function createAdapter(): CaptureAgentAdapter {
                 metaIps: ['157.240.1.1'],
                 verdict: 'relay',
                 captureInterface: '172.31.0.10',
+                flowEvidence: {
+                    version: 1,
+                    flowLimit: 1_024,
+                    storedFlows: 0,
+                    droppedPackets: 0,
+                    truncated: false,
+                    flows: [],
+                },
+                stunTurnEvidence: {
+                    version: 1,
+                    transactionLimit: 256,
+                    storedTransactions: 0,
+                    droppedTransactions: 0,
+                    truncated: false,
+                    transactions: [],
+                    channels: [],
+                    limitations: [],
+                },
                 ...(capturePhases ? { schemaVersion: 2, capturePhases } : {}),
             };
             status.isCapturing = false;
@@ -159,6 +177,8 @@ test('capture agent client completes the authenticated lifecycle and restores Da
         assert.ok(result.candidateIps[0]?.firstSeen instanceof Date);
         assert.deepEqual(result.candidateIps[0]?.ports, [40_000, 40_001]);
         assert.equal(result.capturePhases?.phaseEvidenceVersion, 2);
+        assert.equal(result.flowEvidence?.storedFlows, 0);
+        assert.equal(result.stunTurnEvidence?.storedTransactions, 0);
         assert.ok(result.capturePhases?.captureEndedAt instanceof Date);
         assert.deepEqual(result.capturePhases?.phaseEvidence?.map(event => ({
             kind: event.kind,
@@ -326,7 +346,7 @@ test('capture agent client rejects unsafe origins and weak secrets', () => {
     }), /at least 32 bytes/);
 });
 
-test('readiness requires phase, marker, endpoint-decision, and scoring capabilities', async () => {
+test('readiness requires phase, marker, scoring, flow, and STUN/TURN capabilities', async () => {
     for (const capabilities of [
         undefined,
         { callCapturePhases: 1, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3 },
@@ -335,6 +355,8 @@ test('readiness requires phase, marker, endpoint-decision, and scoring capabilit
         { callCapturePhases: 4, endpointExclusionDecision: 1, candidateScoring: 3 },
         { callCapturePhases: 4, operatorCallMarkers: 1, candidateScoring: 3 },
         { callCapturePhases: 4, operatorCallMarkers: 1, endpointExclusionDecision: 1 },
+        { callCapturePhases: 4, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3, stunTurnEvidence: 1 },
+        { callCapturePhases: 4, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3, flowEvidence: 1 },
     ]) {
         const client = new CaptureAgentClient({
             baseUrl: 'http://capture-agent.test:4100',

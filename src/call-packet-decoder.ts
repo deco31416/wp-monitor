@@ -1,5 +1,10 @@
 import { isIP } from 'node:net';
-import { parseStunMessage, type ParsedStunMessage } from './stun-parser.js';
+import {
+    parseStunMessage,
+    parseTurnChannelData,
+    type ParsedStunMessage,
+    type TurnChannelData,
+} from './stun-parser.js';
 import type { CallProtocolEvidence } from './call-analyzer.js';
 
 export interface DecodedCallPacket {
@@ -14,6 +19,7 @@ export interface DecodedCallPacket {
     payloadLength: number;
     protocolEvidence: CallProtocolEvidence[];
     stun: ParsedStunMessage | null;
+    turnChannelData: TurnChannelData | null;
 }
 
 export type CallPacketDecodeResult =
@@ -74,7 +80,7 @@ function parseTransport(
     transportOffset: number,
     packetEnd: number,
     protocol: number,
-    network: Omit<DecodedCallPacket, 'srcPort' | 'dstPort' | 'payloadLength' | 'protocolEvidence' | 'stun'>,
+    network: Omit<DecodedCallPacket, 'srcPort' | 'dstPort' | 'payloadLength' | 'protocolEvidence' | 'stun' | 'turnChannelData'>,
 ): CallPacketDecodeResult {
     let srcPort: number;
     let dstPort: number;
@@ -108,6 +114,8 @@ function parseTransport(
     const payload = frame.subarray(payloadStart, payloadEnd);
     const stunResult = parseStunMessage(payload);
     const stun = stunResult.status === 'parsed' ? stunResult.message : null;
+    const channelResult = stun ? null : parseTurnChannelData(payload);
+    const turnChannelData = channelResult?.status === 'parsed' ? channelResult.channelData : null;
     const protocolEvidence = new Set<CallProtocolEvidence>(['transport_flow']);
     if (stun) protocolEvidence.add(stun.protocolEvidence);
     if (network.frameLength === 86) protocolEvidence.add('frame_length_86');
@@ -122,6 +130,7 @@ function parseTransport(
             payloadLength: payload.length,
             protocolEvidence: [...protocolEvidence],
             stun,
+            turnChannelData,
         },
     };
 }

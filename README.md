@@ -356,6 +356,7 @@ Candidate scoring is deliberately limited by sample size, directionality, infras
 | Optional IP enrichment | DB-IP with `ip-api` complement |
 | Package manager | pnpm 11.22 workspace for backend and frontend |
 | Packaging and deployment | Docker Compose, local runtime, Railway dashboard mode |
+| Optional browser evidence | Chromium CDP + WebRTC `getStats()` through an isolated observer |
 
 ### Dependency audit status
 
@@ -445,6 +446,8 @@ docker compose up --build
 
 Before the first Compose start, set a unique `CAPTURE_AGENT_SHARED_SECRET` (32+ random bytes) and a 15+ character `BROWSER_VNC_PASSWORD` in the ignored `.env`. Provide a private MongoDB URI reachable from the backend container; use `host.docker.internal` instead of `127.0.0.1` when MongoDB runs on the Linux host. Compose forces general local capture off and delegates call capture to the isolated agent. The stack exposes the frontend on `4001`, backend on `4000`, noVNC fallback on `127.0.0.1:7900`, and a Selkies contingency binding on `127.0.0.1:7901` targeting internal port `8080`. Neither browser port is an Internet publication. It persists Baileys authentication, uploads, Redis AOF and the Chromium profile in named volumes. MongoDB remains an independently managed private service.
 
+Browser WebRTC evidence is disabled by default. To validate it in an authorized environment, set `WEBRTC_OBSERVER_ENABLED=true` and a dedicated `WEBRTC_OBSERVER_SHARED_SECRET` different from every other application secret. Compose then enables Chromium CDP only on `127.0.0.1:9222` inside the shared browser namespace and arms the unprivileged observer only for the bounded call capture. Neither CDP nor observer port `4200` is published to the host. The observer records sanitized ICE candidate-pair metadata and never SDP, credentials, media, message content or packet payload.
+
 A Dokploy deployment may reuse private MongoDB/Redis services. Deploy it with `docker-compose.yml` plus `deploy/docker-compose.dokploy.yml`; the override selects `server-full`, reuses the configured data and tunnel networks, suppresses the bundled Redis container and removes backend/client host publications. Production volume names are mandatory and external: set them privately to the exact existing Baileys/uploads volumes and a dedicated pre-created browser-profile volume. Keeping the Compose project name alone does not guarantee compatibility with historical explicit names. See [Ubuntu VPS](docs/operations/ubuntu-vps.md) for the preview gate and E4 checklist.
 
 ---
@@ -494,6 +497,11 @@ CALL_CAPTURE_MODE=local
 # CAPTURE_AGENT_URL=http://wa-browser:4100
 # CAPTURE_AGENT_SHARED_SECRET=generate-a-different-64-character-secret
 # CAPTURE_AGENT_TIMEOUT_MS=5000
+# WEBRTC_OBSERVER_ENABLED=false
+# WEBRTC_OBSERVER_URL=http://wa-browser:4200
+# WEBRTC_OBSERVER_SHARED_SECRET=generate-another-distinct-64-character-secret
+# WEBRTC_OBSERVER_TIMEOUT_MS=5000
+# WEBRTC_OBSERVER_TTL_MS=900000
 # BROWSER_UI_PORT=7900
 # SELKIES_UI_PORT=7901
 # SELKIES_BASIC_AUTH_USER=browser

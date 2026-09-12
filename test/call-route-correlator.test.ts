@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { correlateCallRoute } from '../src/call-route-correlator.js';
 import type { CallAnalysisResult, CandidateIP } from '../src/call-analyzer.js';
+import type { BrowserWebRtcEvidence } from '../src/call-observation-evidence.js';
 
 function candidate(overrides: Partial<CandidateIP> = {}): CandidateIP {
     return {
@@ -78,6 +79,88 @@ function transport(ip: string, role: 'peer_candidate' | 'relay' = 'peer_candidat
             source: 'baileys_transport' as const,
         }],
         limitations: [],
+    };
+}
+
+function phaseCounts(activePackets = 30) {
+    return {
+        version: 1 as const,
+        baseline: { packets: 0, bytes: 0 },
+        negotiation: { packets: 0, bytes: 0 },
+        active: { packets: activePackets, bytes: activePackets * 200 },
+        postCall: { packets: 0, bytes: 0 },
+        unclassified: { packets: 0, bytes: 0 },
+    };
+}
+
+function browserPair(options: {
+    remoteAddress?: string | null;
+    remotePort?: number | null;
+    remoteType?: 'host' | 'srflx' | 'prflx' | 'relay' | 'unknown';
+} = {}): BrowserWebRtcEvidence {
+    return {
+        version: 1 as const,
+        status: 'available' as const,
+        startedAt: new Date('2026-09-08T12:00:00.000Z'),
+        endedAt: new Date('2026-09-08T12:00:30.000Z'),
+        connectionCount: 1,
+        selectedPairs: [{
+            peerConnectionId: 'pc-1',
+            state: 'succeeded' as const,
+            nominated: true,
+            selected: true,
+            firstObservedAt: new Date('2026-09-08T12:00:08.000Z'),
+            lastObservedAt: new Date('2026-09-08T12:00:28.000Z'),
+            local: {
+                candidateType: 'host' as const,
+                protocol: 'udp' as const,
+                relayProtocol: 'unknown' as const,
+                address: '192.0.2.10',
+                addressFamily: 4 as const,
+                port: 50_000,
+            },
+            remote: {
+                candidateType: options.remoteType ?? 'srflx' as const,
+                protocol: 'udp' as const,
+                relayProtocol: options.remoteType === 'relay' ? 'udp' as const : 'unknown' as const,
+                address: options.remoteAddress === undefined ? '198.51.100.40' : options.remoteAddress,
+                addressFamily: options.remoteAddress === null ? null : 4 as const,
+                port: options.remotePort === undefined ? 40_000 : options.remotePort,
+            },
+            packetsSent: 15,
+            packetsReceived: 15,
+            bytesSent: 3_000,
+            bytesReceived: 3_000,
+            currentRoundTripTimeMs: 30,
+        }],
+        stateTransitions: [],
+        truncated: false,
+        limitations: [],
+    };
+}
+
+function flowEvidence(overrides: { remoteIp?: string; remotePort?: number; direction?: 'incoming' | 'outgoing' | 'bidirectional'; packets?: number } = {}) {
+    const packets = overrides.packets ?? 30;
+    return {
+        version: 1 as const,
+        flowLimit: 1_024,
+        storedFlows: 1,
+        droppedPackets: 0,
+        truncated: false,
+        flows: [{
+            addressFamily: 4 as const,
+            protocol: 'udp' as const,
+            localPort: 50_000,
+            remoteIp: overrides.remoteIp ?? '198.51.100.40',
+            remotePort: overrides.remotePort ?? 40_000,
+            firstSeen: new Date('2026-09-08T12:00:08.000Z'),
+            lastSeen: new Date('2026-09-08T12:00:28.000Z'),
+            direction: overrides.direction ?? 'bidirectional' as const,
+            packets,
+            bytesTotal: packets * 200,
+            phaseCounts: phaseCounts(packets),
+            protocolEvidence: ['transport_flow'],
+        }],
     };
 }
 
@@ -263,4 +346,79 @@ test('publishes route assessment v3 only when fed by candidate scoring v3', () =
     assert.equal(assessed.routeAssessment?.assessmentVersion, 3);
     assert.ok(assessed.routeAssessment?.reasonCodes.includes('CANDIDATE_SCORING_V3'));
     assert.ok(assessed.routeAssessment?.reasonCodes.includes('GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE'));
+});
+
+test('publishes v4 direct confirmation only for an eligible exact browser and active five-tuple match', () => {
+    const assessed = correlateCallRoute(result({
+        candidateIps: [candidate()],
+        browserWebRtcEvidence: browserPair(),
+        flowEvidence: flowEvidence(),
+    }));
+
+    assert.equal(assessed.routeAssessment?.assessmentVersion, 4);
+    assert.equal(assessed.routeAssessment?.classification, 'direct_confirmed');
+    assert.equal(assessed.routeAssessment?.independentDirectEvidenceCount, 2);
+    assert.equal(assessed.routeAssessment?.primaryCandidateIp, '198.51.100.40');
+    assert.ok(assessed.routeAssessment?.reasonCodes.includes('BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'));
+    assert.ok(assessed.routeAssessment?.evidenceSources.includes('browser_webrtc'));
+    assert.ok(assessed.routeAssessment?.evidenceSources.includes('five_tuple_flow'));
+});
+
+test('does not elevate a browser candidate when the active five-tuple is weak or divergent', () => {
+    for (const flow of [
+        flowEvidence({ remotePort: 40_001 }),
+        flowEvidence({ direction: 'outgoing' }),
+        flowEvidence({ packets: 19 }),
+    ]) {
+        const assessed = correlateCallRoute(result({
+            candidateIps: [candidate()],
+            browserWebRtcEvidence: browserPair(),
+            flowEvidence: flow,
+        }));
+        assert.equal(assessed.routeAssessment?.classification, 'direct_probable');
+        assert.equal(assessed.routeAssessment?.independentDirectEvidenceCount, 1);
+        assert.equal(assessed.routeAssessment?.reasonCodes.includes('BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'), false);
+    }
+});
+
+test('classifies a selected browser relay and exposes hidden-address limitations deterministically', () => {
+    const relay = correlateCallRoute(result({ browserWebRtcEvidence: browserPair({
+        remoteAddress: '57.144.85.57',
+        remotePort: 34_78,
+        remoteType: 'relay',
+    }) }));
+    assert.equal(relay.routeAssessment?.classification, 'relay_confirmed');
+    assert.ok(relay.routeAssessment?.reasonCodes.includes('BROWSER_SELECTED_RELAY_OBSERVED'));
+
+    const hiddenInput = result({ browserWebRtcEvidence: browserPair({ remoteAddress: null, remotePort: null }) });
+    const first = correlateCallRoute(hiddenInput);
+    const second = correlateCallRoute(hiddenInput);
+    assert.deepEqual(second.routeAssessment, first.routeAssessment);
+    assert.equal(first.routeAssessment?.classification, 'unresolved');
+    assert.ok(first.routeAssessment?.limitations.includes('browser_candidate_address_not_exposed'));
+});
+
+test('propagates bounded protocol-source limitations into the v4 route conclusion', () => {
+    const browser = browserPair();
+    browser.limitations.push('browser_webrtc_armed_after_automatic_call_signal');
+    browser.truncated = true;
+    const assessed = correlateCallRoute(result({
+        candidateIps: [candidate()],
+        browserWebRtcEvidence: browser,
+        flowEvidence: flowEvidence(),
+        stunTurnEvidence: {
+            version: 1,
+            transactionLimit: 256,
+            storedTransactions: 0,
+            droppedTransactions: 0,
+            truncated: false,
+            transactions: [],
+            channels: [],
+            limitations: ['turn_channel_data_without_observed_channel_bind'],
+        },
+    }));
+
+    assert.ok(assessed.routeAssessment?.limitations.includes('browser_webrtc_armed_after_automatic_call_signal'));
+    assert.ok(assessed.routeAssessment?.limitations.includes('browser_webrtc_evidence_truncated'));
+    assert.ok(assessed.routeAssessment?.limitations.includes('turn_channel_data_without_observed_channel_bind'));
 });

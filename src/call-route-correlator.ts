@@ -53,6 +53,11 @@ function unique(values: string[]): string[] {
     return [...new Set(values)];
 }
 
+function activeFlowPackets(flow: NonNullable<CallAnalysisResult['flowEvidence']>['flows'][number]): number {
+    return flow.phaseCounts.negotiation.packets
+        + flow.phaseCounts.active.packets;
+}
+
 function legacyVerdict(classification: CallRouteAssessment['classification']): CallAnalysisResult['verdict'] {
     if (classification === 'direct_confirmed' || classification === 'direct_probable') return 'p2p';
     if (classification === 'relay_confirmed') return 'relay';
@@ -91,13 +96,42 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         ));
     const exactTransportCandidate = directCandidates.find(candidate => transportPeerIps.has(candidate.ip));
     const exactStunCandidate = directCandidates.find(candidate => stunPeerIps.has(candidate.ip));
-    const primaryCandidate = exactTransportCandidate ?? exactStunCandidate ?? directCandidates[0] ?? null;
+    const browserPairs = result.browserWebRtcEvidence?.status === 'available'
+        ? result.browserWebRtcEvidence.selectedPairs.filter(pair => pair.selected && pair.state === 'succeeded')
+        : [];
+    const exactBrowserMatch = browserPairs
+        .filter(pair => (
+            pair.local.candidateType !== 'relay'
+            && pair.remote.candidateType !== 'relay'
+            && pair.remote.address
+            && pair.remote.port
+        ))
+        .map(pair => {
+            const flow = result.flowEvidence?.flows.find(item => (
+                item.remoteIp === pair.remote.address
+                && item.remotePort === pair.remote.port
+                && item.protocol === pair.remote.protocol
+                && item.direction === 'bidirectional'
+                && activeFlowPackets(item) >= 20
+            ));
+            const candidate = directCandidates.find(item => item.ip === pair.remote.address);
+            return flow && candidate ? { pair, flow, candidate } : null;
+        })
+        .find((value): value is NonNullable<typeof value> => value !== null);
+    const browserRelayObserved = browserPairs.some(pair => (
+        pair.local.candidateType === 'relay' || pair.remote.candidateType === 'relay'
+    ));
+    const primaryCandidate = exactBrowserMatch?.candidate
+        ?? exactTransportCandidate
+        ?? exactStunCandidate
+        ?? directCandidates[0]
+        ?? null;
 
     const packetRelayObserved = result.candidateIps.some(candidate => (
         (candidate.provider === 'meta' || candidate.endpointRole === 'relay' || candidate.networkCategory === 'meta')
         && activePackets(candidate) >= 10
     ));
-    const relayObserved = packetRelayObserved || transportRelayObserved;
+    const relayObserved = packetRelayObserved || transportRelayObserved || browserRelayObserved;
 
     addSource(sources, 'packet_flow', result.totalPackets > 0);
     addSource(sources, 'baileys_transport', Boolean(result.transportEvidence));
@@ -108,10 +142,17 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         && candidate.networkIntelligence.registryEvidence?.entryId !== undefined
     )));
     addSource(sources, 'ip_enrichment', result.candidateIps.some(candidate => candidate.ipEnrichment?.status === 'success'));
+    addSource(sources, 'browser_webrtc', Boolean(result.browserWebRtcEvidence));
+    addSource(sources, 'five_tuple_flow', Boolean(result.flowEvidence));
+    addSource(sources, 'stun_turn', Boolean(result.stunTurnEvidence));
 
     let directClassification: 'direct_confirmed' | 'direct_probable' | null = null;
     let independentDirectEvidenceCount = 0;
-    if (exactTransportCandidate) {
+    if (exactBrowserMatch) {
+        directClassification = 'direct_confirmed';
+        independentDirectEvidenceCount = 2;
+        reasons.push('BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE');
+    } else if (exactTransportCandidate) {
         directClassification = 'direct_confirmed';
         independentDirectEvidenceCount = 2;
         reasons.push('PACKET_FLOW_MATCHES_BAILEYS_PEER');
@@ -133,6 +174,20 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         limitations.push('baseline_unavailable');
     }
     if (result.captureBounds?.truncated) limitations.push('packet_capture_truncated');
+    if (result.flowEvidence?.truncated) limitations.push('five_tuple_flow_book_truncated');
+    if (result.stunTurnEvidence?.truncated) limitations.push('stun_transaction_book_truncated');
+    if (result.browserWebRtcEvidence) {
+        limitations.push(...result.browserWebRtcEvidence.limitations);
+        if (result.browserWebRtcEvidence.truncated) limitations.push('browser_webrtc_evidence_truncated');
+    }
+    if (result.stunTurnEvidence) {
+        limitations.push(...result.stunTurnEvidence.limitations.filter(code => code !== 'stun_transaction_limit_reached'));
+    }
+    if (result.browserWebRtcEvidence?.status === 'available'
+        && result.browserWebRtcEvidence.selectedPairs.length > 0
+        && result.browserWebRtcEvidence.selectedPairs.every(pair => pair.remote.address === null)) {
+        limitations.push('browser_candidate_address_not_exposed');
+    }
     if (result.candidateIps.some(candidate => candidate.networkIntelligence.registryEvidence?.degraded)) {
         limitations.push('infrastructure_registry_degraded');
     }
@@ -149,7 +204,9 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         classification = directClassification;
     } else if (relayObserved) {
         classification = 'relay_confirmed';
-        reasons.push(transportRelayObserved ? 'BAILEYS_RELAY_OBSERVED' : 'RELAY_PACKET_FLOW_OBSERVED');
+        reasons.push(browserRelayObserved
+            ? 'BROWSER_SELECTED_RELAY_OBSERVED'
+            : transportRelayObserved ? 'BAILEYS_RELAY_OBSERVED' : 'RELAY_PACKET_FLOW_OBSERVED');
     } else {
         classification = 'unresolved';
         reasons.push('NO_CONCLUSIVE_ROUTE_EVIDENCE');
@@ -159,6 +216,7 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         reasons.push('DNS_EXCLUDED_FROM_DIRECT_EVIDENCE');
     }
     if (result.stunEndpoints?.length && !exactStunCandidate) reasons.push('STUN_CONTEXT_ONLY');
+    if (result.stunTurnEvidence?.transactions.length) reasons.push('STUN_TURN_TRANSACTION_CONTEXT');
     const usesScoringV3 = result.candidateIps.some(candidate => candidate.scoreVersion === 3);
     if (usesScoringV3) {
         reasons.push('CANDIDATE_SCORING_V3');
@@ -176,12 +234,19 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
                     ? independentDirectEvidenceCount >= 2 ? 88 : 68
                     : Math.min(30, primaryCandidate?.confidenceScore ?? 0);
     if (result.captureBounds?.truncated) confidenceScore = Math.min(confidenceScore, 69);
+    if (
+        result.browserWebRtcEvidence?.truncated
+        || result.flowEvidence?.truncated
+        || result.stunTurnEvidence?.truncated
+    ) confidenceScore = Math.min(confidenceScore, 69);
     if (result.candidateIps.some(candidate => candidate.networkIntelligence.registryEvidence?.degraded)) {
         confidenceScore = Math.min(confidenceScore, 69);
     }
 
     const routeAssessment: CallRouteAssessment = {
-        assessmentVersion: usesScoringV3 ? 3 : 2,
+        assessmentVersion: result.browserWebRtcEvidence || result.flowEvidence || result.stunTurnEvidence
+            ? 4
+            : usesScoringV3 ? 3 : 2,
         classification,
         confidenceScore,
         evidenceSources: [...sources],

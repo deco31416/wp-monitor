@@ -16,6 +16,7 @@ export interface RuntimeHealthProviders {
     whatsappConnected?: () => boolean;
     localCaptureAvailable?: () => boolean;
     callCaptureAvailable?: () => boolean;
+    browserWebRtcObservationAvailable?: () => boolean;
 }
 
 export function buildRuntimeLiveness() {
@@ -40,6 +41,9 @@ export function buildRuntimeHealth(config: RuntimeConfig, providers: RuntimeHeal
     const callCaptureAvailable = config.callCaptureMode !== 'disabled'
         ? providers.callCaptureAvailable?.() ?? (config.callCaptureMode === 'local' && localCaptureAvailable)
         : false;
+    const browserWebRtcObservationAvailable = config.browserWebRtcObservationEnabled
+        ? providers.browserWebRtcObservationAvailable?.() ?? false
+        : false;
     const degradedReasons = [
         mongoConfigured && !mongoConnected ? 'mongodb_disconnected' : null,
         redisRequired && !redisConfigured ? 'redis_not_configured' : null,
@@ -47,6 +51,9 @@ export function buildRuntimeHealth(config: RuntimeConfig, providers: RuntimeHeal
         !whatsappConnected ? 'whatsapp_disconnected' : null,
         config.localCaptureEnabled && !localCaptureAvailable ? 'local_capture_privileges_missing' : null,
         config.callCaptureMode === 'agent' && !callCaptureAvailable ? 'call_capture_agent_unavailable' : null,
+        config.browserWebRtcObservationEnabled && !browserWebRtcObservationAvailable
+            ? 'browser_webrtc_observer_unavailable'
+            : null,
     ].filter((reason): reason is string => Boolean(reason));
 
     return {
@@ -55,7 +62,12 @@ export function buildRuntimeHealth(config: RuntimeConfig, providers: RuntimeHeal
         developedBy: 'WP MONITOR',
         status: degradedReasons.length > 0 ? 'degraded' : 'operational',
         generatedAt: new Date().toISOString(),
-        runtime: buildRuntimeCapabilities(config, localCaptureAvailable, callCaptureAvailable),
+        runtime: buildRuntimeCapabilities(
+            config,
+            localCaptureAvailable,
+            callCaptureAvailable,
+            browserWebRtcObservationAvailable,
+        ),
         dependencies: {
             mongodb: {
                 configured: mongoConfigured,
@@ -77,6 +89,10 @@ export function buildRuntimeHealth(config: RuntimeConfig, providers: RuntimeHeal
                 mode: config.callCaptureMode,
                 available: callCaptureAvailable,
             },
+            browserWebRtcObservation: {
+                enabled: config.browserWebRtcObservationEnabled,
+                available: browserWebRtcObservationAvailable,
+            },
         },
         degradedReasons,
     };
@@ -90,7 +106,15 @@ export function registerRuntimeRoutes(app: Express, config: RuntimeConfig, provi
         const callCaptureAvailable = config.callCaptureMode !== 'disabled'
             ? providers.callCaptureAvailable?.() ?? (config.callCaptureMode === 'local' && localCaptureAvailable)
             : false;
-        res.json(buildRuntimeCapabilities(config, localCaptureAvailable, callCaptureAvailable));
+        const browserWebRtcObservationAvailable = config.browserWebRtcObservationEnabled
+            ? providers.browserWebRtcObservationAvailable?.() ?? false
+            : false;
+        res.json(buildRuntimeCapabilities(
+            config,
+            localCaptureAvailable,
+            callCaptureAvailable,
+            browserWebRtcObservationAvailable,
+        ));
     });
 
     app.get('/api/health', (_req, res) => {

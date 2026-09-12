@@ -1,6 +1,6 @@
 # ADR 0006: Observer WebRTC Separado del Agente de Captura
 
-- Estado: Proposed
+- Estado: Accepted (implementacion local; E4 pendiente)
 - Fecha: 2026-09-11
 - Relacion: extiende ADR 0004 sin reemplazarlo
 - Plan: [OBS-29](../development/webrtc-call-observation-plan.md)
@@ -18,9 +18,9 @@ del par ICE seleccionado, pero su interfaz de depuracion equivale a control
 amplio del navegador y no debe incorporarse al proceso que ya conserva
 `NET_RAW`/`NET_ADMIN`.
 
-## Decision propuesta
+## Decision
 
-Agregar, solo despues de una PoC favorable, un sidecar `webrtc-observer`:
+Agregar un sidecar `webrtc-observer` despues de la PoC sintetica favorable:
 
 1. Chromium habilita CDP unicamente en loopback dentro del namespace de
    `wa-browser` y sin publicacion de puerto.
@@ -64,11 +64,13 @@ Riesgos:
 - la direccion remota puede permanecer ausente por privacidad o relay;
 - un quinto servicio agrega recursos, healthchecks y compatibilidad de version.
 
-## Aceptacion de la decision
+## Evidencia de aceptacion
 
-El ADR cambia a `Accepted` solo si `OBS-29.1` demuestra en entorno aislado que la
-instrumentacion es estable, sanitizable y no interfiere con WhatsApp Web. Si la
-PoC falla, se registra el resultado y no se despliega CDP en el VPS.
+`OBS-29.1` demostro en Chrome 153/CDP 1.3 con perfil efimero que la inyeccion
+temprana observa pares seleccionados, acota estadisticas y elimina direcciones,
+SDP y campos no permitidos. La aceptacion arquitectonica no equivale a E4: falta
+verificar una llamada autorizada en `wa-browser` y confirmar que WhatsApp Web
+expone —o no expone— el endpoint candidato en esa version concreta.
 
 ## Rollback
 

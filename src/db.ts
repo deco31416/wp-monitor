@@ -9,7 +9,7 @@ import { MongoClient, Db, Collection } from 'mongodb';
 import 'dotenv/config';
 import type { CallAnalysisResult } from './call-analyzer.js';
 import { normalizeStoredRouteAssessment } from './call-route-assessment.js';
-import { normalizeStoredCallPhaseData } from './call-analysis-history.js';
+import { normalizeStoredCallObservationEvidence, normalizeStoredCallPhaseData } from './call-analysis-history.js';
 import type { ObservationPersistenceResult } from './observation-dedupe.js';
 import { PRIMARY_OPERATOR_ID } from './operator-auth.js';
 import type { OperatorUserDoc } from './operator-auth.js';
@@ -1934,8 +1934,8 @@ export function buildCallAnalysisScope(jid: string, caseId?: string): Record<str
 }
 
 function normalizePersistedCallAnalysis(result: CallAnalysisResult): CallAnalysisResult {
-    const phaseNormalized = normalizeStoredCallPhaseData(result);
-    const routeAssessment = normalizeStoredRouteAssessment(phaseNormalized.routeAssessment);
+    const phaseNormalized = normalizeStoredCallObservationEvidence(normalizeStoredCallPhaseData(result));
+    const routeAssessment = normalizeStoredRouteAssessment(phaseNormalized.routeAssessment, phaseNormalized);
     if (routeAssessment) return { ...phaseNormalized, routeAssessment };
     const { routeAssessment: _legacyRouteAssessment, ...legacyResult } = phaseNormalized;
     return legacyResult;

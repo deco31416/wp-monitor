@@ -358,6 +358,67 @@ test('marks a bounded result as partial and explains its limitations', () => {
     expect(screen.getByText(/no constituye una segunda confirmación independiente/)).toBeInTheDocument();
 });
 
+test('shows WebRTC, five-tuple, and STUN/TURN evidence inside the existing call result', () => {
+    const result = analysis();
+    result.browserWebRtcEvidence = {
+        version: 1,
+        status: 'available',
+        startedAt: '2026-09-08T12:00:00.000Z',
+        endedAt: '2026-09-08T12:00:10.000Z',
+        connectionCount: 1,
+        selectedPairs: [{
+            peerConnectionId: 'pc-1',
+            state: 'succeeded',
+            nominated: true,
+            selected: true,
+            firstObservedAt: '2026-09-08T12:00:01.000Z',
+            lastObservedAt: '2026-09-08T12:00:09.000Z',
+            local: {
+                candidateType: 'host', protocol: 'udp', relayProtocol: 'unknown',
+                address: null, addressFamily: null, port: 50_000,
+            },
+            remote: {
+                candidateType: 'srflx', protocol: 'udp', relayProtocol: 'unknown',
+                address: '198.51.100.40', addressFamily: 4, port: 40_000,
+            },
+            packetsSent: 20,
+            packetsReceived: 20,
+            bytesSent: 4_000,
+            bytesReceived: 4_000,
+            currentRoundTripTimeMs: 30,
+        }],
+        stateTransitions: [],
+        truncated: false,
+        limitations: [],
+    };
+    result.flowEvidence = {
+        version: 1,
+        flowLimit: 1_024,
+        storedFlows: 3,
+        droppedPackets: 0,
+        truncated: false,
+        flows: [],
+    };
+    result.stunTurnEvidence = {
+        version: 1,
+        transactionLimit: 256,
+        storedTransactions: 4,
+        droppedTransactions: 0,
+        truncated: false,
+        transactions: [],
+        channels: [],
+        limitations: [],
+    };
+
+    render(panel(result));
+
+    expect(screen.getByRole('region', { name: 'Evidencia técnica complementaria' })).toBeInTheDocument();
+    expect(screen.getByText('1 par(es) seleccionado(s) · 1 con endpoint expuesto')).toBeInTheDocument();
+    expect(screen.getByText('3 cinco-tupla(s)')).toBeInTheDocument();
+    expect(screen.getByText('4 transacción(es) · 0 canal(es) correlacionado(s)')).toBeInTheDocument();
+    expect(screen.getByText(/No contiene SDP, audio, mensajes/)).toBeInTheDocument();
+});
+
 test('separates route scoring from geographic context and declares unquantified uncertainty', () => {
     const result = analysis();
     result.routeAssessment = routeAssessment('direct_probable', { assessmentVersion: 3 });

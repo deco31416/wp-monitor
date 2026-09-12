@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { signCaptureAgentRequest, validateCaptureAgentSecret } from './capture-agent-auth.js';
 import type { CallAnalysisResult, CallCaptureStatus, CandidateIP } from './call-analyzer.js';
+import { normalizeCallFlowEvidence, normalizeStunTurnEvidence } from './call-observation-evidence.js';
 import {
     CALL_CAPTURE_PHASE_CAPABILITY_VERSION,
     CALL_CAPTURE_PHASE_EVIDENCE_CONFIDENCES,
@@ -979,6 +980,15 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
     const stunEndpoints = object.stunEndpoints === undefined
         ? undefined
         : parseStunEndpoints(object.stunEndpoints);
+    const flowEvidence = object.flowEvidence === undefined
+        ? undefined
+        : normalizeCallFlowEvidence(object.flowEvidence);
+    const stunTurnEvidence = object.stunTurnEvidence === undefined
+        ? undefined
+        : normalizeStunTurnEvidence(object.stunTurnEvidence);
+    if ((object.flowEvidence !== undefined && !flowEvidence) || (object.stunTurnEvidence !== undefined && !stunTurnEvidence)) {
+        throw new CaptureAgentClientError('Capture agent returned invalid observation evidence', 502, 'invalid_agent_response');
+    }
     if (capturePhases) {
         const phaseDates = [
             capturePhases.baselineStartedAt,
@@ -1036,6 +1046,8 @@ function parseAnalysis(payload: unknown): CallAnalysisResult {
         ...(stunEndpoints === undefined ? {} : { stunEndpoints }),
         ...(captureBounds === undefined ? {} : { captureBounds }),
         ...(phaseCounts === undefined ? {} : { phaseCounts }),
+        ...(flowEvidence === undefined ? {} : { flowEvidence }),
+        ...(stunTurnEvidence === undefined ? {} : { stunTurnEvidence }),
     };
 }
 
@@ -1102,7 +1114,9 @@ export class CaptureAgentClient {
                 && capabilities.callCapturePhases === CALL_CAPTURE_PHASE_CAPABILITY_VERSION
                 && capabilities.operatorCallMarkers === 1
                 && capabilities.endpointExclusionDecision === ENDPOINT_EXCLUSION_DECISION_VERSION
-                && capabilities.candidateScoring === 3;
+                && capabilities.candidateScoring === 3
+                && capabilities.flowEvidence === 1
+                && capabilities.stunTurnEvidence === 1;
         } catch {
             return false;
         }

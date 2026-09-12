@@ -129,18 +129,25 @@ PATH="/usr/local/lib/wp-monitor/bin:$PATH" \
 child_pids+=("$!")
 child_names+=("Fluxbox")
 
-chromium \
-    --user-data-dir=/home/browser/profile \
-    --no-first-run \
-    --disable-background-networking \
-    --disable-component-update \
-    --disable-default-apps \
-    --disable-features=Translate \
-    --disable-sync \
-    --metrics-recording-only \
-    --password-store=basic \
-    --window-size=1440,900 \
-    https://web.whatsapp.com/ >/tmp/chromium.log 2>&1 &
+chromium_args=(
+    --user-data-dir=/home/browser/profile
+    --no-first-run
+    --disable-background-networking
+    --disable-component-update
+    --disable-default-apps
+    --disable-features=Translate
+    --disable-sync
+    --metrics-recording-only
+    --password-store=basic
+    --window-size=1440,900
+)
+if [[ "${WEBRTC_CDP_ENABLED:-false}" == 'true' ]]; then
+    chromium_args+=(
+        --remote-debugging-address=127.0.0.1
+        --remote-debugging-port=9222
+    )
+fi
+chromium "${chromium_args[@]}" https://web.whatsapp.com/ >/tmp/chromium.log 2>&1 &
 child_pids+=("$!")
 child_names+=("Chromium")
 

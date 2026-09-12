@@ -25,6 +25,8 @@ services:
     depends_on: !override
       capture-agent:
         condition: service_healthy
+      webrtc-observer:
+        condition: service_healthy
 
   client:
     ports: !reset []

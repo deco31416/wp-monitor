@@ -126,7 +126,14 @@ test('exposes public liveness and readiness without interface details', async ()
             version: SOFTWARE_VERSION,
             status: 'ready',
             capturePrivileges: true,
-            capabilities: { callCapturePhases: 4, operatorCallMarkers: 1, endpointExclusionDecision: 1, candidateScoring: 3 },
+            capabilities: {
+                callCapturePhases: 4,
+                operatorCallMarkers: 1,
+                endpointExclusionDecision: 1,
+                candidateScoring: 3,
+                flowEvidence: 1,
+                stunTurnEvidence: 1,
+            },
         });
     });
 });

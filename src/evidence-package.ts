@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { countAuditEvents, countCaseEvidenceLinks, countObservedActivityEvents, getAuditEvents, getCallAnalysesByCallIds, getCase, getCaseEvidenceLinks, getObservedActivityEventsForCase, getStateDistribution } from './db.js';
 import { normalizeStoredRouteAssessment } from './call-route-assessment.js';
+import { normalizeStoredCallObservationEvidence } from './call-analysis-history.js';
 import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 
@@ -381,6 +382,9 @@ const REPORT_ROUTE_SOURCE_LABELS: Record<string, string> = {
     baseline: 'Línea base previa',
     infrastructure_registry: 'Registro de infraestructura',
     ip_enrichment: 'Contexto de red y GeoIP',
+    browser_webrtc: 'Par seleccionado por WebRTC',
+    five_tuple_flow: 'Libro de flujos de cinco tuplas',
+    stun_turn: 'Transacciones STUN/TURN',
 };
 
 const REPORT_ROUTE_REASON_LABELS: Record<string, string> = {
@@ -396,6 +400,9 @@ const REPORT_ROUTE_REASON_LABELS: Record<string, string> = {
     STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
     CANDIDATE_SCORING_V3: 'Las candidatas se evaluaron con el modelo de ruta v3 y su desglose reconstruible.',
     GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE: 'El contexto geográfico se informó por separado y no alteró la conclusión de ruta.',
+    BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE: 'El candidato WebRTC seleccionado coincide exactamente con un flujo bidireccional activo.',
+    BROWSER_SELECTED_RELAY_OBSERVED: 'WebRTC seleccionó explícitamente un candidato relay.',
+    STUN_TURN_TRANSACTION_CONTEXT: 'Las transacciones STUN/TURN se conservaron como contexto de negociación.',
 };
 
 const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
@@ -412,6 +419,18 @@ const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
     endpoint_list_truncated: 'La lista de endpoints fue acotada por seguridad.',
     malformed_endpoint_skipped: 'Se descartó un endpoint con formato inválido.',
     stored_observation_invalid: 'Una observación almacenada no superó la validación del contrato.',
+    browser_webrtc_observer_start_unavailable: 'El observador WebRTC no pudo armarse al iniciar la captura.',
+    browser_webrtc_observer_stop_unavailable: 'El observador WebRTC no pudo entregar evidencia al finalizar.',
+    browser_webrtc_armed_after_automatic_call_signal: 'La captura automática armó WebRTC después de la primera señal; el inicio puede ser parcial.',
+    browser_candidate_address_not_exposed: 'Chromium no expuso la dirección candidata remota.',
+    browser_peer_connection_not_observed: 'El navegador no creó una conexión WebRTC observable durante esta ventana.',
+    browser_selected_pair_not_observed: 'WebRTC no informó un par seleccionado antes de finalizar.',
+    browser_get_stats_partial_failure: 'Una conexión WebRTC no entregó estadísticas; el resto de la evidencia se conservó.',
+    browser_webrtc_evidence_truncated: 'La evidencia WebRTC alcanzó su límite de seguridad.',
+    five_tuple_flow_book_truncated: 'El libro de flujos alcanzó su límite de seguridad.',
+    stun_transaction_book_truncated: 'El libro STUN/TURN alcanzó su límite de seguridad.',
+    stun_dropped_transaction_count_capped: 'El conteo de transacciones STUN descartadas alcanzó su límite de memoria.',
+    turn_channel_data_without_observed_channel_bind: 'Se observaron tramas compatibles con TURN sin CHANNEL-BIND correlacionable.',
     legacy_route_assessment_unavailable: 'La captura es histórica y no contiene una evaluación de ruta v2.',
 };
 
@@ -648,7 +667,8 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
     const candidateIps = observedCallIps.filter((candidate: any) => candidate.isP2P);
     const nonConclusiveIpObservations = observedCallIps.filter((candidate: any) => !candidate.isP2P);
     const allCallRoutes = callAnalysis.map((analysis: any) => {
-        const normalizedAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment);
+        const normalizedAnalysis = normalizeStoredCallObservationEvidence(analysis);
+        const normalizedAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment, normalizedAnalysis);
         const endpointContexts = observedCallIps
             .filter((endpoint: any) => endpoint.callId === analysis.callId)
             .map((endpoint: any) => ({
@@ -674,6 +694,13 @@ export function buildFinalCaseReport(evidencePackage: NonNullable<Awaited<Return
             limitations: normalizedAssessment?.limitations || ['legacy_route_assessment_unavailable'],
             endpointContexts,
             contextContradictions,
+            browserWebRtcStatus: normalizedAnalysis.browserWebRtcEvidence?.status || 'not_recorded',
+            browserSelectedPairCount: normalizedAnalysis.browserWebRtcEvidence?.selectedPairs?.length || 0,
+            exposedRemoteCandidateCount: (normalizedAnalysis.browserWebRtcEvidence?.selectedPairs || [])
+                .filter((pair: any) => pair.remote?.address && pair.remote?.port).length,
+            flowCount: normalizedAnalysis.flowEvidence?.storedFlows || 0,
+            stunTransactionCount: normalizedAnalysis.stunTurnEvidence?.storedTransactions || 0,
+            turnChannelCount: normalizedAnalysis.stunTurnEvidence?.channels?.length || 0,
         };
         return {
             ...route,
@@ -821,7 +848,7 @@ export function renderFinalCaseReportHtml(report: ReturnType<typeof buildFinalCa
                 <td><code>${escapeHtml(route.callId)}</code><br><span class="muted">${escapeHtml(route.targetJid)}</span></td>
                 <td><strong>${escapeHtml(presentation.classificationLabel)}</strong></td>
                 <td><span class="score ${routeTone}">${escapeHtml(presentation.confidenceLabel)} · ${escapeHtml(route.confidenceScore)}/100</span></td>
-                <td>${escapeHtml(presentation.evidenceLabels.join(' · ') || 'Sin fuentes concluyentes')}</td>
+                <td>${escapeHtml(presentation.evidenceLabels.join(' · ') || 'Sin fuentes concluyentes')}<br><span class="muted">WebRTC: ${escapeHtml(route.browserWebRtcStatus)} · pares ${escapeHtml(route.browserSelectedPairCount)} · flujos ${escapeHtml(route.flowCount)} · STUN/TURN ${escapeHtml(route.stunTransactionCount)}</span></td>
                 <td><code>${escapeHtml(route.primaryCandidateIp || 'No identificado')}</code><br><span class="muted">${escapeHtml(route.independentDirectEvidenceCount)} fuente(s) directa(s) independiente(s)</span></td>
                 <td>${escapeHtml(presentation.reasonLabels.join(' ') || 'Sin razones concluyentes')}<br><span class="muted">${escapeHtml(presentation.limitationLabels.join(' ') || 'Sin limitaciones adicionales registradas')}</span>${route.contextContradictions?.length ? `<br><span class="muted">Contradicciones contextuales: ${escapeHtml(route.contextContradictions.length)}. No modifican la conclusión de ruta.</span>` : ''}</td>
             </tr>`;
@@ -1459,7 +1486,7 @@ export function renderFinalCaseReportPdf(report: ReturnType<typeof buildFinalCas
     } else {
         for (const route of report.findings.callRoutes) {
             const presentation = route.presentation || buildRoutePresentation(route);
-            const provenanceText = `Llamada ${route.callId}. Procedencia: ${presentation.evidenceLabels.join(', ') || 'Sin fuentes concluyentes'}. Candidato principal: ${route.primaryCandidateIp || 'No identificado'}. Fuentes directas independientes: ${route.independentDirectEvidenceCount}.`;
+            const provenanceText = `Llamada ${route.callId}. Procedencia: ${presentation.evidenceLabels.join(', ') || 'Sin fuentes concluyentes'}. Candidato principal: ${route.primaryCandidateIp || 'No identificado'}. Fuentes directas independientes: ${route.independentDirectEvidenceCount}. WebRTC: ${route.browserWebRtcStatus}; pares seleccionados: ${route.browserSelectedPairCount}; flujos: ${route.flowCount}; transacciones STUN/TURN: ${route.stunTransactionCount}.`;
             const reasonText = presentation.reasonLabels.length > 0
                 ? `Evidencia: ${presentation.reasonLabels.join(' ')}`
                 : null;
@@ -1745,8 +1772,9 @@ function buildCsvAnnexes(
     ]);
 
     const callRows = (evidencePackage.sections.callAnalysis || []).map((analysis: any) => {
+        const normalizedAnalysis = normalizeStoredCallObservationEvidence(analysis);
         const candidates = Array.isArray(analysis.candidateIps) ? analysis.candidateIps : [];
-        const routeAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment);
+        const routeAssessment = normalizeStoredRouteAssessment(analysis.routeAssessment, normalizedAnalysis);
         const routeLimitations = routeAssessment?.limitations || ['legacy_route_assessment_unavailable'];
         const highestScore = candidates
             .map((candidate: any) => getCandidateScore(candidate))
@@ -1772,6 +1800,12 @@ function buildCsvAnnexes(
             routeAssessment?.reasonCodes || [],
             routeLimitations,
             (analysis.candidateIps || []).filter((candidate: any) => candidate.networkContext?.relationship === 'mismatch').length,
+            normalizedAnalysis.browserWebRtcEvidence?.status || 'not_recorded',
+            normalizedAnalysis.browserWebRtcEvidence?.selectedPairs?.length || 0,
+            (normalizedAnalysis.browserWebRtcEvidence?.selectedPairs || []).filter((pair: any) => pair.remote?.address && pair.remote?.port).length,
+            normalizedAnalysis.flowEvidence?.storedFlows || 0,
+            normalizedAnalysis.stunTurnEvidence?.storedTransactions || 0,
+            normalizedAnalysis.stunTurnEvidence?.channels?.length || 0,
         ];
     });
 
@@ -1957,7 +1991,7 @@ function buildCsvAnnexes(
         {
             name: 'annexes/call-analysis.csv',
             data: toCsv(
-                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount', 'routeClassification', 'routeConfidenceScore', 'independentDirectEvidenceCount', 'primaryCandidateIp', 'routeEvidenceSources', 'routeReasonCodes', 'routeLimitations', 'networkContextContradictionCount'],
+                ['callId', 'targetJid', 'startTime', 'endTime', 'durationSec', 'isVideo', 'totalPackets', 'verdict', 'captureInterface', 'candidateCount', 'highestCandidateScore', 'metaIpCount', 'routeClassification', 'routeConfidenceScore', 'independentDirectEvidenceCount', 'primaryCandidateIp', 'routeEvidenceSources', 'routeReasonCodes', 'routeLimitations', 'networkContextContradictionCount', 'browserWebRtcStatus', 'browserSelectedPairCount', 'browserExposedRemoteCandidateCount', 'flowCount', 'stunTransactionCount', 'turnChannelCount'],
                 callRows
             ),
         },

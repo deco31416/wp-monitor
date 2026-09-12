@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseStunMessage } from '../src/stun-parser.js';
+import { parseStunMessage, parseTurnChannelData } from '../src/stun-parser.js';
 
 const COOKIE = Buffer.from([0x21, 0x12, 0xa4, 0x42]);
 const TRANSACTION = Buffer.from('00112233445566778899aabb', 'hex');
@@ -154,6 +154,49 @@ test('enforces the structural attribute count bound', () => {
     assert.deepEqual(parseStunMessage(message(0x0001, attributes)), {
         status: 'malformed',
         reason: 'too_many_attributes',
+    });
+});
+
+test('extracts only permitted ICE and TURN channel metadata', () => {
+    const channel = Buffer.alloc(4);
+    channel.writeUInt16BE(0x4001, 0);
+    const result = parseStunMessage(message(0x0009, [
+        attribute(0x0025, Buffer.alloc(0)),
+        attribute(0x802a, Buffer.alloc(8, 7)),
+        attribute(0x000c, channel),
+        attribute(0x0012, addressValue(4, 49_152, Buffer.from([198, 51, 100, 44]), true)),
+    ]));
+
+    assert.equal(result.status, 'parsed');
+    if (result.status !== 'parsed') return;
+    assert.equal(result.message.method, 'channel_bind');
+    assert.equal(result.message.useCandidate, true);
+    assert.equal(result.message.iceRole, 'controlling');
+    assert.equal(result.message.channelNumber, 0x4001);
+    assert.equal(JSON.stringify(result).includes(Buffer.alloc(8, 7).toString('hex')), false);
+});
+
+test('recognizes bounded TURN ChannelData envelopes without retaining payload', () => {
+    const payload = Buffer.from('synthetic-media-must-not-be-retained');
+    const frame = Buffer.alloc(4 + payload.length);
+    frame.writeUInt16BE(0x4001, 0);
+    frame.writeUInt16BE(payload.length, 2);
+    payload.copy(frame, 4);
+
+    assert.deepEqual(parseTurnChannelData(frame), {
+        status: 'parsed',
+        channelData: { channelNumber: 0x4001, payloadLength: payload.length },
+    });
+    assert.equal(JSON.stringify(parseTurnChannelData(frame)).includes('synthetic-media'), false);
+    assert.deepEqual(parseTurnChannelData(frame.subarray(0, 3)), {
+        status: 'malformed',
+        reason: 'truncated_channel_data',
+    });
+    const invalidLength = Buffer.from(frame);
+    invalidLength.writeUInt16BE(payload.length + 1, 2);
+    assert.deepEqual(parseTurnChannelData(invalidLength), {
+        status: 'malformed',
+        reason: 'invalid_channel_length',
     });
 });
 

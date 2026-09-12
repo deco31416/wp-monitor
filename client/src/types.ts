@@ -177,10 +177,10 @@ export interface CallTransportEvidence {
 }
 
 export interface CallRouteAssessment {
-    assessmentVersion: 2 | 3;
+    assessmentVersion: 2 | 3 | 4;
     classification: 'direct_confirmed' | 'direct_probable' | 'relay_confirmed' | 'mixed' | 'unresolved';
     confidenceScore: number;
-    evidenceSources: Array<'baileys_transport' | 'packet_flow' | 'stun' | 'baseline' | 'infrastructure_registry' | 'ip_enrichment'>;
+    evidenceSources: Array<'baileys_transport' | 'packet_flow' | 'stun' | 'baseline' | 'infrastructure_registry' | 'ip_enrichment' | 'browser_webrtc' | 'five_tuple_flow' | 'stun_turn'>;
     independentDirectEvidenceCount: number;
     primaryCandidateIp: string | null;
     reasonCodes: string[];
@@ -246,6 +246,96 @@ export interface CallAnalysisResult {
         truncated: boolean;
     };
     phaseCounts?: CallCapturePhaseCounts;
+    browserWebRtcEvidence?: {
+        version: 1;
+        status: 'available' | 'unavailable';
+        startedAt: string;
+        endedAt: string;
+        connectionCount: number;
+        selectedPairs: Array<{
+            peerConnectionId: string;
+            state: 'frozen' | 'waiting' | 'in-progress' | 'failed' | 'succeeded' | 'unknown';
+            nominated: boolean;
+            selected: boolean;
+            firstObservedAt: string;
+            lastObservedAt: string;
+            local: WebRtcCandidateEvidence;
+            remote: WebRtcCandidateEvidence;
+            packetsSent: number | null;
+            packetsReceived: number | null;
+            bytesSent: number | null;
+            bytesReceived: number | null;
+            currentRoundTripTimeMs: number | null;
+        }>;
+        stateTransitions: Array<{
+            peerConnectionId: string;
+            state: 'new' | 'checking' | 'connected' | 'completed' | 'disconnected' | 'failed' | 'closed' | 'unknown';
+            observedAt: string;
+        }>;
+        truncated: boolean;
+        limitations: string[];
+    };
+    flowEvidence?: {
+        version: 1;
+        flowLimit: number;
+        storedFlows: number;
+        droppedPackets: number;
+        truncated: boolean;
+        flows: Array<{
+            addressFamily: 4 | 6;
+            protocol: 'udp' | 'tcp';
+            localPort: number;
+            remoteIp: string;
+            remotePort: number;
+            firstSeen: string;
+            lastSeen: string;
+            direction: 'incoming' | 'outgoing' | 'bidirectional';
+            packets: number;
+            bytesTotal: number;
+            phaseCounts: CallCapturePhaseCounts;
+            protocolEvidence: string[];
+        }>;
+    };
+    stunTurnEvidence?: {
+        version: 1;
+        transactionLimit: number;
+        storedTransactions: number;
+        droppedTransactions: number;
+        truncated: boolean;
+        transactions: Array<{
+            transactionFingerprint: string;
+            method: string;
+            firstObservedAt: string;
+            lastObservedAt: string;
+            requestObserved: boolean;
+            successResponseObserved: boolean;
+            errorResponseObserved: boolean;
+            requestDirection: 'incoming' | 'outgoing' | null;
+            responseDirection: 'incoming' | 'outgoing' | null;
+            useCandidate: boolean;
+            iceRole: 'controlling' | 'controlled' | 'unknown';
+            channelNumber: number | null;
+            endpointKeys: string[];
+        }>;
+        channels: Array<{
+            channelNumber: number;
+            peerEndpointKey: string;
+            firstObservedAt: string;
+            lastObservedAt: string;
+            packets: number;
+            bytesTotal: number;
+        }>;
+        limitations: string[];
+    };
+}
+
+export interface WebRtcCandidateEvidence {
+    candidateType: 'host' | 'srflx' | 'prflx' | 'relay' | 'unknown';
+    protocol: 'udp' | 'tcp' | 'unknown';
+    relayProtocol: 'udp' | 'tcp' | 'tls' | 'unknown';
+    address: string | null;
+    addressFamily: 4 | 6 | null;
+    port: number | null;
 }
 
 export interface CallEvent {

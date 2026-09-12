@@ -21,6 +21,7 @@ flowchart TB
       BaileysSession[auth_info_baileys]
       ProviderKeys[Keys externas]
       AgentSecret[CAPTURE_AGENT_SHARED_SECRET]
+      ObserverSecret[WEBRTC_OBSERVER_SHARED_SECRET]
       BrowserProfile[Perfil Chromium / cookies]
       VncPassword[Credencial VNC secundaria]
     end
@@ -28,7 +29,9 @@ flowchart TB
     subgraph CaptureZone[Zona aislada de captura]
       BrowserWA[Chromium UID 10001]
       Agent[Capture agent UID 1000]
+      Observer[WebRTC observer sin capabilities]
       BrowserWA --> Agent
+      BrowserWA --> Observer
     end
 
     subgraph Data[Zona de datos]
@@ -47,8 +50,11 @@ flowchart TB
     BaileysSession --> Protected
     ProviderKeys --> Protected
     Protected -->|HMAC timestamp nonce body hash| Agent
+    Protected -->|HMAC timestamp nonce body hash| Observer
     AgentSecret --> Protected
     AgentSecret --> Agent
+    ObserverSecret --> Protected
+    ObserverSecret --> Observer
     BrowserProfile --> BrowserWA
     VncPassword --> BrowserWA
     Validation --> Mongo
@@ -67,5 +73,7 @@ flowchart TB
 - Validacion se aplica antes de persistir o abrir captura.
 - Los reportes minimizan y excluyen secretos.
 - El puerto del agente no se publica; Selkies usa una red de tunel protegida y sus bindings de contingencia/noVNC permanecen solo en loopback.
+- El observer y CDP tampoco se publican. CDP acepta solo loopback dentro del namespace; la sonda dormida se arma por alcance firmado y TTL.
 - El backend no recibe capabilities. El agente conserva solo `NET_RAW/NET_ADMIN` y el navegador ninguna.
+- El observer no recibe capabilities y su secreto debe ser distinto del secreto del agente.
 - Perfiles Chromium, sesiones Baileys, secretos HMAC/VNC y backups quedan fuera de Git y del contexto Docker.

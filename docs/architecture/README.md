@@ -45,6 +45,7 @@ flowchart LR
     Redis[(Redis)]
     WebWA[Chromium WhatsApp Web opcional]
     Capture[Npcap/libpcap o capture-agent]
+    Observer[Observer WebRTC/CDP opcional]
     Geo[DB-IP e ip-api]
     Files[Sesion, uploads y reportes]
 
@@ -55,6 +56,8 @@ flowchart LR
     API <--> Redis
     API -->|HMAC cuando usa agent| Capture
     WebWA --> Capture
+    API -->|HMAC cuando se habilita| Observer
+    WebWA --> Observer
     API --> Geo
     API <--> Files
     Participant -->|Consentimiento y envio| API
@@ -115,6 +118,8 @@ flowchart TB
 | `src/call-analyzer.ts` | Ventana de llamada y resultado tecnico |
 | `src/call-capture-service.ts` | Seleccion del proveedor `disabled/local/agent` |
 | `src/capture-agent-*` | Contrato HMAC, sidecar y validacion entre servicios |
+| `src/webrtc-observer-*` | Sonda WebRTC dormida, control HMAC y metadata `getStats()` sanitizada |
+| `src/call-observation-evidence.ts` | Libros versionados WebRTC, cinco-tuplas y STUN/TURN |
 | `src/call-scoring.ts` | Clasificacion y score de IP candidata |
 | `src/ip-enrichment.ts` | DB-IP principal y complemento de metadata |
 | `src/check-in.ts` | Modelo, landing, consentimiento y recibo de Check-In |
@@ -138,7 +143,7 @@ flowchart TB
 - MongoDB es la fuente durable de casos y observaciones.
 - El estado efimero conserva conexiones, temporizadores, presencia actual y captura activa.
 - Baileys mantiene una sesion local y entrega eventos disponibles para la cuenta vinculada.
-- En Docker/VPS, Chromium mantiene una segunda sesion WhatsApp Web persistente; el capture-agent observa solo ese namespace y devuelve metadata validada al backend.
+- En Docker/VPS, Chromium mantiene una segunda sesion WhatsApp Web persistente; el capture-agent observa solo ese namespace y devuelve metadata validada al backend. Opcionalmente, un observer sin capabilities correlaciona el par WebRTC seleccionado mediante CDP loopback sin leer SDP ni contenido.
 
 ## Limites de confianza
 

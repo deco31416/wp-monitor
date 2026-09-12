@@ -7,6 +7,7 @@ export interface RuntimeConfig {
     localCaptureEnabled: boolean;
     callCaptureMode: CallCaptureMode;
     experimentalProbesEnabled: boolean;
+    browserWebRtcObservationEnabled: boolean;
     authRequired: true;
 }
 
@@ -35,6 +36,8 @@ export interface RuntimeCapabilities {
     passiveMessageReceipts: boolean;
     experimentalProbes: boolean;
     authRequired: boolean;
+    browserWebRtcObservation: boolean;
+    browserWebRtcObservationAvailable: boolean;
 }
 
 export function resolveDeploymentMode(env: NodeJS.ProcessEnv): string {
@@ -66,6 +69,7 @@ export function buildRuntimeConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
         localCaptureEnabled,
         callCaptureMode: resolveCallCaptureMode(env, localCaptureEnabled),
         experimentalProbesEnabled: env.ENABLE_EXPERIMENTAL_PROBES === 'true',
+        browserWebRtcObservationEnabled: env.WEBRTC_OBSERVER_ENABLED === 'true',
         authRequired: true,
     };
 }
@@ -78,6 +82,9 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
     const callCaptureMode = env.CALL_CAPTURE_MODE?.trim().toLowerCase();
     const captureAgentUrl = env.CAPTURE_AGENT_URL?.trim() || '';
     const captureAgentSecret = env.CAPTURE_AGENT_SHARED_SECRET || '';
+    const webRtcObserverEnabled = env.WEBRTC_OBSERVER_ENABLED === 'true';
+    const webRtcObserverUrl = env.WEBRTC_OBSERVER_URL?.trim() || '';
+    const webRtcObserverSecret = env.WEBRTC_OBSERVER_SHARED_SECRET || '';
 
     if (callCaptureMode && !['disabled', 'local', 'agent'].includes(callCaptureMode)) {
         errors.push('CALL_CAPTURE_MODE must be disabled, local, or agent');
@@ -108,6 +115,32 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         }
     } else if (captureAgentUrl || captureAgentSecret) {
         errors.push('CAPTURE_AGENT_URL and CAPTURE_AGENT_SHARED_SECRET require CALL_CAPTURE_MODE=agent');
+    }
+    if (env.WEBRTC_OBSERVER_ENABLED !== undefined && !['true', 'false'].includes(env.WEBRTC_OBSERVER_ENABLED)) {
+        errors.push('WEBRTC_OBSERVER_ENABLED must be true or false');
+    }
+    if (webRtcObserverEnabled) {
+        if (resolvedCallCaptureMode === 'disabled') {
+            errors.push('WEBRTC_OBSERVER_ENABLED requires call capture to be enabled');
+        }
+        if (!webRtcObserverUrl) {
+            errors.push('WEBRTC_OBSERVER_URL is required when WEBRTC_OBSERVER_ENABLED=true');
+        } else {
+            try {
+                const parsed = new URL(webRtcObserverUrl);
+                if (!['http:', 'https:'].includes(parsed.protocol)
+                    || parsed.username || parsed.password || parsed.pathname !== '/'
+                    || parsed.search || parsed.hash) throw new Error('invalid');
+            } catch {
+                errors.push('WEBRTC_OBSERVER_URL must be an HTTP(S) origin without credentials, path, query, or fragment');
+            }
+        }
+        if (Buffer.byteLength(webRtcObserverSecret, 'utf8') < 32) {
+            errors.push('WEBRTC_OBSERVER_SHARED_SECRET must contain at least 32 bytes when WEBRTC_OBSERVER_ENABLED=true');
+        }
+        if (captureAgentSecret && webRtcObserverSecret === captureAgentSecret) {
+            errors.push('WEBRTC_OBSERVER_SHARED_SECRET must differ from CAPTURE_AGENT_SHARED_SECRET');
+        }
     }
 
     if (nodeEnv === 'production') {
@@ -156,6 +189,8 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         ['PROBE_TIMEOUT_MS', 3_000, 60_000],
         ['PROBE_MAX_BACKOFF_MS', 10_000, 1_800_000],
         ['CAPTURE_AGENT_TIMEOUT_MS', 500, 30_000],
+        ['WEBRTC_OBSERVER_TIMEOUT_MS', 500, 30_000],
+        ['WEBRTC_OBSERVER_TTL_MS', 30_000, 1_800_000],
     ];
     for (const [name, minimum, maximum] of integerRanges) {
         const rawValue = env[name];
@@ -201,6 +236,7 @@ export function buildRuntimeCapabilities(
     config: RuntimeConfig,
     localCaptureAvailable = config.localCaptureEnabled,
     callCaptureAvailable = config.callCaptureMode === 'local' ? localCaptureAvailable : false,
+    browserWebRtcObservationAvailable = false,
 ): RuntimeCapabilities {
     const captureOperational = config.localCaptureEnabled && localCaptureAvailable;
     const callCaptureOperational = config.callCaptureMode !== 'disabled' && callCaptureAvailable;
@@ -216,6 +252,8 @@ export function buildRuntimeCapabilities(
         callCaptureMode: config.callCaptureMode,
         passiveMessageReceipts: true,
         experimentalProbes: config.experimentalProbesEnabled,
+        browserWebRtcObservation: config.browserWebRtcObservationEnabled,
+        browserWebRtcObservationAvailable: config.browserWebRtcObservationEnabled && browserWebRtcObservationAvailable,
         authRequired: config.authRequired,
     };
 }

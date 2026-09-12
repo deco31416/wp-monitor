@@ -90,7 +90,7 @@ Baileys solo permite registrar lo que WhatsApp entrega a la sesion vinculada. Re
 
 En Docker/VPS distingue proveedor `agent`: confirma `wa-browser` y `capture-agent` healthy, mismo namespace, interfaz no-loopback y trafico originado dentro de Chromium. El agente no puede observar una llamada iniciada en la laptop o el telefono.
 
-## Chromium o capture-agent unhealthy
+## Chromium, capture-agent o WebRTC observer unhealthy
 
 - revisa el primer `browser startup error`, no solo el ultimo restart;
 - `profile is in use` debe recuperarse con el entrypoint suministrado; no borres el volumen;
@@ -98,8 +98,11 @@ En Docker/VPS distingue proveedor `agent`: confirma `wa-browser` y `capture-agen
 - valida Chromium UID 10001, sin capabilities y sin `--no-sandbox`;
 - valida agente PID 1 UID/GID 1000, `NoNewPrivs=1` y solo `NET_RAW/NET_ADMIN`;
 - confirma que backend/agente reciben el mismo secreto HMAC sin imprimirlo;
-- `7900/7901` deben aparecer solo en `127.0.0.1`, `8080` solo en la red de tunel y `4100` no debe publicarse;
+- con observer habilitado, confirma que backend/observer reciben su secreto independiente, que readiness instaló la sonda dormida y que no se reutilizó el secreto del agente;
+- `7900/7901` deben aparecer solo en `127.0.0.1`, `8080` solo en la red de tunel y `4100`, `4200` y `9222` no deben publicarse;
 - genera UDP publico sintetico: rangos privados/reservados pueden ser descartados correctamente por el clasificador.
+
+Si el observer está disponible pero no expone direcciones, revisa las limitaciones `browser_address_hidden`, `browser_no_selected_pair` o `browser_getstats_partial`. Eso puede ser comportamiento de Chromium/WhatsApp y debe degradar el resultado; no habilites lectura de SDP, credenciales ni payload para forzar una candidata.
 
 ## Todo el trafico esta filtrado
 

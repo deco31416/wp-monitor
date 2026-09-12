@@ -89,7 +89,7 @@ La aplicacion implementa TTL de 30 dias para mediciones y 90 dias para actividad
 
 La captura requiere autoridad sobre el host y el trafico. El producto trabaja con metadata, no debe ampliarse a payload sin una evaluacion independiente. Mantiene infraestructura y candidatos para revision; un filtro visual no debe destruir evidencia cruda.
 
-En Docker/VPS el backend no recibe capabilities. Un agente dedicado comparte solamente el namespace de red de `wa-browser`, valida solicitudes firmadas y conserva `NET_RAW/NET_ADMIN` despues de abandonar root. El agente no publica puerto al host y rechaza capturas concurrentes. Chromium ejecuta como UID 10001, sin capabilities, con `no-new-privileges` y rootfs de solo lectura; usa una excepcion seccomp acotada porque el perfil Docker predeterminado impide su sandbox de namespaces. Esa excepcion aumenta el impacto de una vulnerabilidad del navegador y exige mantener imagen/host actualizados, acceso SSH minimo y aislamiento del resto de servicios.
+En Docker/VPS el backend no recibe capabilities. Un agente dedicado comparte solamente el namespace de red de `wa-browser`, valida solicitudes firmadas y conserva `NET_RAW/NET_ADMIN` despues de abandonar root. El agente no publica puerto al host y rechaza capturas concurrentes. Un observer opcional comparte el mismo namespace sin capabilities, usa un secreto HMAC independiente y accede a CDP solo por loopback; se instala dormido y se arma con alcance/TTL durante una captura autorizada. Chromium ejecuta como UID 10001, sin capabilities, con `no-new-privileges` y rootfs de solo lectura; usa una excepcion seccomp acotada porque el perfil Docker predeterminado impide su sandbox de namespaces. Esa excepcion aumenta el impacto de una vulnerabilidad del navegador y exige mantener imagen/host actualizados, acceso SSH minimo y aislamiento del resto de servicios.
 
 El perfil Chromium contiene una sesion WhatsApp Web completa. Su volumen no se comparte entre replicas, no se descarga para soporte y solo entra en backups cifrados. La autenticación Selkies no sustituye la puerta de identidad externa; `7900/7901` permanecen en loopback y `8080` solo es alcanzable dentro de la red privada de tunel.
 
@@ -110,6 +110,7 @@ Contacta al mantenedor por un canal privado indicado por el repositorio. Incluye
 - [ ] Usuario inicial no predeterminado y contrasena unica en secret manager.
 - [ ] `AUTH_IDENTITY_SECRET` aleatorio de 32+ caracteres.
 - [ ] `CAPTURE_AGENT_SHARED_SECRET` independiente y aleatorio de 32+ bytes.
+- [ ] Si se habilita WebRTC, `WEBRTC_OBSERVER_SHARED_SECRET` independiente, observer sin capabilities y puertos `4200/9222` no publicados.
 - [ ] noVNC/Selkies de contingencia confirmados en `127.0.0.1`, acceso principal protegido y agente sin puerto host.
 - [ ] UID/capabilities/no-new-privileges del agente verificados en runtime.
 - [ ] Chromium no-root, sin `--no-sandbox`, con perfil exclusivo y volumen privado.

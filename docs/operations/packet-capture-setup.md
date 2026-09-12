@@ -120,10 +120,11 @@ La forma simple en un laboratorio aislado es iniciar el proceso de captura con p
 
 ### Docker/VPS recomendado
 
-No instales Chromium/libpcap directamente en el host ni otorgues capabilities al backend. Usa `Dockerfile.browser`, `Dockerfile.capture-agent` y `docker-compose.yml`:
+No instales Chromium/libpcap directamente en el host ni otorgues capabilities al backend. Usa `Dockerfile.browser`, `Dockerfile.capture-agent`, `Dockerfile.webrtc-observer` y `docker-compose.yml`:
 
 - `wa-browser` crea display/audio virtual y perfil persistente;
 - `capture-agent` comparte su namespace de red;
+- `webrtc-observer` comparte el namespace sin capabilities y consulta solo `getStats()` sanitizado mediante CDP loopback cuando la función está habilitada;
 - el entrypoint baja a UID/GID 1000 y conserva solo `NET_RAW/NET_ADMIN`;
 - backend controla start/phase/status/stop mediante HMAC privado;
 - readiness exige `capabilities.callCapturePhases=4` y
@@ -133,6 +134,7 @@ No instales Chromium/libpcap directamente en el host ni otorgues capabilities al
   muestran como agente no disponible hasta completar la actualizacion;
 - `LOCAL_CAPTURE_ENABLED=false` mantiene deshabilitada la captura general del host;
 - `CALL_CAPTURE_MODE=agent` habilita solo la ventana del navegador.
+- `WEBRTC_OBSERVER_ENABLED=false` mantiene el complemento apagado; al habilitarlo exige un secreto propio y nunca publica `4200/9222`.
 
 Consulta [Docker](docker.md) y [Ubuntu VPS](ubuntu-vps.md). La prueba real debe leer UID/capabilities de `/proc/1/status`, no inferirlas desde `docker exec id`.
 

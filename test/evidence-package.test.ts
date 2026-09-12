@@ -2,6 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocateEvidenceRecordLimits, buildEvidencePackage, buildEvidenceZip, buildFinalCaseReport, renderFinalCaseReportHtml, renderFinalCaseReportPdf } from '../src/evidence-package.js';
 
+function readStoredZipEntry(zip: Buffer, expectedName: string): string {
+    let offset = 0;
+    while (offset + 30 <= zip.length && zip.readUInt32LE(offset) === 0x04034b50) {
+        const compressionMethod = zip.readUInt16LE(offset + 8);
+        const compressedSize = zip.readUInt32LE(offset + 18);
+        const nameLength = zip.readUInt16LE(offset + 26);
+        const extraLength = zip.readUInt16LE(offset + 28);
+        const nameStart = offset + 30;
+        const dataStart = nameStart + nameLength + extraLength;
+        const name = zip.subarray(nameStart, nameStart + nameLength).toString('utf8');
+        if (name === expectedName) {
+            assert.equal(compressionMethod, 0, `Expected ${expectedName} to use the repository's stored ZIP format`);
+            return zip.subarray(dataStart, dataStart + compressedSize).toString('utf8');
+        }
+        offset = dataStart + compressedSize;
+    }
+    assert.fail(`ZIP entry not found: ${expectedName}`);
+}
+
 function sampleEvidencePackage(): any {
     return {
         manifest: {
@@ -485,6 +504,144 @@ test('builds evidence ZIP with CSV annexes and integrity manifest', () => {
     assert.match(zipText, /scoreBreakdownJson/);
     assert.match(zipText, /not_quantified_by_provider/);
     assert.match(zipText, /geographicContextAffectsRouteScore/);
+});
+
+test('keeps OBS-29 protocol provenance aligned across report, HTML, PDF, ZIP, and CSV', () => {
+    const evidencePackage = sampleEvidencePackage();
+    const analysis = evidencePackage.sections.callAnalysis[0];
+    analysis.routeAssessment = {
+        assessmentVersion: 4,
+        classification: 'direct_confirmed',
+        confidenceScore: 82,
+        evidenceSources: ['packet_flow', 'browser_webrtc', 'five_tuple_flow', 'stun_turn'],
+        independentDirectEvidenceCount: 2,
+        primaryCandidateIp: '203.0.113.50',
+        reasonCodes: ['BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'],
+        limitations: [],
+    };
+    analysis.browserWebRtcEvidence = {
+        version: 1,
+        status: 'available',
+        startedAt: new Date('2026-06-18T00:00:00.000Z'),
+        endedAt: new Date('2026-06-18T00:00:10.000Z'),
+        connectionCount: 1,
+        selectedPairs: [{
+            peerConnectionId: 'pc-1',
+            state: 'succeeded',
+            nominated: true,
+            selected: true,
+            firstObservedAt: new Date('2026-06-18T00:00:01.000Z'),
+            lastObservedAt: new Date('2026-06-18T00:00:09.000Z'),
+            local: { candidateType: 'host', protocol: 'udp', relayProtocol: 'unknown', address: null, addressFamily: null, port: 50_000 },
+            remote: { candidateType: 'srflx', protocol: 'udp', relayProtocol: 'unknown', address: '203.0.113.50', addressFamily: 4, port: 443 },
+            packetsSent: 50,
+            packetsReceived: 50,
+            bytesSent: 6_000,
+            bytesReceived: 6_000,
+            currentRoundTripTimeMs: 25,
+        }],
+        stateTransitions: [],
+        truncated: false,
+        limitations: [],
+    };
+    analysis.flowEvidence = {
+        version: 1,
+        flowLimit: 1_024,
+        storedFlows: 3,
+        droppedPackets: 0,
+        truncated: false,
+        flows: [
+            {
+                addressFamily: 4,
+                protocol: 'udp',
+                localPort: 50_000,
+                remoteIp: '203.0.113.50',
+                remotePort: 443,
+                firstSeen: new Date('2026-06-18T00:00:01.000Z'),
+                lastSeen: new Date('2026-06-18T00:00:09.000Z'),
+                direction: 'bidirectional',
+                packets: 100,
+                bytesTotal: 12_000,
+                phaseCounts: {
+                    version: 1,
+                    baseline: { packets: 10, bytes: 1_200 },
+                    negotiation: { packets: 10, bytes: 1_200 },
+                    active: { packets: 70, bytes: 8_400 },
+                    postCall: { packets: 10, bytes: 1_200 },
+                    unclassified: { packets: 0, bytes: 0 },
+                },
+                protocolEvidence: ['transport_flow'],
+            },
+            {
+                addressFamily: 4, protocol: 'udp', localPort: 50_001,
+                remoteIp: '192.0.2.60', remotePort: 34_78,
+                firstSeen: new Date('2026-06-18T00:00:02.000Z'), lastSeen: new Date('2026-06-18T00:00:03.000Z'),
+                direction: 'outgoing', packets: 1, bytesTotal: 120,
+                phaseCounts: { version: 1, baseline: { packets: 0, bytes: 0 }, negotiation: { packets: 1, bytes: 120 }, active: { packets: 0, bytes: 0 }, postCall: { packets: 0, bytes: 0 }, unclassified: { packets: 0, bytes: 0 } },
+                protocolEvidence: ['transport_flow'],
+            },
+            {
+                addressFamily: 4, protocol: 'udp', localPort: 50_002,
+                remoteIp: '192.0.2.61', remotePort: 34_78,
+                firstSeen: new Date('2026-06-18T00:00:02.000Z'), lastSeen: new Date('2026-06-18T00:00:03.000Z'),
+                direction: 'incoming', packets: 1, bytesTotal: 120,
+                phaseCounts: { version: 1, baseline: { packets: 0, bytes: 0 }, negotiation: { packets: 1, bytes: 120 }, active: { packets: 0, bytes: 0 }, postCall: { packets: 0, bytes: 0 }, unclassified: { packets: 0, bytes: 0 } },
+                protocolEvidence: ['transport_flow'],
+            },
+        ],
+    };
+    analysis.stunTurnEvidence = {
+        version: 1,
+        transactionLimit: 256,
+        storedTransactions: 4,
+        droppedTransactions: 0,
+        truncated: false,
+        transactions: Array.from({ length: 4 }, (_, index) => ({
+            transactionFingerprint: String(index + 1).repeat(64),
+            method: 'binding',
+            firstObservedAt: new Date('2026-06-18T00:00:01.000Z'),
+            lastObservedAt: new Date('2026-06-18T00:00:02.000Z'),
+            requestObserved: true,
+            successResponseObserved: true,
+            errorResponseObserved: false,
+            requestDirection: 'outgoing',
+            responseDirection: 'incoming',
+            useCandidate: false,
+            iceRole: 'unknown',
+            channelNumber: null,
+            endpointKeys: [],
+        })),
+        channels: [{
+            channelNumber: 0x4001,
+            peerEndpointKey: '203.0.113.50:443',
+            firstObservedAt: new Date('2026-06-18T00:00:03.000Z'),
+            lastObservedAt: new Date('2026-06-18T00:00:09.000Z'),
+            packets: 10,
+            bytesTotal: 1_200,
+        }],
+        limitations: [],
+    };
+
+    const report = buildFinalCaseReport(evidencePackage);
+    const route = report.findings.callRoutes[0];
+    assert.equal(route?.browserWebRtcStatus, 'available');
+    assert.equal(route?.browserSelectedPairCount, 1);
+    assert.equal(route?.exposedRemoteCandidateCount, 1);
+    assert.equal(route?.flowCount, 3);
+    assert.equal(route?.stunTransactionCount, 4);
+    assert.equal(route?.turnChannelCount, 1);
+
+    const html = renderFinalCaseReportHtml(report);
+    const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+    const zip = buildEvidenceZip(evidencePackage);
+    const zipText = zip.toString('latin1');
+    const callCsv = readStoredZipEntry(zip, 'annexes/call-analysis.csv');
+    assert.match(html, /WebRTC: available · pares 1 · flujos 3 · STUN\/TURN 4/);
+    assert.match(pdf, /WebRTC: available; pares seleccionados: 1; flujos: 3/);
+    assert.match(pdf, /transacciones STUN\/TURN: 4/);
+    assert.match(zipText, /browserWebRtcStatus/);
+    assert.match(callCsv, /"browserWebRtcStatus","browserSelectedPairCount","browserExposedRemoteCandidateCount","flowCount","stunTransactionCount","turnChannelCount"/);
+    assert.match(callCsv, /"available","1","1","3","4","1"/);
 });
 
 test('keeps route conclusions commercially equivalent across JSON, HTML and PDF', () => {

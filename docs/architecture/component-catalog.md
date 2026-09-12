@@ -20,7 +20,7 @@ Relacionar carpetas y archivos con responsabilidades, entradas, salidas, estado 
 
 ### `src/runtime.ts` y `src/routes/runtime.ts`
 
-Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `CALL_CAPTURE_MODE`, `TRUST_PROXY`, requisitos de produccion, capacidades y health. Son el contrato que permite al frontend distinguir Network Monitor local, captura de llamada por agente y funciones imposibles en cloud.
+Resuelven `DEPLOYMENT_MODE`, `LOCAL_CAPTURE_ENABLED`, `CALL_CAPTURE_MODE`, `WEBRTC_OBSERVER_ENABLED`, `TRUST_PROXY`, requisitos de produccion, capacidades y health. Son el contrato que permite al frontend distinguir Network Monitor local, captura de llamada por agente, evidencia WebRTC complementaria y funciones imposibles en cloud.
 
 Invariantes:
 
@@ -31,7 +31,15 @@ Invariantes:
 
 ### `src/call-capture-service.ts`
 
-Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Mantiene disponibilidad observable sin conceder capabilities al backend.
+Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Cuando el observer esta habilitado lo arma despues de abrir la captura, obtiene una instantanea sanitizada al detener y siempre intenta desarmarlo. Un fallo del complemento degrada evidencia sin perder el resultado libpcap.
+
+### `src/webrtc-observer-cdp.ts`, `src/webrtc-observer-app.ts` y `src/webrtc-observer-client.ts`
+
+Instalan una sonda dormida sobre `RTCPeerConnection`, separan capturas por generacion y consultan unicamente campos permitidos de `getStats()`. El servicio interno usa HMAC, nonce, TTL, exclusion e idempotencia; el cliente bloquea redirects y valida el contrato completo. CDP solo acepta loopback y targets WhatsApp/about:blank. No se leen SDP, ICE credentials, media, mensajes ni payload.
+
+### `src/call-observation-evidence.ts`
+
+Define y normaliza fail-closed los libros versionados `browserWebRtcEvidence`, `flowEvidence` y `stunTurnEvidence`. Cada libro tiene limites, truncamiento y limitaciones explicitas para que historial, correlador, UI e informes consuman una sola verdad.
 
 ### `src/call-capture-phases.ts`, `src/operator-call-marker.ts` y `src/call-traffic-onset-detector.ts`
 
@@ -97,7 +105,9 @@ La proyeccion de informe 1.3 añade `networkContextPresentation` y conserva
 `scoreBreakdown`: HTML y PDF declaran un limite visual comun de 10 endpoints
 por grupo, mientras JSON/CSV mantienen el conjunto estructurado e informan ese
 limite. Un radio GeoIP ausente se representa como `null`, nunca como cero.
-`networkIntelligence.exclusionDecision.version=1` añade una decision ortogonal
+Ademas construye cinco-tuplas IPv4/IPv6 y un ledger STUN/TURN por transaccion;
+TURN ChannelData solo se vincula despues de un `CHANNEL-BIND` observado y jamas
+retiene contenido. `networkIntelligence.exclusionDecision.version=1` añade una decision ortogonal
 al score: `hard_excluded`, `contextual` o `eligible`, con base y motivos
 acotados. La clasificacion contextual no se convierte en candidata por si sola,
 pero tampoco se presenta como una exclusion concluyente.
@@ -153,14 +163,19 @@ Ejecutan Chromium persistente como UID 10001 con Xvfb, Fluxbox, PulseAudio virtu
 
 Compilan `cap`/libpcap y arrancan Node como UID/GID 1000. El entrypoint conserva solo `NET_RAW/NET_ADMIN` y activa `no-new-privileges`; el agente comparte `network_mode` con `wa-browser` y no publica puerto.
 
+### `Dockerfile.webrtc-observer`
+
+Ejecuta el observer Node sin capabilities, con rootfs de solo lectura y limites. Comparte `network_mode` con `wa-browser`; su puerto `4200` y CDP `9222` no se publican. Deshabilitado responde live sin requerir secreto y rechaza todo control.
+
 ### `src/call-scoring.ts`
 
 Reglas deterministas v3 para puntuar probabilidad de ruta y conservar un libro
 reconstruible de componentes/topes. `e164-country-context.ts` resuelve el
 prefijo del objetivo canonico mediante una tabla versionada; ese contexto y
-GeoIP nunca modifican el score. `call-route-correlator.ts` exige evidencia
-independiente Baileys para confirmar una ruta directa y conserva compatibilidad
-de lectura con evaluaciones v2.
+GeoIP nunca modifican el score. `call-route-correlator.ts` v4 exige evidencia
+independiente Baileys o una coincidencia exacta entre par WebRTC seleccionado
+no-relay y cinco-tupla elegible con suficiente trafico activo; conserva
+compatibilidad de lectura con evaluaciones v2/v3.
 
 ### `src/meta-ip-ranges.ts`
 

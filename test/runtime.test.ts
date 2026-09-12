@@ -41,6 +41,8 @@ test('resolves Railway mode from Railway environment name and disables local cap
         callCaptureMode: 'disabled',
         passiveMessageReceipts: true,
         experimentalProbes: false,
+        browserWebRtcObservation: false,
+        browserWebRtcObservationAvailable: false,
         authRequired: true,
     });
 });
@@ -103,6 +105,56 @@ test('rejects incomplete or unsafe capture agent configuration', () => {
         'CAPTURE_AGENT_URL must be an HTTP(S) origin without credentials, path, query, or fragment',
         'CAPTURE_AGENT_SHARED_SECRET must contain at least 32 bytes when CALL_CAPTURE_MODE=agent',
     ]);
+});
+
+test('enables browser WebRTC observation only with an isolated capture mode and safe internal contract', () => {
+    const env = {
+        DEPLOYMENT_MODE: 'server-full',
+        LOCAL_CAPTURE_ENABLED: 'false',
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://wa-browser:4100',
+        CAPTURE_AGENT_SHARED_SECRET: 'a'.repeat(32),
+        WEBRTC_OBSERVER_ENABLED: 'true',
+        WEBRTC_OBSERVER_URL: 'http://wa-browser:4200',
+        WEBRTC_OBSERVER_SHARED_SECRET: 'b'.repeat(32),
+        REDIS_URL: 'redis://redis:6379',
+    };
+    const config = buildRuntimeConfig(env);
+    const capabilities = buildRuntimeCapabilities(config, false, true, true);
+
+    assert.deepEqual(validateProductionSecurity(env), []);
+    assert.equal(config.browserWebRtcObservationEnabled, true);
+    assert.equal(capabilities.browserWebRtcObservation, true);
+    assert.equal(capabilities.browserWebRtcObservationAvailable, true);
+});
+
+test('rejects ambiguous, incomplete, or unsafe WebRTC observer configuration', () => {
+    assert.deepEqual(validateProductionSecurity({
+        WEBRTC_OBSERVER_ENABLED: 'yes',
+        REDIS_URL: 'redis://redis:6379',
+    }), ['WEBRTC_OBSERVER_ENABLED must be true or false']);
+
+    assert.deepEqual(validateProductionSecurity({
+        WEBRTC_OBSERVER_ENABLED: 'true',
+        CALL_CAPTURE_MODE: 'disabled',
+        WEBRTC_OBSERVER_URL: 'http://user:password@wa-browser:4200/path',
+        WEBRTC_OBSERVER_SHARED_SECRET: 'short',
+        REDIS_URL: 'redis://redis:6379',
+    }), [
+        'WEBRTC_OBSERVER_ENABLED requires call capture to be enabled',
+        'WEBRTC_OBSERVER_URL must be an HTTP(S) origin without credentials, path, query, or fragment',
+        'WEBRTC_OBSERVER_SHARED_SECRET must contain at least 32 bytes when WEBRTC_OBSERVER_ENABLED=true',
+    ]);
+
+    assert.ok(validateProductionSecurity({
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://wa-browser:4100',
+        CAPTURE_AGENT_SHARED_SECRET: 'c'.repeat(32),
+        WEBRTC_OBSERVER_ENABLED: 'true',
+        WEBRTC_OBSERVER_URL: 'http://wa-browser:4200',
+        WEBRTC_OBSERVER_SHARED_SECRET: 'c'.repeat(32),
+        REDIS_URL: 'redis://redis:6379',
+    }).includes('WEBRTC_OBSERVER_SHARED_SECRET must differ from CAPTURE_AGENT_SHARED_SECRET'));
 });
 
 test('keeps active probes disabled unless explicitly enabled', () => {

@@ -24,12 +24,15 @@ flowchart TB
       VpsUI[Frontend/API por proxy HTTPS]
       Browser[Chromium WhatsApp Web]
       Agent[Capture agent]
+      Observer[WebRTC observer sin capabilities]
       VpsRedis[(Redis privado)]
       VpsAuth[(Baileys externo\nnombre explicito)]
       VpsUploads[(Uploads externos\nnombre explicito)]
       VpsProfile[(Perfil Chromium externo\nnombre explicito)]
       Browser --> Agent
+      Browser --> Observer
       VpsUI -->|HMAC privado| Agent
+      VpsUI -->|HMAC privado| Observer
       VpsUI <--> VpsRedis
       VpsUI <--> VpsAuth
       VpsUI <--> VpsUploads
@@ -66,9 +69,9 @@ flowchart TB
 | --- | --- | --- | --- |
 | Desarrollo local | Opcional, con driver | No requerida | Mongo local/Atlas, Redis y disco local |
 | Docker local | No recomendada para NIC host sin configuracion especial | No requerida | Volumenes Docker + Mongo externo |
-| Docker/VPS con sidecar | Llamada en namespace del Chromium persistente | HTTPS; Selkies tras acceso/tunel protegido; contingencia solo loopback | Mongo/Redis privados + tres volúmenes externos con nombre explícito |
+| Docker/VPS con sidecars | Llamada en namespace del Chromium persistente; WebRTC opcional por CDP loopback | HTTPS; Selkies tras acceso/tunel protegido; contingencia solo loopback | Mongo/Redis privados + tres volúmenes externos con nombre explícito |
 | Railway | Deshabilitada | HTTPS | MongoDB + Redis + dos volumenes |
 
 ## Decision
 
-`railway-dashboard` fuerza la frontera correcta: API, tracker, Check-In e informes funcionan, pero la captura queda deshabilitada. En Docker/VPS, el backend sigue sin privilegios y solo el sidecar observa el namespace de Chromium.
+`railway-dashboard` fuerza la frontera correcta: API, tracker, Check-In e informes funcionan, pero la captura queda deshabilitada. En Docker/VPS, el backend sigue sin privilegios; el capture-agent observa paquetes y el observer opcional consulta metadata WebRTC sanitizada dentro del namespace de Chromium.

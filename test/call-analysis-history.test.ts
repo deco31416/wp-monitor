@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeStoredCallPhaseData } from '../src/call-analysis-history.js';
+import {
+    normalizeStoredCallObservationEvidence,
+    normalizeStoredCallPhaseData,
+} from '../src/call-analysis-history.js';
 import type { CallAnalysisResult, CandidateIP } from '../src/call-analyzer.js';
 import type { CallCapturePhaseCounts } from '../src/call-capture-phases.js';
 
@@ -203,4 +206,44 @@ test('preserves a coherent stored v3 score and removes malformed v3 extensions a
     assert.equal(malformed.candidateIps[0]?.scoreVersion, undefined);
     assert.equal(malformed.candidateIps[0]?.networkContext, undefined);
     assert.equal(malformed.candidateIps[0]?.scoreBreakdown, undefined);
+});
+
+test('preserves valid optional OBS-29 books without inventing them for legacy history', () => {
+    const legacy = analysis();
+    assert.deepEqual(normalizeStoredCallObservationEvidence(legacy), legacy);
+
+    const browserWebRtcEvidence = {
+        version: 1 as const,
+        status: 'available' as const,
+        startedAt: new Date('2026-09-10T12:00:00.000Z'),
+        endedAt: new Date('2026-09-10T12:00:05.000Z'),
+        connectionCount: 0,
+        selectedPairs: [],
+        stateTransitions: [],
+        truncated: false,
+        limitations: ['browser_candidate_address_not_exposed'],
+    };
+    const normalized = normalizeStoredCallObservationEvidence(analysis({ browserWebRtcEvidence }));
+    assert.deepEqual(normalized.browserWebRtcEvidence, browserWebRtcEvidence);
+    assert.notEqual(normalized.browserWebRtcEvidence, browserWebRtcEvidence);
+});
+
+test('drops each malformed OBS-29 book independently at the storage boundary', () => {
+    const validFlow = {
+        version: 1 as const,
+        flowLimit: 1_024,
+        storedFlows: 0,
+        droppedPackets: 0,
+        truncated: false,
+        flows: [],
+    };
+    const normalized = normalizeStoredCallObservationEvidence(analysis({
+        browserWebRtcEvidence: { version: 1 } as never,
+        flowEvidence: validFlow,
+        stunTurnEvidence: { version: 1, transactions: Array.from({ length: 300 }) } as never,
+    }));
+
+    assert.equal(normalized.browserWebRtcEvidence, undefined);
+    assert.deepEqual(normalized.flowEvidence, validFlow);
+    assert.equal(normalized.stunTurnEvidence, undefined);
 });

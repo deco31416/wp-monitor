@@ -3,6 +3,11 @@ import {
     normalizeCallCapturePhaseCounts,
     sumCallCapturePhaseCounts,
 } from './call-capture-phases.js';
+import {
+    normalizeBrowserWebRtcEvidence,
+    normalizeCallFlowEvidence,
+    normalizeStunTurnEvidence,
+} from './call-observation-evidence.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -140,5 +145,27 @@ export function normalizeStoredCallPhaseData(result: CallAnalysisResult): CallAn
         ...result,
         candidateIps: detailedCandidates as CandidateIP[],
         phaseCounts: globalCounts,
+    };
+}
+
+/**
+ * Optional OBS-29 books are treated as untrusted historical input. A malformed
+ * optional book is removed independently so legacy analyses remain readable.
+ */
+export function normalizeStoredCallObservationEvidence(result: CallAnalysisResult): CallAnalysisResult {
+    const browserWebRtcEvidence = normalizeBrowserWebRtcEvidence(result.browserWebRtcEvidence);
+    const flowEvidence = normalizeCallFlowEvidence(result.flowEvidence);
+    const stunTurnEvidence = normalizeStunTurnEvidence(result.stunTurnEvidence);
+    const {
+        browserWebRtcEvidence: _browserWebRtcEvidence,
+        flowEvidence: _flowEvidence,
+        stunTurnEvidence: _stunTurnEvidence,
+        ...legacy
+    } = result;
+    return {
+        ...legacy,
+        ...(browserWebRtcEvidence ? { browserWebRtcEvidence } : {}),
+        ...(flowEvidence ? { flowEvidence } : {}),
+        ...(stunTurnEvidence ? { stunTurnEvidence } : {}),
     };
 }

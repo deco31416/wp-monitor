@@ -131,10 +131,35 @@ for (const contract of volumeContracts) {
     }
 }
 
-for (const serviceName of ['backend', 'client', 'capture-agent']) {
+for (const serviceName of ['backend', 'client', 'capture-agent', 'webrtc-observer']) {
     if ((config.services?.[serviceName]?.ports || []).length > 0) {
         errors.push(`${serviceName} no debe publicar puertos host en Dokploy`);
     }
+}
+
+const expectedApplicationServices = ['backend', 'capture-agent', 'client', 'wa-browser', 'webrtc-observer'];
+const renderedApplicationServices = Object.keys(config.services || {}).sort();
+if (JSON.stringify(renderedApplicationServices) !== JSON.stringify(expectedApplicationServices)) {
+    errors.push('Dokploy debe renderizar exactamente backend, client, wa-browser, capture-agent y webrtc-observer');
+}
+
+const observer = config.services?.['webrtc-observer'];
+if (observer?.network_mode !== 'service:wa-browser') {
+    errors.push('webrtc-observer debe compartir exclusivamente el namespace de red de wa-browser');
+}
+if (observer?.read_only !== true) errors.push('webrtc-observer debe usar rootfs de solo lectura');
+if (!Array.isArray(observer?.cap_drop) || !observer.cap_drop.includes('ALL') || (observer.cap_add || []).length > 0) {
+    errors.push('webrtc-observer debe ejecutarse sin capabilities');
+}
+const observerSecurity = observer?.security_opt || [];
+if (!Array.isArray(observerSecurity) || !observerSecurity.includes('no-new-privileges:true')) {
+    errors.push('webrtc-observer debe impedir nuevos privilegios');
+}
+if (observer?.environment?.WEBRTC_CDP_URL !== 'http://127.0.0.1:9222') {
+    errors.push('webrtc-observer solo puede acceder a CDP por loopback compartido');
+}
+if (config.services?.backend?.environment?.WEBRTC_OBSERVER_URL !== 'http://wa-browser:4200') {
+    errors.push('backend debe controlar webrtc-observer por su origen interno fijo');
 }
 
 errors.push(...validateBrowserContract(config, browserContract));

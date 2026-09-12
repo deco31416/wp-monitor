@@ -53,6 +53,11 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 | `CAPTURE_AGENT_URL` | Origen HTTP(S) interno sin path, credenciales, query ni fragmento |
 | `CAPTURE_AGENT_SHARED_SECRET` | Secreto aleatorio de 32+ bytes, igual en backend/agente y distinto de los secretos de auth |
 | `CAPTURE_AGENT_TIMEOUT_MS` | Entero 500-30000; default 5000 |
+| `WEBRTC_OBSERVER_ENABLED` | `false` por defecto; `true` habilita evidencia complementaria solo durante capturas autorizadas |
+| `WEBRTC_OBSERVER_URL` | Origen HTTP(S) interno sin path; Compose fija `http://wa-browser:4200` |
+| `WEBRTC_OBSERVER_SHARED_SECRET` | Secreto de 32+ bytes, distinto de auth y de `CAPTURE_AGENT_SHARED_SECRET`; requerido solo al habilitar |
+| `WEBRTC_OBSERVER_TIMEOUT_MS` | Entero 500-30000; default 5000 |
+| `WEBRTC_OBSERVER_TTL_MS` | TTL de armado exclusivo, 30000-1800000; default 900000 |
 | `BROWSER_UI_PORT` | Puerto host de noVNC; Compose lo enlaza solo a `127.0.0.1` |
 | `BROWSER_VNC_PASSWORD` | Valor de 15+ caracteres requerido al arrancar; VNC solo usa los primeros ocho significativos y no sustituye el tunel SSH |
 | `BROWSER_VNC_PASSWORD_FILE` | Alternativa de archivo absoluto dentro del contenedor, con prioridad sobre la variable |
@@ -62,7 +67,7 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 | `BROWSER_TUNNEL_ALIAS` | Obligatorio en Dokploy; el valor concreto del despliegue se mantiene fuera de Git |
 | `TUNNEL_NETWORK_NAME` | Obligatorio en Dokploy; red externa del proveedor de tunel/acceso |
 
-El control backend→agente firma metodo, path, timestamp, nonce y hash del cuerpo. El agente rechaza replay, cuerpos mayores de 64 KiB, interfaz no enumerada y solicitudes concurrentes cuando ya existe una captura. El puerto `4100` no se publica al host.
+El control backend→agente y backend→observer firma metodo, path, timestamp, nonce y hash del cuerpo. Ambos rechazan replay y solicitudes concurrentes incompatibles. El agente rechaza ademas cuerpos mayores de 64 KiB e interfaces no enumeradas. Los puertos `4100` y `4200` no se publican al host; CDP `9222` solo escucha en loopback dentro del namespace compartido. El observer se instala dormido y no conserva SDP, credenciales ICE, contenido, media ni payload.
 
 ## Operador unico
 
@@ -170,6 +175,11 @@ CALL_CAPTURE_MODE=agent
 CAPTURE_AGENT_URL=http://wa-browser:4100
 CAPTURE_AGENT_SHARED_SECRET=generate-a-unique-64-character-secret
 CAPTURE_AGENT_TIMEOUT_MS=5000
+WEBRTC_OBSERVER_ENABLED=false
+WEBRTC_OBSERVER_URL=http://wa-browser:4200
+WEBRTC_OBSERVER_SHARED_SECRET=
+WEBRTC_OBSERVER_TIMEOUT_MS=5000
+WEBRTC_OBSERVER_TTL_MS=900000
 BROWSER_UI_PORT=7900
 SELKIES_UI_PORT=7901
 SELKIES_BASIC_AUTH_USER=browser

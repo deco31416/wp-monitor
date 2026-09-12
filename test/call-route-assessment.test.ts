@@ -40,6 +40,39 @@ test('preserves a valid v3 assessment without rewriting historical v2 records', 
     assert.equal(normalized?.classification, 'direct_probable');
 });
 
+test('preserves a semantically valid v4 browser and five-tuple confirmation', () => {
+    const normalized = normalizeStoredRouteAssessment({
+        assessmentVersion: 4,
+        classification: 'direct_confirmed',
+        confidenceScore: 82,
+        evidenceSources: ['packet_flow', 'browser_webrtc', 'five_tuple_flow'],
+        independentDirectEvidenceCount: 2,
+        primaryCandidateIp: '198.51.100.40',
+        reasonCodes: ['BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'],
+        limitations: [],
+    });
+
+    assert.equal(normalized?.assessmentVersion, 4);
+    assert.equal(normalized?.classification, 'direct_confirmed');
+    assert.deepEqual(normalized?.evidenceSources, ['packet_flow', 'browser_webrtc', 'five_tuple_flow']);
+});
+
+test('fails a v4 confirmation closed when its declared evidence books are missing', () => {
+    const normalized = normalizeStoredRouteAssessment({
+        assessmentVersion: 4,
+        classification: 'direct_confirmed',
+        confidenceScore: 82,
+        evidenceSources: ['packet_flow', 'browser_webrtc', 'five_tuple_flow'],
+        independentDirectEvidenceCount: 2,
+        primaryCandidateIp: '198.51.100.40',
+        reasonCodes: ['BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'],
+        limitations: [],
+    }, {});
+
+    assert.equal(normalized?.classification, 'unresolved');
+    assert.deepEqual(normalized?.limitations, ['stored_observation_invalid']);
+});
+
 test('keeps an absent assessment distinguishable from invalid stored data', () => {
     assert.equal(normalizeStoredRouteAssessment(undefined), undefined);
     assert.deepEqual(normalizeStoredRouteAssessment({

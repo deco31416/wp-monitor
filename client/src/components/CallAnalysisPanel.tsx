@@ -300,6 +300,8 @@ function CallAnalysisResultCard({ analysis }: { analysis: CallAnalysisResult }) 
 
             {analysis.capturePhases && <CapturePhaseSummary phases={analysis.capturePhases} />}
 
+            <ProtocolEvidenceSummary analysis={analysis} />
+
             <RouteAssessmentSummary analysis={analysis} />
 
             <CallTrafficMap analysis={analysis} />
@@ -417,6 +419,9 @@ const ROUTE_SOURCE_LABELS: Record<CallRouteAssessment['evidenceSources'][number]
     baseline: 'Línea base previa',
     infrastructure_registry: 'Registro de infraestructura',
     ip_enrichment: 'Contexto de red y GeoIP',
+    browser_webrtc: 'Par seleccionado por WebRTC',
+    five_tuple_flow: 'Libro de flujos de cinco tuplas',
+    stun_turn: 'Transacciones STUN/TURN',
 };
 
 const ROUTE_REASON_LABELS: Record<string, string> = {
@@ -432,6 +437,9 @@ const ROUTE_REASON_LABELS: Record<string, string> = {
     STUN_CONTEXT_ONLY: 'La señal STUN se utilizó solo como contexto y no como confirmación independiente.',
     CANDIDATE_SCORING_V3: 'Las candidatas se evaluaron con el modelo de ruta v3 y su desglose reconstruible.',
     GEOGRAPHIC_CONTEXT_NOT_ROUTE_EVIDENCE: 'El contexto geográfico se informó por separado y no alteró la conclusión de ruta.',
+    BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE: 'El candidato seleccionado por WebRTC coincide exactamente con un flujo bidireccional activo.',
+    BROWSER_SELECTED_RELAY_OBSERVED: 'WebRTC seleccionó explícitamente un candidato de tipo relay.',
+    STUN_TURN_TRANSACTION_CONTEXT: 'Se conservaron transacciones STUN/TURN como contexto de negociación, sin inspeccionar contenido.',
 };
 
 const ROUTE_LIMITATION_LABELS: Record<string, string> = {
@@ -448,7 +456,64 @@ const ROUTE_LIMITATION_LABELS: Record<string, string> = {
     endpoint_list_truncated: 'La lista de endpoints fue acotada por seguridad.',
     malformed_endpoint_skipped: 'Se descartó un endpoint con formato inválido.',
     stored_observation_invalid: 'Una observación almacenada no superó la validación del contrato.',
+    browser_webrtc_observer_start_unavailable: 'El observador WebRTC no pudo armarse al iniciar la captura.',
+    browser_webrtc_observer_stop_unavailable: 'El observador WebRTC no pudo entregar su evidencia al finalizar.',
+    browser_webrtc_armed_after_automatic_call_signal: 'La captura automática armó WebRTC después de recibir la primera señal; el inicio puede ser parcial.',
+    browser_candidate_address_not_exposed: 'Chromium informó el par seleccionado, pero no expuso la dirección candidata remota.',
+    browser_peer_connection_not_observed: 'El navegador no creó una conexión WebRTC observable durante esta ventana.',
+    browser_selected_pair_not_observed: 'WebRTC fue observado, pero no informó un par seleccionado antes de finalizar.',
+    browser_get_stats_partial_failure: 'Una conexión WebRTC se cerró antes de entregar estadísticas; las demás evidencias se conservaron.',
+    browser_webrtc_evidence_truncated: 'La evidencia WebRTC alcanzó su límite y conserva una muestra declarada.',
+    five_tuple_flow_book_truncated: 'El libro de flujos alcanzó su límite y conserva una muestra declarada.',
+    stun_transaction_book_truncated: 'El libro STUN/TURN alcanzó su límite y conserva una muestra declarada.',
+    stun_dropped_transaction_count_capped: 'El conteo de transacciones STUN descartadas alcanzó su límite de memoria.',
+    turn_channel_data_without_observed_channel_bind: 'Se observaron tramas compatibles con TURN sin un CHANNEL-BIND correlacionable.',
 };
+
+function ProtocolEvidenceSummary({ analysis }: { analysis: CallAnalysisResult }) {
+    if (!analysis.browserWebRtcEvidence && !analysis.flowEvidence && !analysis.stunTurnEvidence) return null;
+    const browser = analysis.browserWebRtcEvidence;
+    const selectedPairs = browser?.selectedPairs.length ?? 0;
+    const exposedRemoteCandidates = browser?.selectedPairs.filter(pair => pair.remote.address && pair.remote.port).length ?? 0;
+    const observerLabel = !browser
+        ? 'No habilitado en esta captura'
+        : browser.status === 'available'
+            ? `${selectedPairs} par(es) seleccionado(s) · ${exposedRemoteCandidates} con endpoint expuesto`
+            : 'No disponible; se utilizó el motor de paquetes';
+    return (
+        <section aria-label="Evidencia técnica complementaria" className="mb-4 rounded-lg border border-surface-border bg-surface-hover px-4 py-3">
+            <div className="flex items-center gap-2">
+                <Monitor size={14} className="text-accent" />
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-txt-muted">
+                    Evidencia técnica complementaria
+                </p>
+            </div>
+            <dl className="mt-3 grid grid-cols-1 gap-3 text-[11px] sm:grid-cols-3">
+                <div>
+                    <dt className="text-txt-dim">WebRTC del navegador</dt>
+                    <dd className="mt-1 text-txt-primary">{observerLabel}</dd>
+                </div>
+                <div>
+                    <dt className="text-txt-dim">Flujos de red</dt>
+                    <dd className="mt-1 text-txt-primary">
+                        {analysis.flowEvidence ? `${analysis.flowEvidence.storedFlows} cinco-tupla(s)` : 'Histórico no disponible'}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="text-txt-dim">STUN/TURN</dt>
+                    <dd className="mt-1 text-txt-primary">
+                        {analysis.stunTurnEvidence
+                            ? `${analysis.stunTurnEvidence.storedTransactions} transacción(es) · ${analysis.stunTurnEvidence.channels.length} canal(es) correlacionado(s)`
+                            : 'Histórico no disponible'}
+                    </dd>
+                </div>
+            </dl>
+            <p className="mt-3 text-[10px] text-txt-dim">
+                Esta evidencia describe conectividad observada durante la llamada. No contiene SDP, audio, mensajes ni prueba identidad o ubicación física.
+            </p>
+        </section>
+    );
+}
 
 function routeConfidenceLabel(score: number): string {
     if (score >= 75) return 'Alta';

@@ -91,6 +91,19 @@ test('decodes the real IPv4 TCP branch through a VLAN header', () => {
     assert.deepEqual(result.packet.protocolEvidence, ['transport_flow']);
 });
 
+test('keeps a TURN ChannelData envelope contextual until a channel bind corroborates it', () => {
+    const channelData = Buffer.alloc(12);
+    channelData.writeUInt16BE(0x4001, 0);
+    channelData.writeUInt16BE(8, 2);
+    channelData.fill(0xab, 4);
+    const result = decodeCallPacketFrame(ethernet(0x0800, ipv4(17, udp(channelData))), 'ETHERNET');
+    assert.equal(result.status, 'decoded');
+    if (result.status !== 'decoded') return;
+    assert.deepEqual(result.packet.turnChannelData, { channelNumber: 0x4001, payloadLength: 8 });
+    assert.deepEqual(result.packet.protocolEvidence, ['transport_flow']);
+    assert.equal(JSON.stringify(result).includes('abababab'), false);
+});
+
 test('treats 86 bytes as captured frame length rather than IP packet length', () => {
     const exactFrame = ethernet(0x0800, ipv4(17, udp(Buffer.alloc(44))));
     assert.equal(exactFrame.length, 86);

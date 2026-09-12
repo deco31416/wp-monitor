@@ -9,7 +9,7 @@
 5. Redis conecta; si falla, el proceso no escucha.
 6. MongoDB conecta, crea indices y carga/crea el operador unico; si falla, el proceso no escucha.
 7. Socket.IO queda preparado para aceptar solo cookies/origen validos.
-8. Si `CALL_CAPTURE_MODE=agent`, el backend consulta readiness y mantiene una comprobacion periodica sin recibir capabilities.
+8. Si `CALL_CAPTURE_MODE=agent`, el backend consulta readiness del agente; si WebRTC esta habilitado consulta tambien el observer, que instala una sonda dormida antes de declararse listo. Ambos mantienen comprobacion periodica sin conceder capabilities al backend.
 9. Baileys intenta restaurar sesion o emite QR sin bloquear el servidor.
 10. El backend empieza a escuchar y el frontend consulta sesion/capacidades/health antes de abrir el socket.
 
@@ -114,8 +114,8 @@ esta extension siguen siendo legibles. El agente rechaza firma o
 nonce invalidos, replay, correlacion incorrecta, procedencia incoherente y regresiones de fase. Un timeout
 o agente no disponible degrada la evidencia tecnica sin eliminar la actividad
 de llamada ya publicada. Readiness exige `callCapturePhases: 4`,
-`operatorCallMarkers: 1`, `endpointExclusionDecision: 1` y
-`candidateScoring: 3`, por lo que una mezcla
+`operatorCallMarkers: 1`, `endpointExclusionDecision: 1`,
+`candidateScoring: 3`, `flowEvidence: 1` y `stunTurnEvidence: 1`, por lo que una mezcla
 de versiones falla cerrada durante un despliegue gradual.
 
 Al leer MongoDB, el backend normaliza este contrato sin migracion destructiva.
@@ -192,18 +192,22 @@ de baseline. Prefijo E.164 del objetivo y GeoIP forman un bloque de contexto
 separado con `affectsRouteScore=false`; coincidencia o divergencia no cambia la
 probabilidad de ruta.
 
-El correlador v3 se ejecuta en backend despues del enriquecimiento y antes de
-persistir, auditar o emitir. Fusiona flujo de paquetes, fases, STUN sanitizado,
-señalizacion Baileys, registro de infraestructura y enriquecimiento. Una ruta
-`direct_confirmed` exige coincidencia exacta de IP entre flujo bidireccional
-elegible y endpoint peer de Baileys: dos fuentes independientes. Una coincidencia
-STUN sin peer Baileys permanece `direct_probable`. DNS, relay, CDN/cloud, salida
-publica propia y GeoIP solo clasifican o limitan; nunca prueban una ruta directa.
+El correlador v4 se ejecuta en backend despues del enriquecimiento y antes de
+persistir, auditar o emitir. Fusiona el libro de cinco-tuplas, fases, transacciones
+STUN/TURN, par WebRTC seleccionado, señalizacion Baileys, registro de
+infraestructura y enriquecimiento. Una ruta `direct_confirmed` puede provenir de
+una coincidencia exacta con peer Baileys o de un par WebRTC `selected/succeeded`
+sin candidatos relay cuya direccion, puerto y protocolo remotos coincidan con una
+cinco-tupla elegible, bidireccional y con al menos 20 paquetes de negociacion o
+llamada activa. Una coincidencia parcial o STUN sin esa corroboracion permanece
+probable o no determinada. DNS, relay, CDN/cloud, salida publica propia y GeoIP
+solo clasifican o limitan; nunca prueban una ruta directa.
 El resultado `routeAssessment` conserva score, fuentes, cantidad de evidencias
 directas independientes, candidata principal, razones y limitaciones. Los
-veredictos historicos se mantienen como alias compatibles. Las evaluaciones y
-scores v2 almacenados siguen legibles; una extension v3 incompleta o incoherente
-se retira en memoria sin modificar MongoDB.
+veredictos historicos se mantienen como alias compatibles. Las evaluaciones v2/v3
+siguen legibles; una evaluacion v4 que declare libros WebRTC, flujo o STUN/TURN
+solo sobrevive si se normalizan y su coincidencia directa puede reconstruirse.
+Una extension parcial o incoherente se retira en memoria sin modificar MongoDB.
 
 La proyeccion comercial agrega `networkContextPresentation` sin mutar la
 evidencia canonica. Declara relacion y contradiccion, contribucion cero al
