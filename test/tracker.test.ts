@@ -9,7 +9,8 @@ function eventBus() {
     };
 }
 
-test('tracker is passive by default and stops without leaving a loop timer alive', async () => {
+test('tracker is passive by default and stops without leaving a loop timer alive', async t => {
+    t.mock.method(console, 'log', () => undefined);
     let sentMessages = 0;
     let presenceSubscriptions = 0;
     const sock = {
@@ -34,7 +35,8 @@ test('tracker is passive by default and stops without leaving a loop timer alive
     tracker.stopTracking();
 });
 
-test('an experimental probe runs only after an explicit mode change', async () => {
+test('an experimental probe runs only after an explicit mode change', async t => {
+    t.mock.method(console, 'log', () => undefined);
     let sentMessages = 0;
     const sock = {
         ev: eventBus(),
@@ -58,7 +60,8 @@ test('an experimental probe runs only after an explicit mode change', async () =
     tracker.stopTracking();
 });
 
-test('technical receipt updates are explicitly routed without per-contact listeners', async () => {
+test('technical receipt updates are explicitly routed without per-contact listeners', async t => {
+    t.mock.method(console, 'log', () => undefined);
     const eventListeners: string[] = [];
     const rawListeners: string[] = [];
     const updates: any[] = [];
