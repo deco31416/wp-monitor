@@ -21,6 +21,7 @@ COPY src ./src
 COPY public ./public
 
 RUN pnpm run build
+RUN pnpm prune --prod
 
 FROM ${NODE_IMAGE} AS runtime
 

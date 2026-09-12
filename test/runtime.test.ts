@@ -155,6 +155,20 @@ test('rejects ambiguous, incomplete, or unsafe WebRTC observer configuration', (
         WEBRTC_OBSERVER_SHARED_SECRET: 'c'.repeat(32),
         REDIS_URL: 'redis://redis:6379',
     }).includes('WEBRTC_OBSERVER_SHARED_SECRET must differ from CAPTURE_AGENT_SHARED_SECRET'));
+
+    const reusedIdentitySecret = 'd'.repeat(32);
+    const identityReuseErrors = validateProductionSecurity({
+        CALL_CAPTURE_MODE: 'agent',
+        CAPTURE_AGENT_URL: 'http://wa-browser:4100',
+        CAPTURE_AGENT_SHARED_SECRET: reusedIdentitySecret,
+        WEBRTC_OBSERVER_ENABLED: 'true',
+        WEBRTC_OBSERVER_URL: 'http://wa-browser:4200',
+        WEBRTC_OBSERVER_SHARED_SECRET: reusedIdentitySecret,
+        AUTH_IDENTITY_SECRET: reusedIdentitySecret,
+        REDIS_URL: 'redis://redis:6379',
+    });
+    assert.ok(identityReuseErrors.includes('CAPTURE_AGENT_SHARED_SECRET must differ from AUTH_IDENTITY_SECRET'));
+    assert.ok(identityReuseErrors.includes('WEBRTC_OBSERVER_SHARED_SECRET must differ from AUTH_IDENTITY_SECRET'));
 });
 
 test('keeps active probes disabled unless explicitly enabled', () => {

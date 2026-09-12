@@ -113,6 +113,9 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         if (Buffer.byteLength(captureAgentSecret, 'utf8') < 32) {
             errors.push('CAPTURE_AGENT_SHARED_SECRET must contain at least 32 bytes when CALL_CAPTURE_MODE=agent');
         }
+        if (authIdentitySecret.trim() && captureAgentSecret === authIdentitySecret.trim()) {
+            errors.push('CAPTURE_AGENT_SHARED_SECRET must differ from AUTH_IDENTITY_SECRET');
+        }
     } else if (captureAgentUrl || captureAgentSecret) {
         errors.push('CAPTURE_AGENT_URL and CAPTURE_AGENT_SHARED_SECRET require CALL_CAPTURE_MODE=agent');
     }
@@ -140,6 +143,9 @@ export function validateProductionSecurity(env: NodeJS.ProcessEnv): string[] {
         }
         if (captureAgentSecret && webRtcObserverSecret === captureAgentSecret) {
             errors.push('WEBRTC_OBSERVER_SHARED_SECRET must differ from CAPTURE_AGENT_SHARED_SECRET');
+        }
+        if (authIdentitySecret.trim() && webRtcObserverSecret === authIdentitySecret.trim()) {
+            errors.push('WEBRTC_OBSERVER_SHARED_SECRET must differ from AUTH_IDENTITY_SECRET');
         }
     }
 

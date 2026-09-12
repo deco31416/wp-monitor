@@ -4,6 +4,7 @@ const dockerfiles = [
   'Dockerfile',
   'Dockerfile.browser',
   'Dockerfile.capture-agent',
+  'Dockerfile.webrtc-observer',
   'client/Dockerfile',
 ];
 const composeFiles = ['docker-compose.yml', 'deploy/docker-compose.dokploy.yml'];

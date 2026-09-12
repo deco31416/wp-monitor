@@ -19,7 +19,7 @@ El agente recibe inicialmente capacidades auxiliares de Docker para bajar UID/GI
 
 El Compose fuerza `LOCAL_CAPTURE_ENABLED=false` y `CALL_CAPTURE_MODE=agent` aunque la plantilla nativa indique modo local; no otorgues capabilities al backend para reactivar el Monitor de red general. La URL del agente tambien queda fijada a su origen interno. El secreto y timeout siguen viniendo del entorno privado.
 
-Las imágenes Node, Debian, Nginx y Redis se resuelven mediante tag legible más digest OCI multi-arquitectura. No reemplaces un digest manualmente: actualiza tag/digest juntos mediante un PR, reconstruye las cuatro unidades, repite auditorías y ejecuta el smoke afectado. El pin inmoviliza la imagen base, pero los paquetes obtenidos por `apt` todavía requieren reconstrucciones periódicas y revisión de seguridad.
+Las imágenes Node, Debian, Nginx y Redis se resuelven mediante tag legible más digest OCI multi-arquitectura. No reemplaces un digest manualmente: actualiza tag/digest juntos mediante un PR, reconstruye las cinco unidades, repite auditorías y ejecuta el smoke afectado. El pin inmoviliza la imagen base, pero los paquetes obtenidos por `apt` todavía requieren reconstrucciones periódicas y revisión de seguridad.
 
 En Dokploy aplica tambien `deploy/docker-compose.dokploy.yml`: usa `server-full`, reutiliza MongoDB/Redis en la red externa configurada, desactiva el Redis local y retira las publicaciones host de backend/cliente. El override exige nombres reales para los tres volúmenes de aplicación y los declara externos; mantenlos en configuración privada y no lo ejecutes hasta confirmar que existen y pertenecen a este despliegue.
 

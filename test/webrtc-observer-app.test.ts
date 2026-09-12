@@ -13,8 +13,13 @@ const targetJid = '573000000000@s.whatsapp.net';
 
 class FakeAdapter implements WebRtcObservationAdapter {
     active: { callId: string; targetJid: string; startedAt: Date } | null = null;
+    startCalls = 0;
+    stopCalls = 0;
+    constructor(private readonly delayMs = 0) {}
     async ready() { return true; }
     async start(nextCallId: string, nextTargetJid: string) {
+        this.startCalls += 1;
+        if (this.delayMs) await new Promise(resolve => setTimeout(resolve, this.delayMs));
         this.active = { callId: nextCallId, targetJid: nextTargetJid, startedAt: new Date('2026-09-11T12:00:00.000Z') };
     }
     status() {
@@ -26,6 +31,8 @@ class FakeAdapter implements WebRtcObservationAdapter {
         };
     }
     async stop(requestedCallId: string) {
+        this.stopCalls += 1;
+        if (this.delayMs) await new Promise(resolve => setTimeout(resolve, this.delayMs));
         assert.equal(requestedCallId, this.active?.callId);
         const startedAt = this.active!.startedAt;
         this.active = null;
@@ -41,10 +48,13 @@ class FakeAdapter implements WebRtcObservationAdapter {
             limitations: ['browser_candidate_address_not_exposed'],
         };
     }
+    async shutdown() { this.active = null; }
 }
 
-async function withServer(run: (origin: string, adapter: FakeAdapter) => Promise<void>) {
-    const adapter = new FakeAdapter();
+async function withServer(
+    run: (origin: string, adapter: FakeAdapter) => Promise<void>,
+    adapter = new FakeAdapter(),
+) {
     const app = createWebRtcObserverApp({ sharedSecret: secret, adapter });
     const server: Server = app.listen(0);
     await new Promise<void>(resolve => server.once('listening', resolve));
@@ -72,6 +82,27 @@ test('observer enforces a signed exclusive scope and idempotent stop', async () 
         assert.deepEqual(second, first);
         assert.equal(first.status, 'available');
     });
+});
+
+test('observer serializes concurrent duplicate starts and stops', async () => {
+    const adapter = new FakeAdapter(20);
+    await withServer(async origin => {
+        let nonce = 0;
+        const client = new WebRtcObserverClient({
+            baseUrl: origin,
+            sharedSecret: secret,
+            nonce: () => `observer_concurrent_${String(++nonce).padStart(4, '0')}`,
+        });
+        await Promise.all([
+            client.start(callId, targetJid, 60_000),
+            client.start(callId, targetJid, 60_000),
+        ]);
+        assert.equal(adapter.startCalls, 1);
+
+        const [first, second] = await Promise.all([client.stop(callId), client.stop(callId)]);
+        assert.equal(adapter.stopCalls, 1);
+        assert.deepEqual(second, first);
+    }, adapter);
 });
 
 test('observer rejects a replayed signed request', async () => {

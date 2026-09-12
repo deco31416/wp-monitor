@@ -18,6 +18,7 @@ RUN pnpm install --frozen-lockfile --filter @deco31416/wp-monitor...
 
 COPY src ./src
 RUN pnpm run build
+RUN pnpm prune --prod
 
 FROM ${NODE_IMAGE} AS runtime
 

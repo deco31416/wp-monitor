@@ -3,7 +3,7 @@ import {
     type BrowserWebRtcEvidence,
 } from './call-observation-evidence.js';
 
-interface CdpTarget {
+export interface CdpTarget {
     type?: unknown;
     url?: unknown;
     webSocketDebuggerUrl?: unknown;
@@ -31,6 +31,7 @@ export interface WebRtcObservationAdapter {
     start(callId: string, targetJid: string, ttlMs: number): Promise<void>;
     status(): { active: boolean; callId: string | null; targetJid: string | null; startedAt: Date | null };
     stop(callId: string): Promise<BrowserWebRtcEvidence>;
+    shutdown(): Promise<void>;
 }
 
 class CdpClient {
@@ -75,6 +76,7 @@ class CdpClient {
             if (message.error) pending.reject(new Error(`cdp_command_failed:${message.error.code ?? 'unknown'}`));
             else pending.resolve(message.result ?? {});
         });
+        socket.addEventListener('close', () => this.rejectPending('cdp_closed'));
     }
 
     send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -88,18 +90,28 @@ class CdpClient {
                 reject(new Error(`cdp_timeout:${method}`));
             }, CDP_COMMAND_TIMEOUT_MS);
             this.pending.set(id, { resolve, reject, timer });
-            this.socket!.send(JSON.stringify({ id, method, params }));
+            try {
+                this.socket!.send(JSON.stringify({ id, method, params }));
+            } catch {
+                clearTimeout(timer);
+                this.pending.delete(id);
+                reject(new Error('cdp_send_failed'));
+            }
         });
     }
 
     close(): void {
         if (this.socket && this.socket.readyState < WebSocket.CLOSING) this.socket.close();
+        this.rejectPending('cdp_closed');
+        this.socket = null;
+    }
+
+    private rejectPending(code: string): void {
         for (const pending of this.pending.values()) {
             clearTimeout(pending.timer);
-            pending.reject(new Error('cdp_closed'));
+            pending.reject(new Error(code));
         }
         this.pending.clear();
-        this.socket = null;
     }
 }
 
@@ -113,12 +125,17 @@ export function buildProductionObserverInjection(): string {
         let transitions = [];
         let sequence = 0;
         let generation = 0;
+        function clearConnections() {
+            for (const item of connections) {
+                item.connection.removeEventListener('iceconnectionstatechange', item.observe);
+            }
+            connections = [];
+        }
         function record(connection) {
             if (!armed) return;
             if (connections.length >= 32) return;
             const id = 'pc-' + (++sequence);
             const connectionGeneration = generation;
-            connections.push({ id, connection });
             const observe = () => {
                 if (!armed || connectionGeneration !== generation) return;
                 if (transitions.length >= 64) return;
@@ -128,6 +145,7 @@ export function buildProductionObserverInjection(): string {
                     observedAt: new Date().toISOString(),
                 });
             };
+            connections.push({ id, connection, observe });
             observe();
             connection.addEventListener('iceconnectionstatechange', observe);
         }
@@ -146,9 +164,9 @@ export function buildProductionObserverInjection(): string {
         globalThis.__wpMonitorWebRtcProbe = Object.freeze({
             version: 1,
             arm() {
+                clearConnections();
                 generation += 1;
                 sequence = 0;
-                connections = [];
                 transitions = [];
                 armed = true;
                 return true;
@@ -156,7 +174,7 @@ export function buildProductionObserverInjection(): string {
             disarm() {
                 armed = false;
                 generation += 1;
-                connections = [];
+                clearConnections();
                 transitions = [];
                 return true;
             },
@@ -229,6 +247,32 @@ export function buildProductionObserverInjection(): string {
             },
         });
     })();`;
+}
+
+export function buildSnapshotAndDisarmExpression(): string {
+    return `(async () => {
+        const probe = globalThis.__wpMonitorWebRtcProbe;
+        if (!probe) return null;
+        try {
+            return await probe.snapshot();
+        } finally {
+            probe.disarm();
+        }
+    })()`;
+}
+
+export function buildDisarmExpression(): string {
+    return 'globalThis.__wpMonitorWebRtcProbe?.disarm?.() === true';
+}
+
+export function selectWhatsappCdpTarget(targets: readonly CdpTarget[]): CdpTarget | undefined {
+    const validPages = targets.filter(item => (
+        item.type === 'page'
+        && typeof item.webSocketDebuggerUrl === 'string'
+        && typeof item.url === 'string'
+    ));
+    return validPages.find(item => (item.url as string).startsWith('https://web.whatsapp.com/'))
+        ?? validPages.find(item => item.url === 'about:blank');
 }
 
 function finite(value: unknown): number | null {
@@ -308,6 +352,9 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
     private client: CdpClient | null = null;
     private active: { callId: string; targetJid: string; startedAt: Date; expiresAt: number } | null = null;
     private expiryTimer: NodeJS.Timeout | null = null;
+    private lifecycleTail: Promise<void> = Promise.resolve();
+    private generation = 0;
+    private initialized = false;
 
     constructor(
         private readonly cdpOrigin: string,
@@ -315,45 +362,64 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
         private readonly now: () => number = Date.now,
     ) {
         const parsed = new URL(cdpOrigin);
-        if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.pathname !== '/') {
+        if (
+            parsed.protocol !== 'http:'
+            || parsed.hostname !== '127.0.0.1'
+            || parsed.pathname !== '/'
+            || parsed.username
+            || parsed.password
+            || parsed.search
+            || parsed.hash
+        ) {
             throw new Error('WEBRTC_CDP_URL must be an HTTP loopback origin');
         }
     }
 
     async ready(): Promise<boolean> {
-        try {
-            const client = await this.connectToWhatsappTarget();
+        return this.withLifecycleLock(async () => {
             try {
-                await this.installProbe(client);
-                return true;
-            } finally {
-                client.close();
+                const client = await this.connectToWhatsappTarget();
+                try {
+                    await this.installProbe(client);
+                    if (!this.initialized && !this.active) {
+                        const disarmed = await this.disarmProbe(client);
+                        if (!disarmed) throw new Error('webrtc_probe_disarm_failed');
+                    }
+                    this.initialized = true;
+                    return true;
+                } finally {
+                    client.close();
+                }
+            } catch {
+                return false;
             }
-        } catch {
-            return false;
-        }
+        });
     }
 
     async start(callId: string, targetJid: string, ttlMs: number): Promise<void> {
-        if (this.active) throw new Error('observer_already_active');
-        const client = await this.connectToWhatsappTarget();
-        try {
-            await this.installProbe(client);
-            const armed = await client.send('Runtime.evaluate', {
-                expression: 'globalThis.__wpMonitorWebRtcProbe?.arm?.() === true',
-                returnByValue: true,
-            });
-            const result = armed.result as Record<string, unknown> | undefined;
-            if (result?.value !== true) throw new Error('webrtc_probe_arm_failed');
-        } catch (error) {
-            client.close();
-            throw error;
-        }
-        const startedAt = new Date(this.now());
-        this.client = client;
-        this.active = { callId, targetJid, startedAt, expiresAt: this.now() + ttlMs };
-        this.expiryTimer = setTimeout(() => { void this.expireActiveScope(); }, ttlMs);
-        this.expiryTimer.unref();
+        return this.withLifecycleLock(async () => {
+            if (this.active) throw new Error('observer_already_active');
+            const client = await this.connectToWhatsappTarget();
+            try {
+                await this.installProbe(client);
+                const armed = await client.send('Runtime.evaluate', {
+                    expression: 'globalThis.__wpMonitorWebRtcProbe?.arm?.() === true',
+                    returnByValue: true,
+                });
+                const result = armed.result as Record<string, unknown> | undefined;
+                if (result?.value !== true) throw new Error('webrtc_probe_arm_failed');
+            } catch (error) {
+                client.close();
+                throw error;
+            }
+            const startedAt = new Date(this.now());
+            const generation = ++this.generation;
+            this.initialized = true;
+            this.client = client;
+            this.active = { callId, targetJid, startedAt, expiresAt: this.now() + ttlMs };
+            this.expiryTimer = setTimeout(() => { void this.expireActiveScope(generation); }, ttlMs);
+            this.expiryTimer.unref();
+        });
     }
 
     status() {
@@ -366,32 +432,41 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
     }
 
     async stop(callId: string): Promise<BrowserWebRtcEvidence> {
-        const active = this.active;
-        if (!active || active.callId !== callId || !this.client) throw new Error('observer_scope_mismatch');
-        try {
-            const evaluation = await this.client.send('Runtime.evaluate', {
-                expression: `(async () => {
-                    const probe = globalThis.__wpMonitorWebRtcProbe;
-                    if (!probe) return null;
-                    const snapshot = await probe.snapshot();
-                    probe.disarm();
-                    return snapshot;
-                })()`,
-                awaitPromise: true,
-                returnByValue: true,
-            });
-            const result = evaluation.result as Record<string, unknown> | undefined;
-            const raw = result?.value && typeof result.value === 'object'
-                ? result.value as RawWebRtcSnapshot
-                : {};
-            return sanitizeSnapshot(raw, active.startedAt, new Date(this.now()));
-        } finally {
-            if (this.expiryTimer) clearTimeout(this.expiryTimer);
-            this.expiryTimer = null;
-            this.client.close();
+        return this.withLifecycleLock(async () => {
+            const active = this.active;
+            const client = this.client;
+            if (!active || active.callId !== callId || !client) throw new Error('observer_scope_mismatch');
+            this.clearExpiryTimer();
+            try {
+                const evaluation = await client.send('Runtime.evaluate', {
+                    expression: buildSnapshotAndDisarmExpression(),
+                    awaitPromise: true,
+                    returnByValue: true,
+                });
+                const result = evaluation.result as Record<string, unknown> | undefined;
+                const raw = result?.value && typeof result.value === 'object'
+                    ? result.value as RawWebRtcSnapshot
+                    : {};
+                return sanitizeSnapshot(raw, active.startedAt, new Date(this.now()));
+            } finally {
+                await this.disarmProbe(client);
+                client.close();
+                if (this.client === client) this.client = null;
+                if (this.active === active) this.active = null;
+            }
+        });
+    }
+
+    async shutdown(): Promise<void> {
+        return this.withLifecycleLock(async () => {
+            this.clearExpiryTimer();
+            const client = this.client;
             this.client = null;
             this.active = null;
-        }
+            if (!client) return;
+            await this.disarmProbe(client);
+            client.close();
+        });
     }
 
     private async readTargets(): Promise<CdpTarget[]> {
@@ -410,12 +485,7 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
 
     private async connectToWhatsappTarget(): Promise<CdpClient> {
         const targets = await this.readTargets();
-        const target = targets.find(item => (
-            item.type === 'page'
-            && typeof item.webSocketDebuggerUrl === 'string'
-            && typeof item.url === 'string'
-            && (item.url.startsWith('https://web.whatsapp.com/') || item.url === 'about:blank')
-        ));
+        const target = selectWhatsappCdpTarget(targets);
         if (!target || typeof target.webSocketDebuggerUrl !== 'string') throw new Error('whatsapp_cdp_target_unavailable');
         const debuggerUrl = new URL(target.webSocketDebuggerUrl);
         const cdpOrigin = new URL(this.cdpOrigin);
@@ -426,6 +496,8 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
             || debuggerUrl.username
             || debuggerUrl.password
             || !debuggerUrl.pathname.startsWith('/devtools/page/')
+            || debuggerUrl.search
+            || debuggerUrl.hash
         ) throw new Error('whatsapp_cdp_debugger_url_invalid');
         const client = new CdpClient(debuggerUrl.toString());
         try {
@@ -451,20 +523,47 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
         if (result?.value !== true) throw new Error('webrtc_probe_injection_failed');
     }
 
-    private async expireActiveScope(): Promise<void> {
-        const client = this.client;
-        try {
-            await client?.send('Runtime.evaluate', {
-                expression: 'globalThis.__wpMonitorWebRtcProbe?.disarm?.()',
-                returnByValue: true,
-            });
-        } catch {
-            // The browser or target may already be gone; local state still expires.
-        } finally {
-            client?.close();
+    private async expireActiveScope(generation: number): Promise<void> {
+        await this.withLifecycleLock(async () => {
+            if (!this.active || generation !== this.generation) return;
+            const client = this.client;
+            this.clearExpiryTimer();
             this.client = null;
             this.active = null;
-            this.expiryTimer = null;
+            if (!client) return;
+            await this.disarmProbe(client);
+            client.close();
+        });
+    }
+
+    private clearExpiryTimer(): void {
+        if (this.expiryTimer) clearTimeout(this.expiryTimer);
+        this.expiryTimer = null;
+    }
+
+    private async disarmProbe(client: CdpClient): Promise<boolean> {
+        try {
+            const evaluation = await client.send('Runtime.evaluate', {
+                expression: buildDisarmExpression(),
+                returnByValue: true,
+            });
+            const result = evaluation.result as Record<string, unknown> | undefined;
+            return result?.value === true;
+        } catch {
+            // A closed browser cannot retain the page probe; local state still closes.
+            return false;
+        }
+    }
+
+    private async withLifecycleLock<T>(operation: () => Promise<T>): Promise<T> {
+        const previous = this.lifecycleTail;
+        let release!: () => void;
+        this.lifecycleTail = new Promise<void>(resolve => { release = resolve; });
+        await previous;
+        try {
+            return await operation();
+        } finally {
+            release();
         }
     }
 }

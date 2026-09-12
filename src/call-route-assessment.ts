@@ -23,6 +23,7 @@ const ROUTE_EVIDENCE_SOURCES = new Set<CallRouteEvidenceSource>([
 
 const MAX_ROUTE_CODES = 16;
 const MAX_ROUTE_CODE_LENGTH = 120;
+const KNOWN_DIRECT_CANDIDATE_TYPES = new Set(['host', 'srflx', 'prflx']);
 
 function invalidStoredAssessment(): CallRouteAssessment {
     return {
@@ -104,8 +105,8 @@ export function normalizeStoredRouteAssessment(
                 && pair.state === 'succeeded'
                 && pair.remote.address === primaryCandidateIp
                 && pair.remote.port !== null
-                && pair.local.candidateType !== 'relay'
-                && pair.remote.candidateType !== 'relay'
+                && KNOWN_DIRECT_CANDIDATE_TYPES.has(pair.local.candidateType)
+                && KNOWN_DIRECT_CANDIDATE_TYPES.has(pair.remote.candidateType)
                 && evidence.flowEvidence?.flows.some(flow => (
                     flow.remoteIp === pair.remote.address
                     && flow.remotePort === pair.remote.port

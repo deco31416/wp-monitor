@@ -1,6 +1,6 @@
 # Plan Incremental OBS-29: Observabilidad WebRTC y Correlacion de Ruta v4
 
-Estado: `IMPLEMENTED LOCAL — FINAL QA PENDING`
+Estado: `IMPLEMENTED LOCAL — QA/SMOKE AISLADO PASS; E4 VPS PENDIENTE`
 
 Fecha de decision: `2026-09-11`
 
@@ -8,7 +8,7 @@ Rama objetivo: `develop`
 
 Este documento controla la implementacion y su promocion. CDP, `getStats()`, el
 sidecar y el correlador v4 ya existen en la rama de trabajo y poseen evidencia
-local dirigida; todavia no se declaran disponibles ni operativos en el VPS.
+local E2/E3; todavia no se declaran disponibles ni operativos en el VPS.
 
 ## Resultado que se busca
 
@@ -82,9 +82,7 @@ flowchart TD
 - Un fallo del observer degrada el resultado al motor actual y registra una
   limitacion; no cancela ni pierde la captura libpcap.
 
-## Contratos aditivos previstos
-
-Los nombres definitivos se fijaran despues de la PoC. El diseno reserva:
+## Contratos aditivos implementados
 
 - `browserWebRtcEvidence.version=1`: pares seleccionados/nominados, tipo de
   candidato, familia, protocolo, direccion y puerto solo cuando el navegador
@@ -116,10 +114,10 @@ Los nombres definitivos se fijaran despues de la PoC. El diseno reserva:
   SDP. Tres contratos automatizados validan limites y eliminacion de IPs, SDP,
   URLs y campos no permitidos. El camino de exito y el timeout retiraron el
   proceso y perfil temporal sin residuos.
-- Verificacion local: 372/372 pruebas backend, typecheck de aplicacion y pruebas,
-  chequeo documental y sintaxis del arnes en verde. El primer intento de Chrome
-  dentro del sandbox fallo antes de crear CDP; la misma ejecucion fuera de esa
-  restriccion paso y el camino de fallo quedo cubierto por limpieza determinista.
+- Verificacion local actualizada el 2026-09-12: la PoC volvio a pasar fuera del
+  sandbox con Chrome 153/CDP 1.3, dos conexiones y dos pares seleccionados. La
+  limpieza ahora reconoce terminacion por señal, espera el cierre y reintenta
+  exclusivamente el retiro de su perfil efimero; no quedaron residuos.
 - Pendiente para cierre: ejecutar el mismo concepto de manera controlada sobre
   `wa-browser` y una unica llamada autorizada para comprobar si WhatsApp Web
   crea conexiones observables y si expone candidatos distintos a la fixture.
@@ -193,7 +191,7 @@ Los nombres definitivos se fijaran despues de la PoC. El diseno reserva:
   entre una conclusion v4 y sus libros, bloque comercial dentro de `Llamada` y
   procedencia equivalente en JSON, HTML, PDF, ZIP y CSV.
 
-### OBS-29.8 — Matriz QA, staging y rollback — `IN PROGRESS`
+### OBS-29.8 — Matriz QA, staging y rollback — `LOCAL PASS; VPS PENDING`
 
 - Cubrir ruta directa sintetica, relay, candidato oculto, observer caido,
   reconexion, duplicados, IPv4/IPv6, TURN y compatibilidad historica.
@@ -201,9 +199,22 @@ Los nombres definitivos se fijaran despues de la PoC. El diseno reserva:
   contenedores, licencias y audits.
 - Cierre: feature flag desactivada restaura el comportamiento E4 actual sin
   tocar datos; staging no monta sesion ni volumenes productivos.
-- Pendiente: ejecutar al final la matriz completa del repositorio, Preview
-  Compose con ambos estados de la flag, builds de las cinco imagenes y smoke
-  aislado sin perfil ni volumenes productivos.
+- Evidencia local del 2026-09-12: 408/408 pruebas backend y 42/42 frontend,
+  typecheck, lint, builds de aplicacion, 71 Markdown/154 enlaces/36 Mermaid,
+  fixture de cinco reportes, 218 licencias de produccion y ambas auditorias de
+  dependencias pasaron. Compose paso con el observer apagado y encendido; las
+  cinco imagenes se construyeron desde bases inmutables y las tres imagenes
+  Node no contienen TypeScript ni `tsx` en runtime.
+- Smoke E3 aislado: `wa-browser` y `webrtc-observer` quedaron saludables, el
+  observer obtuvo liveness/readiness por CDP loopback, compartio exclusivamente
+  el namespace del navegador, corrio no root/sin capabilities/rootfs de solo
+  lectura y no publico puertos. Un ciclo HMAC start/status/stop quedo activo,
+  devolvio evidencia `available` sin conexiones inventadas, repitio stop de
+  forma idempotente y termino inactivo; el observer cerro con codigo cero. Uso
+  un perfil sintetico nuevo; los contenedores y ese volumen se retiraron al
+  finalizar sin tocar perfiles productivos.
+- Pendiente: repetir las puertas sobre el commit exacto en el VPS, verificar
+  backup/rollback y ejecutar la unica llamada E4 autorizada de `OBS-29.9`.
 
 ### OBS-29.9 — Despliegue VPS y E4 autorizada — `TODO`
 

@@ -22,6 +22,8 @@ const INFRASTRUCTURE_CATEGORIES = new Set([
     'cloud_or_cdn',
 ]);
 
+const KNOWN_DIRECT_CANDIDATE_TYPES = new Set(['host', 'srflx', 'prflx']);
+
 function activePackets(candidate: CandidateIP): number {
     return candidate.scoreBreakdown?.inputs.packets ?? candidate.activeCallPackets ?? candidate.packets;
 }
@@ -101,8 +103,8 @@ export function correlateCallRoute(result: CallAnalysisResult): CallAnalysisResu
         : [];
     const exactBrowserMatch = browserPairs
         .filter(pair => (
-            pair.local.candidateType !== 'relay'
-            && pair.remote.candidateType !== 'relay'
+            KNOWN_DIRECT_CANDIDATE_TYPES.has(pair.local.candidateType)
+            && KNOWN_DIRECT_CANDIDATE_TYPES.has(pair.remote.candidateType)
             && pair.remote.address
             && pair.remote.port
         ))

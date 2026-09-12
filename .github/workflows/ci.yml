@@ -95,6 +95,7 @@ jobs:
     timeout-minutes: 45
     needs: quality
     env:
+      COMPOSE_PROJECT_NAME: wp-monitor-ci
       MONGODB_URI: mongodb://synthetic:synthetic@mongo.invalid:27017/wp-monitor
       REDIS_URL: redis://synthetic:synthetic@redis.invalid:6379
       PUBLIC_BASE_URL: https://monitor.example.invalid
@@ -109,7 +110,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Construir las cuatro unidades de aplicación
+      - name: Construir las cinco unidades de aplicación
         run: |
           cp .env.example .env
-          docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml build backend client capture-agent wa-browser
+          docker compose -f docker-compose.yml -f deploy/docker-compose.dokploy.yml build backend client capture-agent wa-browser webrtc-observer
+
+      - name: Verificar dependencias de runtime Node
+        run: |
+          for service in backend capture-agent webrtc-observer; do
+            image="wp-monitor-ci-${service}"
+            docker image inspect "$image" >/dev/null
+            docker run --rm --network none --entrypoint node "$image" -e "const fs=require('node:fs');const root='/app/node_modules';const store=root+'/.pnpm';const hidden=fs.existsSync(store)&&fs.readdirSync(store).some(name=>name.startsWith('typescript@')||name.startsWith('tsx@'));if(!fs.existsSync('/app/dist')||fs.existsSync(root+'/typescript')||fs.existsSync(root+'/tsx')||hidden)process.exit(1)"
+          done

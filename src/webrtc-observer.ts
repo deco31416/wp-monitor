@@ -28,11 +28,20 @@ const server = app.listen(port, bind, () => {
 });
 
 let stopping = false;
-function shutdown(): void {
+async function shutdown(): Promise<void> {
     if (stopping) return;
     stopping = true;
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(1), 10_000).unref();
+    const forcedExit = setTimeout(() => process.exit(1), 10_000);
+    forcedExit.unref();
+    const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
+    try {
+        await adapter.shutdown();
+        await serverClosed;
+        clearTimeout(forcedExit);
+        process.exit(0);
+    } catch {
+        process.exit(1);
+    }
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });

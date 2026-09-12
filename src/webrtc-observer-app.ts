@@ -61,6 +61,19 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
     const now = options.now ?? Date.now;
     const enabled = options.enabled !== false;
     const completed = new Map<string, { evidence: BrowserWebRtcEvidence; completedAt: number }>();
+    let lifecycleTail: Promise<void> = Promise.resolve();
+
+    const serializeLifecycle = async <T>(operation: () => Promise<T>): Promise<T> => {
+        const previous = lifecycleTail;
+        let release!: () => void;
+        lifecycleTail = new Promise<void>(resolve => { release = resolve; });
+        await previous;
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
+    };
 
     const prune = () => {
         for (const [callId, value] of completed) {
@@ -139,26 +152,28 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
             res.status(400).json({ error: 'Observer scope validation failed', code: 'invalid_observer_scope' });
             return;
         }
-        prune();
-        if (completed.has(callId)) {
-            res.status(409).json({ error: 'Call ID was already completed recently', code: 'observer_call_id_reused' });
-            return;
-        }
-        const status = options.adapter.status();
-        if (status.active) {
-            if (status.callId === callId && status.targetJid === target.value) {
-                res.json({ ok: true, callId, targetJid: target.value, idempotent: true });
+        await serializeLifecycle(async () => {
+            prune();
+            if (completed.has(callId)) {
+                res.status(409).json({ error: 'Call ID was already completed recently', code: 'observer_call_id_reused' });
                 return;
             }
-            res.status(409).json({ error: 'Another observation is active', code: 'observer_already_active' });
-            return;
-        }
-        try {
-            await options.adapter.start(callId, target.value!, ttlMs);
-            res.status(201).json({ ok: true, callId, targetJid: target.value, idempotent: false });
-        } catch {
-            res.status(503).json({ error: 'Browser WebRTC observation is unavailable', code: 'observer_start_unavailable' });
-        }
+            const status = options.adapter.status();
+            if (status.active) {
+                if (status.callId === callId && status.targetJid === target.value) {
+                    res.json({ ok: true, callId, targetJid: target.value, idempotent: true });
+                    return;
+                }
+                res.status(409).json({ error: 'Another observation is active', code: 'observer_already_active' });
+                return;
+            }
+            try {
+                await options.adapter.start(callId, target.value!, ttlMs);
+                res.status(201).json({ ok: true, callId, targetJid: target.value, idempotent: false });
+            } catch {
+                res.status(503).json({ error: 'Browser WebRTC observation is unavailable', code: 'observer_start_unavailable' });
+            }
+        });
     });
 
     app.post('/v1/observation/stop', async (request, res) => {
@@ -169,27 +184,29 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
             res.status(400).json({ error: 'callId is invalid', code: 'invalid_observer_scope' });
             return;
         }
-        prune();
-        const previous = completed.get(callId);
-        if (previous) {
-            res.json(previous.evidence);
-            return;
-        }
-        const status = options.adapter.status();
-        if (!status.active || status.callId !== callId) {
-            res.status(409).json({ error: 'Observer scope does not match', code: 'observer_scope_mismatch' });
-            return;
-        }
-        try {
-            const rawEvidence = await options.adapter.stop(callId);
-            const evidence = normalizeBrowserWebRtcEvidence(rawEvidence);
-            if (!evidence) throw new Error('invalid_evidence');
-            completed.set(callId, { evidence, completedAt: now() });
+        await serializeLifecycle(async () => {
             prune();
-            res.json(evidence);
-        } catch {
-            res.status(503).json({ error: 'Browser WebRTC evidence is unavailable', code: 'observer_stop_unavailable' });
-        }
+            const previous = completed.get(callId);
+            if (previous) {
+                res.json(previous.evidence);
+                return;
+            }
+            const status = options.adapter.status();
+            if (!status.active || status.callId !== callId) {
+                res.status(409).json({ error: 'Observer scope does not match', code: 'observer_scope_mismatch' });
+                return;
+            }
+            try {
+                const rawEvidence = await options.adapter.stop(callId);
+                const evidence = normalizeBrowserWebRtcEvidence(rawEvidence);
+                if (!evidence) throw new Error('invalid_evidence');
+                completed.set(callId, { evidence, completedAt: now() });
+                prune();
+                res.json(evidence);
+            } catch {
+                res.status(503).json({ error: 'Browser WebRTC evidence is unavailable', code: 'observer_stop_unavailable' });
+            }
+        });
     });
 
     app.use((_error: unknown, _req: Request, res: Response, _next: unknown) => {

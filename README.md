@@ -966,6 +966,7 @@ For network privacy, a properly configured VPN can reduce direct network exposur
 
 ### v3.1.0 candidate
 
+- Adds bounded WebRTC selected-pair evidence, five-tuple flow correlation and STUN/TURN context without treating GeoIP or a telephone prefix as proof of route or location
 - Adds a persistent containerized WhatsApp Web browser with virtual display/audio, Selkies access through a private tunnel network and loopback-only contingency bindings
 - Isolates privileged packet observation in an HMAC-authenticated sidecar sharing the browser network namespace
 - Adds container healthchecks, non-root execution, capability/resource limits and safe Chromium profile restart recovery

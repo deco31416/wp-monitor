@@ -73,6 +73,85 @@ test('fails a v4 confirmation closed when its declared evidence books are missin
     assert.deepEqual(normalized?.limitations, ['stored_observation_invalid']);
 });
 
+test('fails a persisted v4 confirmation closed when the selected candidate type is unknown', () => {
+    const assessment = {
+        assessmentVersion: 4,
+        classification: 'direct_confirmed',
+        confidenceScore: 82,
+        evidenceSources: ['packet_flow', 'browser_webrtc', 'five_tuple_flow'],
+        independentDirectEvidenceCount: 2,
+        primaryCandidateIp: '198.51.100.40',
+        reasonCodes: ['BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'],
+        limitations: [],
+    };
+    const startedAt = new Date('2026-09-11T12:00:00.000Z');
+    const endedAt = new Date('2026-09-11T12:01:00.000Z');
+    const normalized = normalizeStoredRouteAssessment(assessment, {
+        browserWebRtcEvidence: {
+            version: 1,
+            status: 'available',
+            startedAt,
+            endedAt,
+            connectionCount: 1,
+            selectedPairs: [{
+                peerConnectionId: 'pc-1',
+                state: 'succeeded',
+                nominated: true,
+                selected: true,
+                firstObservedAt: startedAt,
+                lastObservedAt: endedAt,
+                local: {
+                    candidateType: 'host', protocol: 'udp', relayProtocol: 'unknown',
+                    address: '192.0.2.10', addressFamily: 4, port: 50_000,
+                },
+                remote: {
+                    candidateType: 'unknown', protocol: 'udp', relayProtocol: 'unknown',
+                    address: '198.51.100.40', addressFamily: 4, port: 40_000,
+                },
+                packetsSent: 20,
+                packetsReceived: 20,
+                bytesSent: 4_000,
+                bytesReceived: 4_000,
+                currentRoundTripTimeMs: 30,
+            }],
+            stateTransitions: [],
+            truncated: false,
+            limitations: [],
+        },
+        flowEvidence: {
+            version: 1,
+            flowLimit: 1_024,
+            storedFlows: 1,
+            droppedPackets: 0,
+            truncated: false,
+            flows: [{
+                addressFamily: 4,
+                protocol: 'udp',
+                localPort: 50_000,
+                remoteIp: '198.51.100.40',
+                remotePort: 40_000,
+                firstSeen: startedAt,
+                lastSeen: endedAt,
+                direction: 'bidirectional',
+                packets: 40,
+                bytesTotal: 8_000,
+                phaseCounts: {
+                    version: 1,
+                    baseline: { packets: 0, bytes: 0 },
+                    negotiation: { packets: 10, bytes: 2_000 },
+                    active: { packets: 30, bytes: 6_000 },
+                    postCall: { packets: 0, bytes: 0 },
+                    unclassified: { packets: 0, bytes: 0 },
+                },
+                protocolEvidence: ['transport_flow'],
+            }],
+        },
+    });
+
+    assert.equal(normalized?.classification, 'unresolved');
+    assert.deepEqual(normalized?.limitations, ['stored_observation_invalid']);
+});
+
 test('keeps an absent assessment distinguishable from invalid stored data', () => {
     assert.equal(normalizeStoredRouteAssessment(undefined), undefined);
     assert.deepEqual(normalizeStoredRouteAssessment({

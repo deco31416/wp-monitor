@@ -184,7 +184,7 @@ Reglas:
 | BO-CALL-31 | Una confirmacion v4 por navegador exige par seleccionado y exitoso sin candidato relay, una IP ya elegible y coincidencia exacta de IP, puerto y protocolo con al menos 20 paquetes bidireccionales en negociacion o llamada activa. |
 | BO-CALL-32 | Una captura automatica declara que la sonda pudo armarse despues de la primera señal; conexiones no observadas, candidatos ocultos, libros truncados y fallos parciales aparecen como limitaciones y nunca se reparan mediante inferencia. |
 | BO-CALL-33 | Historicos v2/v3 permanecen legibles; una conclusion v4 almacenada solo sobrevive si los libros declarados son validos y la coincidencia directa puede reconstruirse. |
-| BO-CALL-34 | La flag WebRTC desactivada no requiere secreto, no abre CDP, rechaza control y conserva el motor E4 anterior; activada exige secreto distinto al del capture-agent y nunca publica CDP ni el puerto del observer. |
+| BO-CALL-34 | La flag WebRTC desactivada no requiere secreto, no abre CDP, rechaza control y conserva el motor E4 anterior; activada exige un secreto distinto de los secretos del capture-agent y de identidad, y nunca publica CDP ni el puerto del observer. |
 
 ### Alcance, identidad e idempotencia
 

@@ -868,7 +868,7 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
 
 ### I. Correlacion WebRTC y rutas de llamada
 
-- [ ] **OBS-29 — Observabilidad WebRTC y correlacion de ruta v4** — `IMPLEMENTED LOCAL — QA/E4 PENDING`
+- [ ] **OBS-29 — Observabilidad WebRTC y correlacion de ruta v4** — `LOCAL QA/E3 PASS — E4 PENDING`
   - Objetivo: complementar el motor libpcap/Baileys existente con evidencia
     WebRTC sanitizada del navegador, flujos de cinco tuplas y correlacion
     STUN/TURN. No reemplaza la captura actual ni promete que WhatsApp exponga
@@ -892,11 +892,12 @@ matriz. Una subtarea solo cambia a `DONE` con la evidencia indicada.
     responsabilidad libpcap y sus capabilities actuales.
   - Estado y desglose: [plan incremental OBS-29](webrtc-call-observation-plan.md).
   - Decision arquitectonica: [ADR 0006](../adr/0006-webrtc-observer-sidecar.md).
-  - Evidencia actual: la primera PoC aislada con Chrome 153/CDP 1.3 registro dos
+  - Evidencia actual: la PoC aislada con Chrome 153/CDP 1.3 registro dos
     conexiones WebRTC y dos pares ICE seleccionados/nominados con contadores y
     RTT. El navegador no expuso direcciones en la fixture sintetica y WhatsApp
-    Web aun no fue validado; por eso `OBS-29.1` permanece parcial aunque el ADR
-    arquitectonico ya fue aceptado con E4 expresamente pendiente.
+    Web aun no fue validado. La matriz local completa, las cinco imagenes y un
+    smoke aislado `wa-browser`/observer pasaron; por eso el ADR esta aceptado y
+    solo la comprobacion WhatsApp/VPS permanece como evidencia E4 pendiente.
   - Cierre: nueve tareas verificadas, compatibilidad historica, degradacion al
     motor actual cuando el observer no aporte evidencia, QA E2/E3 y una unica
     validacion E4 autorizada antes de cualquier promocion.

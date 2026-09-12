@@ -327,6 +327,28 @@ async function waitForSyntheticConnection(cdp, sessionId) {
     throw new Error('synthetic_webrtc_timeout');
 }
 
+export function processExited(process) {
+    return process.exitCode !== null || process.signalCode !== null;
+}
+
+async function waitForProcessExit(process, timeoutMs) {
+    if (processExited(process)) return true;
+    return new Promise(resolve => {
+        let settled = false;
+        let timer;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            process.off('exit', onExit);
+            resolve(value);
+        };
+        const onExit = () => finish(true);
+        process.once('exit', onExit);
+        timer = setTimeout(() => finish(processExited(process)), timeoutMs);
+    });
+}
+
 export async function runWebRtcCdpPoc() {
     const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wp-monitor-webrtc-poc-'));
     const profileDirectory = join(temporaryDirectory, 'profile');
@@ -395,15 +417,19 @@ export async function runWebRtcCdpPoc() {
         };
     } finally {
         cdp?.close();
-        if (chrome?.exitCode === null) {
+        if (chrome && !processExited(chrome)) {
             chrome.kill('SIGTERM');
-            await Promise.race([
-                new Promise(resolve => chrome.once('exit', resolve)),
-                new Promise(resolve => setTimeout(resolve, 1_000)),
-            ]);
-            if (chrome.exitCode === null) chrome.kill('SIGKILL');
+            if (!await waitForProcessExit(chrome, 1_000)) {
+                chrome.kill('SIGKILL');
+                await waitForProcessExit(chrome, 1_000);
+            }
         }
-        await rm(temporaryDirectory, { recursive: true, force: true });
+        await rm(temporaryDirectory, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 100,
+        });
     }
 }
 

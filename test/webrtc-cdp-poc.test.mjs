@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildObserverInjection, sanitizeWebRtcSnapshot } from '../scripts/poc/webrtc-cdp.mjs';
+import { buildObserverInjection, processExited, sanitizeWebRtcSnapshot } from '../scripts/poc/webrtc-cdp.mjs';
 
 test('sanitizes selected WebRTC candidate pairs without retaining raw addresses or extra fields', () => {
     const result = sanitizeWebRtcSnapshot({
@@ -83,4 +83,10 @@ test('builds an early injection that observes peer connections through getStats 
     assert.doesNotMatch(source, /localDescription/);
     assert.doesNotMatch(source, /remoteDescription/);
     assert.doesNotMatch(source, /getUserMedia/);
+});
+
+test('treats signal termination as a completed Chrome exit', () => {
+    assert.equal(processExited({ exitCode: null, signalCode: 'SIGTERM' }), true);
+    assert.equal(processExited({ exitCode: 0, signalCode: null }), true);
+    assert.equal(processExited({ exitCode: null, signalCode: null }), false);
 });

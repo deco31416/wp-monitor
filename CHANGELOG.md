@@ -33,6 +33,8 @@ Maintainer guidance:
 
 ### Added
 
+- Added an opt-in, unprivileged WebRTC observer sidecar that reads bounded and sanitized selected ICE-pair statistics from loopback-only Chromium CDP during an authorized call capture.
+- Added IPv4/IPv6 five-tuple flow books, bounded STUN/TURN transaction context and route assessment v4 with exact browser/packet correlation while preserving the existing libpcap/Baileys motor as fallback.
 - Added a persistent Chromium/WhatsApp Web service with Xvfb, Fluxbox, virtual PulseAudio, loopback-only noVNC access and a named browser-profile volume.
 - Added Selkies browser streaming on internal port `8080`, a loopback-only contingency binding and a configurable external tunnel-network alias without embedding deployment identities in the public repository.
 - Added a dedicated call-capture sidecar that shares only the browser network namespace, runs Node as UID/GID 1000 and retains only `CAP_NET_RAW` and `CAP_NET_ADMIN` after startup.
@@ -42,7 +44,7 @@ Maintainer guidance:
 - Added an explicit pre-browser migration backup mode for `3.0.0` hosts, with a versioned manifest that distinguishes an intentionally empty pre-3.1 profile from a captured Chromium profile.
 - Added a Dokploy production override that reuses the audited private MongoDB/Redis network, suppresses the bundled Redis service and removes direct backend/client host publications.
 - Added regression tests for backup atomicity/tampering and capture-agent authentication, validation, failure handling and client contracts.
-- Added pinned GitHub Actions CI for QA, audits, documentation, license drift, report fixtures, Compose contracts and four-unit Docker builds.
+- Added pinned GitHub Actions CI for QA, audits, documentation, license drift, report fixtures, Compose contracts and five-unit Docker builds.
 - Added an audited third-party notice/distribution policy plus automated review gates for the exact GPL/LGPL production dependencies.
 
 ### Changed
@@ -60,6 +62,10 @@ Maintainer guidance:
 
 ### Fixed
 
+- Serialized WebRTC observer start, stop, expiry and shutdown so concurrent requests cannot replace a newer scope and every controlled failure attempts to disarm the in-page probe.
+- Prevented unknown ICE candidate types from producing a direct-route confirmation; only explicit `host`, `srflx` or `prflx` pairs can corroborate an exact active five-tuple.
+- Prioritized the real WhatsApp Web CDP target over unrelated blank pages and made the synthetic CDP harness wait for signal-based Chrome termination before removing its temporary profile.
+- Extended CI and immutable-image checks to the fifth `webrtc-observer` unit and removed development-only TypeScript tooling from Node runtime images.
 - Pinned `sharp@0.35.4` for the Baileys multimedia peer contract, closing the high-severity libheif advisory affecting earlier `sharp` releases; the corresponding libvips license inventory is updated to `1.3.3`.
 - Call-capture starts over REST and Socket.IO now reject a missing contact JID with a controlled validation error instead of forwarding the placeholder `manual` to the capture agent.
 - Replaced the retired Selkies browser-base digest with the official `main-debiantrixie` multi-architecture digest after a clean Docker build exposed the unavailable upstream manifest; the browser image again builds reproducibly without reverting to a mutable tag.
@@ -80,15 +86,17 @@ Maintainer guidance:
 
 ### Security
 
+- Production validation now rejects reuse of the authentication identity secret by either internal capture service.
 - noVNC is published only on `127.0.0.1`; production access requires an SSH tunnel and the port must not be routed through the public application proxy.
 - Selkies is reached through a protected access proxy/tunnel on the configured external network; its `7901` host binding and the noVNC fallback remain loopback-only, while deployment-specific identifiers stay outside version control.
 - The capture-agent control port is not published, and every non-health route requires an HMAC signature tied to method, path, timestamp, nonce and body hash.
 - Browser and capture-agent secrets, Chromium profiles, Baileys sessions, captures, reports, uploads and backups remain excluded from Git/Docker build context.
-- All four application images now carry the project license and third-party notices; backend/capture-agent images also retain dependency licenses, and commercial distribution claims distinguish MIT-owned code from transitive obligations.
+- All five application images now carry the project license and third-party notices; backend/capture-agent/observer images also retain dependency licenses, and commercial distribution claims distinguish MIT-owned code from transitive obligations.
 - Pinned the transitive Express query parser to `qs 6.16.0`, resolving the two moderate denial-of-service advisories reported against `6.15.3`.
 
 ### Verification
 
+- OBS-29 local closeout on 2026-09-12: 408 backend tests, 42 frontend tests, typecheck, lint, application builds, 71 Markdown files, 154 relative links, 36 Mermaid blocks, five report fixtures, 218 production packages and both dependency audits passed. Both observer flag states rendered correctly; all five images built, Node runtime images excluded TypeScript/`tsx`, and an isolated browser/observer CDP smoke passed without product data or published ports.
 - Selkies supply-chain recovery: the replacement digest resolved from the official GHCR manifest, the browser image built successfully, and an isolated non-root/read-only smoke returned `200` from both loopback noVNC and authenticated Selkies while the container remained healthy.
 - `pnpm run qa`: 323 backend/contract tests and 38 frontend tests passed with lint, TypeScript checks and production builds on 2026-09-08.
 - `pnpm audit --audit-level=low` and `pnpm audit --prod --audit-level=low`: no known dependency vulnerabilities found on 2026-09-08.

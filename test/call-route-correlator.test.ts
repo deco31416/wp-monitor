@@ -96,6 +96,7 @@ function phaseCounts(activePackets = 30) {
 function browserPair(options: {
     remoteAddress?: string | null;
     remotePort?: number | null;
+    localType?: 'host' | 'srflx' | 'prflx' | 'relay' | 'unknown';
     remoteType?: 'host' | 'srflx' | 'prflx' | 'relay' | 'unknown';
 } = {}): BrowserWebRtcEvidence {
     return {
@@ -112,7 +113,7 @@ function browserPair(options: {
             firstObservedAt: new Date('2026-09-08T12:00:08.000Z'),
             lastObservedAt: new Date('2026-09-08T12:00:28.000Z'),
             local: {
-                candidateType: 'host' as const,
+                candidateType: options.localType ?? 'host' as const,
                 protocol: 'udp' as const,
                 relayProtocol: 'unknown' as const,
                 address: '192.0.2.10',
@@ -378,6 +379,25 @@ test('does not elevate a browser candidate when the active five-tuple is weak or
         assert.equal(assessed.routeAssessment?.classification, 'direct_probable');
         assert.equal(assessed.routeAssessment?.independentDirectEvidenceCount, 1);
         assert.equal(assessed.routeAssessment?.reasonCodes.includes('BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'), false);
+    }
+});
+
+test('does not confirm a direct route when either WebRTC candidate type is unknown', () => {
+    for (const browserWebRtcEvidence of [
+        browserPair({ localType: 'unknown' }),
+        browserPair({ remoteType: 'unknown' }),
+    ]) {
+        const assessed = correlateCallRoute(result({
+            candidateIps: [candidate()],
+            browserWebRtcEvidence,
+            flowEvidence: flowEvidence(),
+        }));
+        assert.equal(assessed.routeAssessment?.classification, 'direct_probable');
+        assert.equal(assessed.routeAssessment?.independentDirectEvidenceCount, 1);
+        assert.equal(
+            assessed.routeAssessment?.reasonCodes.includes('BROWSER_SELECTED_CANDIDATE_MATCHES_ACTIVE_FIVE_TUPLE'),
+            false,
+        );
     }
 });
 
