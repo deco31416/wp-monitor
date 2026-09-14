@@ -1,4 +1,4 @@
-ARG BROWSER_BASE_IMAGE=ghcr.io/selkies-project/selkies/base:main-debiantrixie@sha256:7e0b8c8c204d4b4f98a410e37144794a8b260a006a8d7b3a773d04200322128c
+ARG BROWSER_BASE_IMAGE=ghcr.io/selkies-project/selkies/base:v2.0.0rc0-debiantrixie@sha256:26026ba97c1863e3dbb04f9f23ae8336f0d1ae2c457b373c035082dc68a261f3
 FROM ${BROWSER_BASE_IMAGE}
 
 USER root

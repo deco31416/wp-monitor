@@ -251,6 +251,16 @@ flowchart TD
 
 ### OBS-29.9 — Despliegue VPS y E4 autorizada — `TODO`
 
+- El intento RELEASE del SHA `7a5b60e` completo E1, E2, Preview Compose y
+  backup, pero se detuvo antes de modificar el runtime: GHCR habia retirado el
+  manifiesto Selkies fijado bajo la etiqueta movil `main-debiantrixie`.
+- `INC-SELKIES-01` reemplaza esa dependencia por la release versionada
+  `v2.0.0rc0-debiantrixie` fijada a su indice OCI y hace que
+  `containers:check` rechace `main` y `latest` incluso con digest. El build
+  limpio y el smoke aislado no-root/read-only pasaron, incluidos noVNC,
+  autenticacion Selkies, Chromium y CDP solo interno. Falta generar el nuevo
+  SHA autorizado y repetir la promocion en VPS; el runtime anterior no fue
+  modificado.
 - Validar Preview Compose, red, puertos, privilegios, secretos por nombre,
   persistencia, backup y rollback antes de desplegar.
 - Activar inicialmente en `develop` y ejecutar una unica llamada autorizada.
