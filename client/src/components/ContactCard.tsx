@@ -295,6 +295,7 @@ export function ContactCard({
     const [callCapturing, setCallCapturing] = useState(false);
     const [callEvent, setCallEvent] = useState<CallEvent | null>(null);
     const [callPacketCount, setCallPacketCount] = useState(0);
+    const [callStarting, setCallStarting] = useState(false);
     const [callStopping, setCallStopping] = useState(false);
     const [callCaptureId, setCallCaptureId] = useState<string | null>(null);
     const [callCaptureTrigger, setCallCaptureTrigger] = useState<'manual' | 'auto' | null>(null);
@@ -402,6 +403,7 @@ export function ContactCard({
             return;
         }
         try {
+            setCallStarting(true);
             setCallAnalysis(null);
             setCallEvent(null);
             const response = await authFetch(`${API_URL}/api/call-capture/start`, {
@@ -428,6 +430,8 @@ export function ContactCard({
             setCallPacketCount(0);
         } catch (error) {
             setCallCaptureError(error instanceof Error ? error.message : 'Error iniciando captura manual');
+        } finally {
+            setCallStarting(false);
         }
     };
 
@@ -1237,6 +1241,7 @@ export function ContactCard({
                                 callEvent={callEvent}
                                 callPacketCount={callPacketCount}
                                 callStopping={callStopping}
+                                callStarting={callStarting}
                                 callOperatorMarker={callOperatorMarker}
                                 callMarkerPending={callMarkerPending}
                                 operatorMarkerAvailable={callCaptureTrigger === 'manual'}

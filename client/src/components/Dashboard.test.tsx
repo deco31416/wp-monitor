@@ -227,3 +227,60 @@ test('offers saved cases for call capture and derives their protected audit cont
         }),
     });
 });
+
+test('does not show an active capture when coordinated startup is partial', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ callTrafficAnalysis: true }),
+    })));
+    authFetchMock.mockImplementation(async (input: string) => {
+        if (input.includes('/api/cases')) {
+            return { ok: true, status: 200, json: async () => cases };
+        }
+        if (input.includes('/api/contact/') && input.includes('/activity')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    active: true,
+                    caseId: 'CASE-QA-001',
+                    trackingSessionId: 'tracking-qa-atomic',
+                    trackingStartedAt: '2026-09-14T20:00:00.000Z',
+                    page: { returned: 0, total: 0, truncated: false, limit: 200 },
+                    events: [],
+                }),
+            };
+        }
+        if (input.includes('/api/call-capture/start')) {
+            return {
+                ok: false,
+                status: 503,
+                json: async () => ({
+                    error: 'No fue posible verificar el inicio coordinado de la captura',
+                    code: 'call_capture_start_incomplete',
+                }),
+            };
+        }
+        return { ok: true, status: 200, json: async () => [] };
+    });
+
+    render(<Dashboard connectionState={{ whatsapp: true, whatsappQr: null }} />);
+    await screen.findByRole('option', { name: 'CASE-QA-001 - Caso sintetico (authorized)' });
+    await act(async () => {
+        socketHandlers.get('contact-added')?.({
+            jid: '15555550123@s.whatsapp.net',
+            number: '15555550123',
+            customName: 'Contacto coordinado',
+        });
+    });
+    await user.click(await screen.findByRole('button', { name: 'Llamada' }));
+    await user.click(await screen.findByRole('button', { name: 'Iniciar Captura Manual' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+        'No fue posible verificar el inicio coordinado de la captura',
+    );
+    expect(screen.queryByRole('button', { name: /Detener Captura/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Calibrando línea base')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Iniciar Captura Manual' })).toBeEnabled();
+});

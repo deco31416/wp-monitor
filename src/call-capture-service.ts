@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
     autoDetectInterface,
     getCallCaptureStatus,
@@ -13,7 +14,11 @@ import { listInterfaces } from './packet-capture.js';
 import type { NetworkInterface } from './packet-capture.js';
 import type { CallCaptureMode } from './runtime.js';
 import type { BrowserWebRtcEvidence } from './call-observation-evidence.js';
-import { WebRtcObserverClient, type WebRtcObserverStatus } from './webrtc-observer-client.js';
+import {
+    WebRtcObserverClient,
+    WebRtcObserverClientError,
+    type WebRtcObserverStatus,
+} from './webrtc-observer-client.js';
 import {
     isCallCapturePhaseStatus,
     type CallCapturePhaseObservation,
@@ -26,6 +31,9 @@ export interface CallCaptureServiceOptions {
     agent?: CaptureAgentClient;
     observer?: WebRtcObserverClient;
     observerTtlMs?: number;
+    startupTimeoutMs?: number;
+    startupVerificationDelayMs?: number;
+    lifecycleLogger?: (event: CallCaptureLifecycleLog) => void;
 }
 
 export type CallPacketCallback = (packet: unknown) => void;
@@ -34,6 +42,47 @@ export interface CallCaptureStartContext {
     trigger: 'manual' | 'auto';
     observedCallId?: string;
     initialCallStatus?: CallCapturePhaseStatus;
+}
+
+export interface CallCaptureLifecycleLog {
+    event: 'coordinated_start_failed';
+    callIdHash: string;
+    causes: string[];
+    compensation: 'complete' | 'failed';
+}
+
+export class CallCaptureCoordinationError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly code:
+            | 'call_capture_start_incomplete'
+            | 'call_capture_compensation_failed'
+            | 'call_capture_already_active',
+    ) {
+        super(message);
+        this.name = 'CallCaptureCoordinationError';
+    }
+}
+
+class CallCaptureStartupTimeoutError extends Error {
+    constructor() {
+        super('Call capture coordinated startup timed out');
+        this.name = 'CallCaptureStartupTimeoutError';
+    }
+}
+
+interface CoordinatedCaptureStatus {
+    packet: CallCaptureStatus | null;
+    observer: WebRtcObserverStatus | null;
+    causes: string[];
+}
+
+interface CallCaptureCompensationOutcome {
+    complete: boolean;
+    causes: string[];
+    packet: CallCaptureStatus | null;
+    observer: WebRtcObserverStatus | null;
 }
 
 const EMPTY_STATUS: CallCaptureStatus = {
@@ -50,6 +99,9 @@ export class CallCaptureService {
     private readonly agent: CaptureAgentClient | null;
     private readonly observer: WebRtcObserverClient | null;
     private readonly observerTtlMs: number;
+    private readonly startupTimeoutMs: number;
+    private readonly startupVerificationDelayMs: number;
+    private readonly lifecycleLogger: (event: CallCaptureLifecycleLog) => void;
     private agentAvailable = false;
     private observerAvailable = false;
     private activeAgentCapture: { callId: string; targetJid: string } | null = null;
@@ -81,6 +133,24 @@ export class CallCaptureService {
         if (!Number.isSafeInteger(this.observerTtlMs) || this.observerTtlMs < 30_000 || this.observerTtlMs > 30 * 60_000) {
             throw new Error('WebRTC observer TTL must be between 30 seconds and 30 minutes');
         }
+        this.startupTimeoutMs = options.startupTimeoutMs ?? 10_000;
+        if (!Number.isSafeInteger(this.startupTimeoutMs) || this.startupTimeoutMs < 10 || this.startupTimeoutMs > 60_000) {
+            throw new Error('Call capture startup timeout must be between 10 milliseconds and 60 seconds');
+        }
+        this.startupVerificationDelayMs = options.startupVerificationDelayMs ?? 0;
+        if (
+            !Number.isSafeInteger(this.startupVerificationDelayMs)
+            || this.startupVerificationDelayMs < 0
+            || this.startupVerificationDelayMs > 5_000
+        ) {
+            throw new Error('Call capture startup verification delay must be between 0 and 5 seconds');
+        }
+        this.lifecycleLogger = options.lifecycleLogger ?? (event => {
+            console.warn(
+                `[CALL-CAPTURE] ${event.event} callIdHash=${event.callIdHash}`
+                + ` causes=${event.causes.join(',')} compensation=${event.compensation}`,
+            );
+        });
     }
 
     getMode(): CallCaptureMode {
@@ -173,39 +243,226 @@ export class CallCaptureService {
         packetCallback?: CallPacketCallback,
         context: CallCaptureStartContext = { trigger: 'manual' },
     ): Promise<boolean> {
-        let started = false;
-        if (this.mode === 'local') {
-            started = startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback, context);
+        const localCaptureActive = this.mode === 'local' && getCallCaptureStatus().isCapturing;
+        if (localCaptureActive || this.activeAgentCapture || this.activeObserverCapture) {
+            throw new CallCaptureCoordinationError(
+                'Ya existe una captura de llamada activa',
+                409,
+                'call_capture_already_active',
+            );
         }
-        if (this.mode === 'agent') {
-            started = await this.agent!.startCallCapture({ interfaceAddr, targetJid, callId, isVideo, ...context });
-            if (started) this.activeAgentCapture = { callId, targetJid };
-        }
-        if (!started) return false;
         this.completedObserverEvidence = null;
         this.observerStartFailure = null;
-        if (this.observer) {
-            const observerStartedAt = new Date();
-            try {
-                await this.observer.start(callId, targetJid, this.observerTtlMs);
+        this.activeAgentCapture = null;
+        this.activeObserverCapture = null;
+
+        const packetStart = Promise.resolve().then(() => {
+            if (this.mode === 'local') {
+                return startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback, context);
+            }
+            if (this.mode === 'agent') {
+                return this.agent!.startCallCapture({ interfaceAddr, targetJid, callId, isVideo, ...context });
+            }
+            return false;
+        });
+        const observerStart = this.observer
+            ? this.observer.start(callId, targetJid, this.observerTtlMs).then(() => true)
+            : Promise.resolve(true);
+
+        let startResults: PromiseSettledResult<boolean>[] | null = null;
+        const causes: string[] = [];
+        try {
+            startResults = await this.withStartupTimeout(Promise.allSettled([packetStart, observerStart]));
+        } catch (error) {
+            causes.push(error instanceof CallCaptureStartupTimeoutError
+                ? 'startup_timeout'
+                : 'startup_coordination_failed');
+        }
+
+        if (startResults) {
+            const [packetResult, observerResult] = startResults;
+            if (!packetResult || packetResult.status === 'rejected') causes.push('capture_start_request_failed');
+            else if (packetResult.value !== true) causes.push('capture_start_rejected');
+            if (!observerResult || observerResult.status === 'rejected') causes.push('observer_start_request_failed');
+            else if (observerResult.value !== true) causes.push('observer_start_rejected');
+        }
+
+        let verified = await this.readCoordinatedStatus();
+        causes.push(...verified.causes);
+        let packetActive = this.matchesPacketScope(verified.packet, callId, targetJid);
+        let observerActive = !this.observer || this.matchesObserverScope(verified.observer, callId, targetJid);
+        if (!packetActive) causes.push('capture_post_start_inactive');
+        if (!observerActive) causes.push('observer_post_start_inactive');
+
+        if (causes.length === 0 && context.trigger === 'manual' && this.startupVerificationDelayMs > 0) {
+            await new Promise<void>(resolve => setTimeout(resolve, this.startupVerificationDelayMs));
+            verified = await this.readCoordinatedStatus();
+            causes.push(...verified.causes.map(cause => `stability_${cause}`));
+            packetActive = this.matchesPacketScope(verified.packet, callId, targetJid);
+            observerActive = !this.observer || this.matchesObserverScope(verified.observer, callId, targetJid);
+            if (!packetActive) causes.push('capture_stability_check_inactive');
+            if (!observerActive) causes.push('observer_stability_check_inactive');
+        }
+
+        if (causes.length === 0 && verified.packet) {
+            if (this.mode === 'agent') {
+                this.activeAgentCapture = { callId, targetJid };
+                this.agentAvailable = true;
+            }
+            if (this.observer && verified.observer?.startedAt) {
                 this.activeObserverCapture = {
                     callId,
                     targetJid,
-                    startedAt: observerStartedAt,
+                    startedAt: verified.observer.startedAt,
                     trigger: context.trigger,
                 };
                 this.observerAvailable = true;
-            } catch {
-                this.activeObserverCapture = null;
-                this.observerAvailable = false;
-                this.observerStartFailure = {
-                    callId,
-                    startedAt: observerStartedAt,
-                    limitation: 'browser_webrtc_observer_start_unavailable',
-                };
             }
+            return true;
         }
-        return true;
+
+        const compensation = await this.compensateFailedStart(callId);
+        const packetAfterCompensation = compensation.packet ?? verified.packet;
+        const observerAfterCompensation = compensation.observer ?? verified.observer;
+        this.activeAgentCapture = this.mode === 'agent'
+            && !compensation.complete
+            && packetAfterCompensation?.isCapturing
+            && packetAfterCompensation.callId
+            && packetAfterCompensation.targetJid
+            ? { callId: packetAfterCompensation.callId, targetJid: packetAfterCompensation.targetJid }
+            : null;
+        this.activeObserverCapture = !compensation.complete
+            && observerAfterCompensation?.active
+            && observerAfterCompensation.callId
+            && observerAfterCompensation.targetJid
+            && observerAfterCompensation.startedAt
+            ? {
+                callId: observerAfterCompensation.callId,
+                targetJid: observerAfterCompensation.targetJid,
+                startedAt: observerAfterCompensation.startedAt,
+                trigger: 'recovered',
+            }
+            : null;
+        this.completedObserverEvidence = null;
+        this.observerStartFailure = null;
+        const uniqueCauses = [...new Set([...causes, ...compensation.causes])];
+        try {
+            this.lifecycleLogger({
+                event: 'coordinated_start_failed',
+                callIdHash: createHash('sha256').update(callId).digest('hex').slice(0, 16),
+                causes: uniqueCauses,
+                compensation: compensation.complete ? 'complete' : 'failed',
+            });
+        } catch {
+            // Observability must not replace the controlled coordination error.
+        }
+        if (!compensation.complete) {
+            throw new CallCaptureCoordinationError(
+                'No fue posible iniciar ni compensar completamente la captura coordinada',
+                503,
+                'call_capture_compensation_failed',
+            );
+        }
+        throw new CallCaptureCoordinationError(
+            'No fue posible verificar el inicio coordinado de la captura',
+            503,
+            'call_capture_start_incomplete',
+        );
+    }
+
+    private async readCoordinatedStatus(): Promise<CoordinatedCaptureStatus> {
+        const packetStatus = Promise.resolve().then(() => {
+            if (this.mode === 'local') return getCallCaptureStatus();
+            if (this.mode === 'agent') return this.agent!.getCallCaptureStatus();
+            return { ...EMPTY_STATUS };
+        });
+        const observerStatus = this.observer ? this.observer.status() : Promise.resolve(null);
+        try {
+            const [packetResult, observerResult] = await this.withStartupTimeout(
+                Promise.allSettled([packetStatus, observerStatus]),
+            );
+            const causes: string[] = [];
+            if (packetResult.status === 'rejected') causes.push('capture_status_check_failed');
+            if (observerResult.status === 'rejected') causes.push('observer_status_check_failed');
+            return {
+                packet: packetResult.status === 'fulfilled' ? packetResult.value : null,
+                observer: observerResult.status === 'fulfilled' ? observerResult.value : null,
+                causes,
+            };
+        } catch {
+            return { packet: null, observer: null, causes: ['startup_status_timeout'] };
+        }
+    }
+
+    private matchesPacketScope(status: CallCaptureStatus | null, callId: string, targetJid: string): boolean {
+        return status?.isCapturing === true && status.callId === callId && status.targetJid === targetJid;
+    }
+
+    private matchesObserverScope(status: WebRtcObserverStatus | null, callId: string, targetJid: string): boolean {
+        return status?.active === true && status.callId === callId && status.targetJid === targetJid;
+    }
+
+    private async compensateFailedStart(callId: string): Promise<CallCaptureCompensationOutcome> {
+        const stopPacket = Promise.resolve().then(async () => {
+            if (this.mode === 'local') {
+                stopCallCapture();
+                return;
+            }
+            if (this.mode !== 'agent') return;
+            try {
+                await this.agent!.stopCallCapture(callId);
+            } catch (error) {
+                if (error instanceof CaptureAgentClientError && error.code === 'capture_not_active') return;
+                throw error;
+            }
+        });
+        const stopObserver = Promise.resolve().then(async () => {
+            if (!this.observer) return;
+            try {
+                await this.observer.stop(callId);
+            } catch (error) {
+                if (error instanceof WebRtcObserverClientError && error.code === 'observer_scope_mismatch') return;
+                throw error;
+            }
+        });
+
+        let stopResults: PromiseSettledResult<void>[] | null = null;
+        const causes: string[] = [];
+        try {
+            stopResults = await this.withStartupTimeout(Promise.allSettled([stopPacket, stopObserver]));
+        } catch {
+            causes.push('compensation_timeout');
+        }
+        if (stopResults?.[0]?.status === 'rejected') causes.push('capture_compensation_stop_failed');
+        if (stopResults?.[1]?.status === 'rejected') causes.push('observer_compensation_stop_failed');
+
+        const after = await this.readCoordinatedStatus();
+        if (after.causes.includes('capture_status_check_failed')) causes.push('capture_compensation_status_failed');
+        if (after.causes.includes('observer_status_check_failed')) causes.push('observer_compensation_status_failed');
+        if (after.causes.includes('startup_status_timeout')) causes.push('compensation_status_timeout');
+        if (after.packet?.isCapturing === true) causes.push('capture_residual_active');
+        if (after.observer?.active === true) causes.push('observer_residual_active');
+        return {
+            complete: causes.length === 0,
+            causes,
+            packet: after.packet,
+            observer: after.observer,
+        };
+    }
+
+    private async withStartupTimeout<T>(operation: Promise<T>): Promise<T> {
+        let timer: NodeJS.Timeout | null = null;
+        try {
+            return await Promise.race([
+                operation,
+                new Promise<never>((_resolve, reject) => {
+                    timer = setTimeout(() => reject(new CallCaptureStartupTimeoutError()), this.startupTimeoutMs);
+                    timer.unref?.();
+                }),
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     async observeCallEvent(

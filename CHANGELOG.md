@@ -62,6 +62,7 @@ Maintainer guidance:
 
 ### Fixed
 
+- Made coordinated call-capture startup fail closed: the backend now starts packet capture and the WebRTC observer as one serialized saga, verifies both signed scopes before publishing success, repeats that verification after a two-second stabilization window for manual capture, compensates either partial start, reports incomplete compensation explicitly, hashes `callId` in technical logs, and keeps the UI out of its active state until the transaction is confirmed.
 - Scoped TURN `CHANNEL-BIND` correlation to the exact allocation tuple, transport and peer, expired bindings after ten minutes, bounded active bindings and retained channel evidence to 64 entries, and declared unmatched or truncated observations instead of merging reused channel numbers.
 - Reconciled the packet capture and WebRTC observer as one serialized lifecycle across backend restarts, periodic health checks and concurrent stop operations; exact scopes recover safely, foreign/orphan scopes are disarmed, and an agent result that finishes first no longer causes browser evidence to be discarded.
 - Changed WebRTC TTL expiry to take one final bounded snapshot before disarming and retain it idempotently for the same `callId` for at most one hour and 32 calls; snapshot failures remain explicit and continue to fall back to packet evidence.

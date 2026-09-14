@@ -9,6 +9,7 @@ interface CallAnalysisPanelProps {
     callCapturing: boolean;
     callEvent: CallEvent | null;
     callPacketCount: number;
+    callStarting: boolean;
     callStopping: boolean;
     callOperatorMarker: OperatorCallMarker | null;
     callMarkerPending: boolean;
@@ -32,6 +33,7 @@ export function CallAnalysisPanel({
     callCapturing,
     callEvent,
     callPacketCount,
+    callStarting,
     callStopping,
     callOperatorMarker,
     callMarkerPending,
@@ -64,7 +66,7 @@ export function CallAnalysisPanel({
                         aria-label="Caso de la captura"
                         value={callCaseId}
                         onChange={event => onCaseIdChange(event.target.value)}
-                        disabled={callCapturing || casesLoading || availableCases.length === 0}
+                        disabled={callCapturing || callStarting || casesLoading || availableCases.length === 0}
                         className="select-field !text-xs"
                     >
                         <option value="">
@@ -96,10 +98,10 @@ export function CallAnalysisPanel({
                     {!callCapturing ? (
                         <button
                             onClick={onStartManualCapture}
-                            disabled={!callCaseId.trim() || !callOperatorName.trim() || !callAuthorizationNote.trim()}
+                            disabled={callStarting || !callCaseId.trim() || !callOperatorName.trim() || !callAuthorizationNote.trim()}
                             className="btn-primary flex items-center gap-2 !text-xs !py-2 !px-4"
                         >
-                            <Phone size={14} /> Iniciar Captura Manual
+                            <Phone size={14} /> {callStarting ? 'Verificando componentes...' : 'Iniciar Captura Manual'}
                         </button>
                     ) : (
                         <button
@@ -462,7 +464,7 @@ const ROUTE_LIMITATION_LABELS: Record<string, string> = {
     browser_webrtc_observer_scope_lost_during_capture: 'El observador WebRTC perdió su alcance durante la captura; el análisis conserva el motor de paquetes.',
     browser_webrtc_observer_ttl_expired: 'La ventana WebRTC alcanzó su tiempo máximo y conservó automáticamente la evidencia reunida hasta ese momento.',
     browser_webrtc_observer_ttl_snapshot_unavailable: 'No fue posible obtener el snapshot final al vencer la ventana WebRTC; el análisis conserva el motor de paquetes.',
-    browser_webrtc_armed_after_automatic_call_signal: 'La captura automática armó WebRTC después de recibir la primera señal; el inicio puede ser parcial.',
+    browser_webrtc_armed_after_automatic_call_signal: 'La captura automática armó WebRTC después de recibir la primera señal; la cobertura inicial puede ser incompleta.',
     browser_candidate_address_not_exposed: 'Chromium informó el par seleccionado, pero no expuso la dirección candidata remota.',
     browser_peer_connection_not_observed: 'El navegador no creó una conexión WebRTC observable durante esta ventana.',
     browser_selected_pair_not_observed: 'WebRTC fue observado, pero no informó un par seleccionado antes de finalizar.',

@@ -84,7 +84,7 @@ Comprueba ademas:
 8. dos ciclos consecutivos de inicio, captura UDP sintetica y parada; ambos
    deben devolver resultado y el agente debe permanecer `healthy`, sin reinicios;
 9. caso, llamada, persistencia, informe y auditoria con datos de prueba.
-10. si `WEBRTC_OBSERVER_ENABLED=true`, readiness del observer, CDP `9222` solo en loopback del namespace, puertos `4200/9222` ausentes del host y evidencia degradada —no una confirmacion inventada— cuando Chromium oculte direcciones.
+10. si `WEBRTC_OBSERVER_ENABLED=true`, readiness del observer, CDP `9222` solo en loopback del namespace, puertos `4200/9222` ausentes del host, inicio manual confirmado por ambos componentes despues de la ventana de estabilidad y evidencia degradada —no una confirmacion inventada— cuando Chromium oculte direcciones despues de un inicio valido.
 
 `docker exec capture-agent id` abre por defecto un proceso auxiliar como root y no demuestra el usuario del servicio. Consulta `/proc/1/status` para auditar PID 1.
 

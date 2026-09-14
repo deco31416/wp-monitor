@@ -79,7 +79,7 @@ import { createApiOriginGuard, createApiSessionGuard, registerAuthRoutes } from 
 import { buildPageMetadata } from './page-metadata.js';
 import { SOFTWARE_VERSION } from './version.js';
 import { CaptureAgentClient, CaptureAgentClientError } from './capture-agent-client.js';
-import { CallCaptureService } from './call-capture-service.js';
+import { CallCaptureCoordinationError, CallCaptureService } from './call-capture-service.js';
 import { WebRtcObserverClient } from './webrtc-observer-client.js';
 import { isOperatorCallMarker, type OperatorCallMarker } from './call-capture-phases.js';
 import {
@@ -345,18 +345,24 @@ if (startupSecurityErrors.length > 0) {
     process.exit(1);
 }
 
+const captureAgentRequestTimeoutMs = parsePositiveInteger(process.env.CAPTURE_AGENT_TIMEOUT_MS, 5_000, 500);
+const webRtcObserverRequestTimeoutMs = parsePositiveInteger(process.env.WEBRTC_OBSERVER_TIMEOUT_MS, 5_000, 500);
+const coordinatedCaptureStartupTimeoutMs = Math.min(
+    60_000,
+    Math.max(captureAgentRequestTimeoutMs, webRtcObserverRequestTimeoutMs) + 1_000,
+);
 const captureAgentClient = CALL_CAPTURE_MODE === 'agent'
     ? new CaptureAgentClient({
         baseUrl: process.env.CAPTURE_AGENT_URL!,
         sharedSecret: process.env.CAPTURE_AGENT_SHARED_SECRET!,
-        timeoutMs: parsePositiveInteger(process.env.CAPTURE_AGENT_TIMEOUT_MS, 5_000, 500),
+        timeoutMs: captureAgentRequestTimeoutMs,
     })
     : undefined;
 const webRtcObserverClient = WEBRTC_OBSERVER_ENABLED
     ? new WebRtcObserverClient({
         baseUrl: process.env.WEBRTC_OBSERVER_URL!,
         sharedSecret: process.env.WEBRTC_OBSERVER_SHARED_SECRET!,
-        timeoutMs: parsePositiveInteger(process.env.WEBRTC_OBSERVER_TIMEOUT_MS, 5_000, 500),
+        timeoutMs: webRtcObserverRequestTimeoutMs,
     })
     : undefined;
 const callCaptureService = new CallCaptureService({
@@ -364,6 +370,8 @@ const callCaptureService = new CallCaptureService({
     ...(captureAgentClient ? { agent: captureAgentClient } : {}),
     ...(webRtcObserverClient ? { observer: webRtcObserverClient } : {}),
     observerTtlMs: parsePositiveInteger(process.env.WEBRTC_OBSERVER_TTL_MS, 15 * 60_000, 30_000),
+    startupTimeoutMs: coordinatedCaptureStartupTimeoutMs,
+    startupVerificationDelayMs: 2_000,
 });
 let callCaptureAvailabilityTimer: NodeJS.Timeout | null = null;
 
@@ -667,7 +675,11 @@ function buildOpenApiDocument() {
                 get: {
                     tags: ['Call Capture'],
                     summary: 'Get current call-capture status',
-                    responses: { '200': { description: 'Capture status' }, '403': { description: 'Local capture disabled' } },
+                    responses: {
+                        '200': { description: 'Capture status' },
+                        '403': { description: 'Call capture disabled' },
+                        '503': { description: 'A required capture component is unavailable' },
+                    },
                 },
             },
             '/api/call-capture/start': {
@@ -677,7 +689,8 @@ function buildOpenApiDocument() {
                     responses: {
                         '200': { description: 'Capture started' },
                         '400': { description: 'Invalid or missing authorized contact JID' },
-                        '409': { description: 'Case closed or archived' },
+                        '409': { description: 'Case unavailable or another capture is active' },
+                        '503': { description: 'Coordinated startup failed or could not be compensated' },
                     },
                 },
             },
@@ -1053,6 +1066,10 @@ async function rejectCallCaptureUnavailable(res: express.Response): Promise<bool
 }
 
 function respondCallCaptureError(res: express.Response, error: unknown): void {
+    if (error instanceof CallCaptureCoordinationError) {
+        res.status(error.status).json({ error: error.message, code: error.code, mode: CALL_CAPTURE_MODE });
+        return;
+    }
     if (error instanceof CaptureAgentClientError) {
         res.status(error.status).json({ error: error.message, code: error.code, mode: CALL_CAPTURE_MODE });
         return;
@@ -4449,7 +4466,9 @@ io.on('connection', (socket) => {
                 io.emit('call-packet', packet);
             });
         } catch (error) {
-            const code = error instanceof CaptureAgentClientError ? error.code : 'call_capture_failed';
+            const code = error instanceof CallCaptureCoordinationError || error instanceof CaptureAgentClientError
+                ? error.code
+                : 'call_capture_failed';
             socket.emit('error', { message: 'Failed to start call capture', code });
             return;
         }

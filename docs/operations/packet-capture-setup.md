@@ -127,6 +127,10 @@ No instales Chromium/libpcap directamente en el host ni otorgues capabilities al
 - `webrtc-observer` comparte el namespace sin capabilities y consulta solo `getStats()` sanitizado mediante CDP loopback cuando la función está habilitada;
 - el entrypoint baja a UID/GID 1000 y conserva solo `NET_RAW/NET_ADMIN`;
 - backend controla start/phase/status/stop mediante HMAC privado;
+- cuando `webrtc-observer` esta habilitado, el backend solo confirma el inicio
+  despues de que agente y observer devuelven por HMAC un estado activo inmediato
+  para el mismo alcance; el inicio manual repite la verificacion despues de dos
+  segundos y cualquier inicio parcial activa stop compensatorio en ambos;
 - readiness exige `capabilities.callCapturePhases=4` y
   `capabilities.operatorCallMarkers=1` y
   `capabilities.endpointExclusionDecision=1` y
@@ -208,6 +212,8 @@ No uses una llamada hasta superar esta prueba. Si la captura general no ve paque
 | Captura funciona, llamada no | WhatsApp corre en otro equipo/interfaz | Ejecutar llamada en la misma maquina |
 | Railway muestra bloqueo | Comportamiento esperado | Captura solo en `local-full` |
 | Agente VPS no disponible | Health/HMAC/capabilities/namespace | Revisar `wa-browser`, `capture-agent` y modo `agent` |
+| La UI rechaza el inicio coordinado | Agente u observer no confirmo el alcance activo despues del acuse | No iniciar la llamada; comprobar el log por hash de `callId`, causa acotada y estado de compensacion. Verificar que ambos servicios quedaron inactivos antes de reintentar |
+| Compensacion coordinada incompleta | Un componente no confirmo su cierre o su status no fue verificable | Tratar como bloqueo operacional, consultar ambos endpoints firmados y no repetir la llamada hasta demostrar ausencia de captura residual |
 
 ## Seguridad y licencia
 

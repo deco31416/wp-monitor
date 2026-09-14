@@ -31,7 +31,7 @@ Invariantes:
 
 ### `src/call-capture-service.ts`
 
-Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Cuando el observer esta habilitado lo arma despues de abrir la captura, obtiene una instantanea sanitizada al detener y siempre intenta desarmarlo. Un fallo del complemento degrada evidencia sin perder el resultado libpcap.
+Frontera unica para captura de llamada. En modo `local` delega al analizador nativo; en `agent` usa el cliente firmado; en `disabled` falla cerrado. Cuando el observer esta habilitado, inicia ambos componentes como una saga serializada y solo confirma despues de comprobar por HMAC el mismo alcance; el inicio manual repite la comprobacion tras dos segundos. Un inicio parcial se compensa; una perdida posterior del complemento degrada la evidencia sin impedir detener y recuperar el resultado libpcap.
 
 ### `src/webrtc-observer-cdp.ts`, `src/webrtc-observer-app.ts` y `src/webrtc-observer-client.ts`
 

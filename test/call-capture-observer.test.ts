@@ -41,25 +41,40 @@ function browserEvidence(): BrowserWebRtcEvidence {
 
 function agent(
     stop: () => Promise<CallAnalysisResult> = async () => analysis(),
-    status: () => Promise<{
+    status?: () => Promise<{
         isCapturing: boolean;
         targetJid: string | null;
         callId: string | null;
         startTime: Date | null;
         packetsCollected: number;
         elapsed: number;
-    }> = async () => ({
-        isCapturing: false, targetJid: null, callId: null, startTime: null, packetsCollected: 0, elapsed: 0,
-    }),
+    }>,
 ): CaptureAgentClient {
+    let active = false;
     return {
         ready: async () => true,
         listInterfaces: async () => [],
-        getCallCaptureStatus: status,
-        startCallCapture: async () => true,
+        getCallCaptureStatus: status ?? (async () => ({
+            isCapturing: active,
+            targetJid: active ? targetJid : null,
+            callId: active ? callId : null,
+            startTime: active ? new Date('2026-09-11T12:00:00.000Z') : null,
+            packetsCollected: 0,
+            elapsed: 0,
+        })),
+        startCallCapture: async () => {
+            active = true;
+            return true;
+        },
         observeCallCapturePhase: async () => true,
         markOperatorCallCapturePhase: async () => true,
-        stopCallCapture: stop,
+        stopCallCapture: async () => {
+            try {
+                return await stop();
+            } finally {
+                active = false;
+            }
+        },
     } as unknown as CaptureAgentClient;
 }
 
@@ -74,17 +89,25 @@ function observer(options: {
         startedAt: Date | null;
     }>;
 } = {}): WebRtcObserverClient {
+    let active = false;
     return {
         ready: async () => true,
         start: async () => {
             if (options.startFails) throw new Error('synthetic observer failure');
+            active = true;
         },
         stop: async (requestedCallId: string) => {
             options.stopCalls?.push(requestedCallId);
             if (options.stopFails) throw new Error('synthetic observer stop failure');
+            active = false;
             return browserEvidence();
         },
-        status: options.status ?? (async () => ({ active: false, callId: null, targetJid: null, startedAt: null })),
+        status: options.status ?? (async () => ({
+            active,
+            callId: active ? callId : null,
+            targetJid: active ? targetJid : null,
+            startedAt: active ? new Date('2026-09-11T12:00:01.000Z') : null,
+        })),
     } as unknown as WebRtcObserverClient;
 }
 
@@ -107,16 +130,23 @@ test('automatic capture declares that browser observation may start after the fi
     assert.ok(result?.browserWebRtcEvidence?.limitations.includes('browser_webrtc_armed_after_automatic_call_signal'));
 });
 
-test('observer start failure degrades explicitly while packet capture still completes', async () => {
+test('observer start failure compensates packet capture and rejects coordinated startup', async () => {
+    let packetStops = 0;
     const service = new CallCaptureService({
         mode: 'agent',
-        agent: agent(),
+        agent: agent(async () => {
+            packetStops += 1;
+            return analysis();
+        }),
         observer: observer({ startFails: true }),
+        lifecycleLogger: () => undefined,
     });
-    assert.equal(await service.start('192.0.2.10', targetJid, callId, false), true);
-    const result = await service.stop(callId);
-    assert.equal(result?.browserWebRtcEvidence?.status, 'unavailable');
-    assert.deepEqual(result?.browserWebRtcEvidence?.limitations, ['browser_webrtc_observer_start_unavailable']);
+    await assert.rejects(
+        service.start('192.0.2.10', targetJid, callId, false),
+        (error: unknown) => error instanceof Error && error.name === 'CallCaptureCoordinationError',
+    );
+    assert.equal(packetStops, 1);
+    assert.equal((await service.getStatus()).isCapturing, false);
 });
 
 test('capture-not-active reconciliation disarms the matching browser observer scope', async () => {
@@ -168,6 +198,7 @@ test('backend restart recovers a matching active observer scope before capture s
 
 test('observer restart clears backend phantom state and declares evidence loss', async () => {
     const stopCalls: string[] = [];
+    let observerStatusChecks = 0;
     const activeCaptureStatus = async () => ({
         isCapturing: true,
         targetJid,
@@ -179,7 +210,13 @@ test('observer restart clears backend phantom state and declares evidence loss',
     const service = new CallCaptureService({
         mode: 'agent',
         agent: agent(async () => analysis(), activeCaptureStatus),
-        observer: observer({ stopCalls, stopFails: true }),
+        observer: observer({
+            stopCalls,
+            stopFails: true,
+            status: async () => observerStatusChecks++ === 0
+                ? ({ active: true, callId, targetJid, startedAt: new Date('2026-09-11T12:00:01.000Z') })
+                : ({ active: false, callId: null, targetJid: null, startedAt: null }),
+        }),
     });
     assert.equal(await service.start('192.0.2.10', targetJid, callId, false), true);
 
@@ -195,6 +232,7 @@ test('observer restart clears backend phantom state and declares evidence loss',
 
 test('reconciliation recovers observer evidence finalized by TTL while packet capture remains active', async () => {
     const stopCalls: string[] = [];
+    let observerStatusChecks = 0;
     const activeCaptureStatus = async () => ({
         isCapturing: true,
         targetJid,
@@ -215,7 +253,11 @@ test('reconciliation recovers observer evidence finalized by TTL while packet ca
     const service = new CallCaptureService({
         mode: 'agent',
         agent: agent(async () => analysis(), activeCaptureStatus),
-        observer: expiredObserver,
+        observer: Object.assign(expiredObserver, {
+            status: async () => observerStatusChecks++ === 0
+                ? ({ active: true, callId, targetJid, startedAt: new Date('2026-09-11T12:00:01.000Z') })
+                : ({ active: false, callId: null, targetJid: null, startedAt: null }),
+        }),
     });
     assert.equal(await service.start('192.0.2.10', targetJid, callId, false), true);
 
@@ -232,12 +274,10 @@ test('reconciliation recovers observer evidence finalized by TTL while packet ca
 test('completed packet reconciliation rejects a foreign observer without mixing evidence', async () => {
     const stopCalls: string[] = [];
     const foreignCallId = 'CALL-OBSERVER-FOREIGN';
-    const foreignObserverStatus = async () => ({
-        active: true,
-        callId: foreignCallId,
-        targetJid,
-        startedAt: new Date('2026-09-11T12:00:01.000Z'),
-    });
+    let observerStatusChecks = 0;
+    const foreignObserverStatus = async () => observerStatusChecks++ === 0
+        ? ({ active: true, callId, targetJid, startedAt: new Date('2026-09-11T12:00:01.000Z') })
+        : ({ active: true, callId: foreignCallId, targetJid, startedAt: new Date('2026-09-11T12:00:02.000Z') });
     const service = new CallCaptureService({
         mode: 'agent',
         agent: agent(),
@@ -465,19 +505,18 @@ test('periodic reconciliation cannot discard observer evidence during capture st
     assert.deepEqual(stopCalls, [callId]);
 });
 
-test('reconciliation preserves a start failure until an idempotent packet result is collected', async () => {
+test('observer start failure is compensated without deferred phantom evidence', async () => {
     const service = new CallCaptureService({
         mode: 'agent',
         agent: agent(),
         observer: observer({ startFails: true }),
+        lifecycleLogger: () => undefined,
     });
-    assert.equal(await service.start('192.0.2.10', targetJid, callId, false), true);
+    await assert.rejects(
+        service.start('192.0.2.10', targetJid, callId, false),
+        (error: unknown) => error instanceof Error && error.name === 'CallCaptureCoordinationError',
+    );
 
     assert.equal(await service.refreshAvailability(), true);
-    const result = await service.stop(callId);
-
-    assert.equal(result?.browserWebRtcEvidence?.status, 'unavailable');
-    assert.deepEqual(result?.browserWebRtcEvidence?.limitations, [
-        'browser_webrtc_observer_start_unavailable',
-    ]);
+    assert.equal(await service.stop(), null);
 });

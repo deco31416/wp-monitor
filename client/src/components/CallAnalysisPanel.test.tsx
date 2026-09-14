@@ -30,6 +30,7 @@ function panel(callAnalysis: CallAnalysisResult | null, overrides: Partial<Compo
             callCapturing={false}
             callEvent={null}
             callPacketCount={0}
+            callStarting={false}
             callStopping={false}
             callOperatorMarker={null}
             callMarkerPending={false}

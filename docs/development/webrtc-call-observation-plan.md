@@ -79,8 +79,11 @@ flowchart TD
   contacto y llamada, TTL, idempotencia y secretos internos independientes.
 - La captura de estadisticas solo existe durante una operacion autorizada. No se
   conserva SDP, contenido, ICE username fragments, URLs completas ni payloads.
-- Un fallo del observer degrada el resultado al motor actual y registra una
-  limitacion; no cancela ni pierde la captura libpcap.
+- Cuando el observer esta habilitado, el inicio es una operacion coordinada:
+  backend no publica exito hasta que captura y observer confirman por estado
+  firmado el mismo alcance. El inicio manual repite la comprobacion tras dos
+  segundos de estabilidad. Un inicio parcial se compensa y falla cerrado; el
+  motor libpcap sin observer solo opera cuando esa integracion esta deshabilitada.
 
 ## Contratos aditivos implementados
 
@@ -143,8 +146,9 @@ flowchart TD
 - Cierre: limites monotonos, memoria acotada y ausencia de SDP/contenido.
 - Implementado: wrapper temprano de `RTCPeerConnection`, armado por generacion
   para impedir contaminacion entre llamadas, `getStats()` tolerante a conexiones
-  cerradas y contratos acotados. La captura automatica declara que el inicio
-  puede ser parcial; `ICE connected` no reemplaza el marcador humano.
+  cerradas y contratos acotados. La captura automatica declara que su cobertura
+  puede comenzar despues de la primera señal; `ICE connected` no reemplaza el
+  marcador humano.
 - Endurecimiento E2 del 2026-09-14: el backend reconcilia el alcance exacto del
   observer con el estado autoritativo de la captura durante arranque y salud
   periodica. Recupera un alcance coincidente despues de reiniciar, declara si el
@@ -163,6 +167,15 @@ flowchart TD
   el backend recupere el resultado idempotente de paquetes. Un alcance distinto
   se desarma y produce una limitacion explicita; nunca se adjunta evidencia de
   otra llamada.
+- Correccion OBS-29.9 del 2026-09-14: una prueba E4 reprodujo `capture-agent`
+  inactivo con el observer activo despues de que la UI habia mostrado exito. El
+  inicio ahora ejecuta ambos componentes como una saga serializada, verifica sus
+  estados firmados y alcances exactos antes del acuse —dos veces, separadas por
+  dos segundos, en captura manual—, detiene compensatoriamente el componente
+  que haya arrancado, limpia el estado del
+  backend y devuelve un error controlado. Si no puede demostrar la compensacion,
+  usa un error distinto y registra solo hash de `callId`, causas acotadas y
+  resultado de compensacion; no registra JID, interfaz, IP ni secretos.
 
 ### OBS-29.4 — Libro de flujos de cinco tuplas — `IMPLEMENTED (E2 LOCAL)`
 
