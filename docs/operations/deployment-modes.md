@@ -119,7 +119,7 @@ TUNNEL_NETWORK_NAME=dokploy-network
 BROWSER_VNC_PASSWORD=store-a-random-15-plus-character-value
 ```
 
-The backend stays unprivileged. `capture-agent` shares `wa-browser` network namespace, accepts only signed `/v1` control requests and retains only `NET_RAW/NET_ADMIN` after dropping to UID 1000. The optional `webrtc-observer` shares that namespace without capabilities and is enabled only with its own HMAC secret; Chromium CDP remains on namespace loopback and no observer/CDP port is published. Selkies is reached through the configured protected access/tunnel network. Its contingency binding and noVNC remain on host loopback; neither is an application route.
+The backend stays unprivileged. `capture-agent` shares `wa-browser` network namespace, accepts only signed `/v1` control requests and retains only `NET_RAW/NET_ADMIN` after dropping to UID 1000. The optional `webrtc-observer` shares that namespace without capabilities and is enabled only with its own HMAC secret; Chromium CDP remains on namespace loopback and no observer/CDP port is published. At TTL expiry the observer takes one final bounded snapshot, disarms immediately, and retains that result temporarily for the same `callId`; packet capture may continue and reports partial WebRTC coverage. Selkies is reached through the configured protected access/tunnel network. Its contingency binding and noVNC remain on host loopback; neither is an application route.
 
 This mode does not enable the general Network Monitor against the VPS host NIC. It observes metadata from the browser namespace only. A call from a laptop or phone outside that namespace is not captured by the VPS.
 

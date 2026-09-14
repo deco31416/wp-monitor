@@ -421,6 +421,10 @@ const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
     stored_observation_invalid: 'Una observación almacenada no superó la validación del contrato.',
     browser_webrtc_observer_start_unavailable: 'El observador WebRTC no pudo armarse al iniciar la captura.',
     browser_webrtc_observer_stop_unavailable: 'El observador WebRTC no pudo entregar evidencia al finalizar.',
+    browser_webrtc_observer_scope_recovered_after_backend_restart: 'El alcance WebRTC continuó activo y fue recuperado después de reiniciar el backend.',
+    browser_webrtc_observer_scope_lost_during_capture: 'El observador WebRTC perdió su alcance durante la captura; el análisis conserva el motor de paquetes.',
+    browser_webrtc_observer_ttl_expired: 'La ventana WebRTC alcanzó su tiempo máximo y conservó automáticamente la evidencia reunida hasta ese momento.',
+    browser_webrtc_observer_ttl_snapshot_unavailable: 'No fue posible obtener el snapshot final al vencer la ventana WebRTC; el análisis conserva el motor de paquetes.',
     browser_webrtc_armed_after_automatic_call_signal: 'La captura automática armó WebRTC después de la primera señal; el inicio puede ser parcial.',
     browser_candidate_address_not_exposed: 'Chromium no expuso la dirección candidata remota.',
     browser_peer_connection_not_observed: 'El navegador no creó una conexión WebRTC observable durante esta ventana.',
@@ -431,6 +435,7 @@ const REPORT_ROUTE_LIMITATION_LABELS: Record<string, string> = {
     stun_transaction_book_truncated: 'El libro STUN/TURN alcanzó su límite de seguridad.',
     stun_dropped_transaction_count_capped: 'El conteo de transacciones STUN descartadas alcanzó su límite de memoria.',
     turn_channel_data_without_observed_channel_bind: 'Se observaron tramas compatibles con TURN sin CHANNEL-BIND correlacionable.',
+    turn_channel_limit_reached: 'El libro de canales TURN alcanzó su límite y conserva una muestra declarada.',
     legacy_route_assessment_unavailable: 'La captura es histórica y no contiene una evaluación de ruta v2.',
 };
 

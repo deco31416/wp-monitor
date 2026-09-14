@@ -668,6 +668,39 @@ test('keeps route conclusions commercially equivalent across JSON, HTML and PDF'
     }
 });
 
+test('renders observer lifecycle and TURN limits as commercial report labels', () => {
+    const evidencePackage = sampleEvidencePackage();
+    const limitations = [
+        'browser_webrtc_observer_scope_recovered_after_backend_restart',
+        'browser_webrtc_observer_scope_lost_during_capture',
+        'browser_webrtc_observer_ttl_expired',
+        'browser_webrtc_observer_ttl_snapshot_unavailable',
+        'turn_channel_limit_reached',
+    ];
+    evidencePackage.sections.callAnalysis[0].routeAssessment.limitations = limitations;
+
+    const report = buildFinalCaseReport(evidencePackage);
+    const presentation = report.findings.callRoutes[0]?.presentation;
+    const html = renderFinalCaseReportHtml(report);
+    const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+
+    assert.deepEqual(presentation?.limitationLabels, [
+        'El alcance WebRTC continuó activo y fue recuperado después de reiniciar el backend.',
+        'El observador WebRTC perdió su alcance durante la captura; el análisis conserva el motor de paquetes.',
+        'La ventana WebRTC alcanzó su tiempo máximo y conservó automáticamente la evidencia reunida hasta ese momento.',
+        'No fue posible obtener el snapshot final al vencer la ventana WebRTC; el análisis conserva el motor de paquetes.',
+        'El libro de canales TURN alcanzó su límite y conserva una muestra declarada.',
+    ]);
+    assert.match(html, /alcance WebRTC continuó activo y fue recuperado/i);
+    assert.match(html, /libro de canales TURN alcanzó su límite/i);
+    assert.match(pdf, /alcance WebRTC continuo activo y fue recuperado/i);
+    assert.match(pdf, /libro de canales TURN alcanzo su[\s\S]*limite/i);
+    for (const limitation of limitations) {
+        assert.doesNotMatch(html, new RegExp(limitation));
+        assert.doesNotMatch(pdf, new RegExp(limitation));
+    }
+});
+
 test('labels legacy analyses without inventing v2 route evidence', () => {
     const evidencePackage = sampleEvidencePackage();
     delete evidencePackage.sections.callAnalysis[0].routeAssessment;

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createWebRtcObserverApp } from '../src/webrtc-observer-app.js';
+import type { BrowserWebRtcEvidence } from '../src/call-observation-evidence.js';
 import type { WebRtcObservationAdapter } from '../src/webrtc-observer-cdp.js';
 import { WebRtcObserverClient } from '../src/webrtc-observer-client.js';
 import { signCaptureAgentRequest } from '../src/capture-agent-auth.js';
@@ -13,6 +14,8 @@ const targetJid = '573000000000@s.whatsapp.net';
 
 class FakeAdapter implements WebRtcObservationAdapter {
     active: { callId: string; targetJid: string; startedAt: Date } | null = null;
+    expiredEvidence: BrowserWebRtcEvidence | null = null;
+    expiredCallId: string | null = null;
     startCalls = 0;
     stopCalls = 0;
     constructor(private readonly delayMs = 0) {}
@@ -33,6 +36,9 @@ class FakeAdapter implements WebRtcObservationAdapter {
     async stop(requestedCallId: string) {
         this.stopCalls += 1;
         if (this.delayMs) await new Promise(resolve => setTimeout(resolve, this.delayMs));
+        if (!this.active && this.expiredCallId === requestedCallId && this.expiredEvidence) {
+            return this.expiredEvidence;
+        }
         assert.equal(requestedCallId, this.active?.callId);
         const startedAt = this.active!.startedAt;
         this.active = null;
@@ -46,6 +52,22 @@ class FakeAdapter implements WebRtcObservationAdapter {
             stateTransitions: [],
             truncated: false,
             limitations: ['browser_candidate_address_not_exposed'],
+        };
+    }
+    expire() {
+        this.expiredCallId = this.active?.callId ?? null;
+        const startedAt = this.active?.startedAt ?? new Date('2026-09-11T12:00:00.000Z');
+        this.active = null;
+        this.expiredEvidence = {
+            version: 1,
+            status: 'available',
+            startedAt,
+            endedAt: new Date('2026-09-11T12:01:00.000Z'),
+            connectionCount: 0,
+            selectedPairs: [],
+            stateTransitions: [],
+            truncated: false,
+            limitations: ['browser_webrtc_observer_ttl_expired'],
         };
     }
     async shutdown() { this.active = null; }
@@ -102,6 +124,34 @@ test('observer serializes concurrent duplicate starts and stops', async () => {
         const [first, second] = await Promise.all([client.stop(callId), client.stop(callId)]);
         assert.equal(adapter.stopCalls, 1);
         assert.deepEqual(second, first);
+    }, adapter);
+});
+
+test('observer returns bounded evidence captured when the active scope TTL expires', async () => {
+    const adapter = new FakeAdapter();
+    await withServer(async origin => {
+        let nonce = 0;
+        const client = new WebRtcObserverClient({
+            baseUrl: origin,
+            sharedSecret: secret,
+            nonce: () => `observer_expired_${String(++nonce).padStart(4, '0')}`,
+        });
+        await client.start(callId, targetJid, 60_000);
+        adapter.expire();
+
+        await assert.rejects(
+            client.stop('CALL-OBS-OTHER'),
+            (error: unknown) => error instanceof Error
+                && 'code' in error
+                && error.code === 'observer_scope_mismatch',
+        );
+        const first = await client.stop(callId);
+        const second = await client.stop(callId);
+
+        assert.equal(first.status, 'available');
+        assert.ok(first.limitations.includes('browser_webrtc_observer_ttl_expired'));
+        assert.deepEqual(second, first);
+        assert.equal(adapter.stopCalls, 2);
     }, adapter);
 });
 

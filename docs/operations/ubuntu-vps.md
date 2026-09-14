@@ -103,6 +103,12 @@ ENABLE_SWAGGER=false
 
 `INITIAL_ADMIN_*` solo crea la cuenta si MongoDB esta vacio. Cambiar estos valores no recupera una cuenta existente. Tras el primer acceso, rota las credenciales desde **Account**. Elimina cualquier `DASHBOARD_TOKEN` heredado cuando termine la migracion. Mantén `WEBRTC_OBSERVER_ENABLED=false` hasta una promoción controlada; al habilitarlo asigna un secreto aleatorio distinto de `CAPTURE_AGENT_SHARED_SECRET`.
 
+`WEBRTC_OBSERVER_TTL_MS` limita solo la ventana complementaria del navegador.
+Cuando vence, el observer toma un snapshot final, se desarma y conserva ese
+resultado temporalmente para el mismo `callId`; no detiene ni prolonga la
+captura de paquetes. Una llamada que exceda este TTL debe informarse como
+cobertura WebRTC parcial.
+
 Construye el frontend con `VITE_API_URL=https://monitor.example.com`. Nunca pongas secretos en variables `VITE_*`: quedan incluidos en el bundle descargable.
 
 `127.0.0.1` dentro de `backend` apunta al propio contenedor, no a MongoDB/Redis. Obtén los DNS internos desde Dokploy o inspeccionando solo la membresia de `wp-monitor-data`; no copies URI ni credenciales a logs. Los dos servicios de estado deben ser exclusivos de WP MONITOR o tener aislamiento/ACL y backup coordinados.

@@ -98,6 +98,359 @@ test('STUN transactions pair by opaque fingerprint and TURN data requires observ
     assert.equal(evidence.channels[0]?.bytesTotal, 96);
 });
 
+test('TURN channel numbers stay isolated between allocation transport tuples', () => {
+    const channelBind = (
+        transactionFingerprint: string,
+        peerIp: string,
+        peerPort: number,
+    ): ParsedStunMessage => ({
+        messageClass: 'request',
+        method: 'channel_bind',
+        methodCode: 9,
+        messageType: 9,
+        transactionFingerprint,
+        endpoints: [{
+            ip: peerIp,
+            port: peerPort,
+            addressFamily: 4,
+            role: 'peer_candidate',
+            attribute: 'xor_peer_address',
+        }],
+        attributeCount: 2,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_other',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: 0x4001,
+        limitations: [],
+    });
+    const alternateTurnServer = '203.0.113.21';
+    const evidence = buildStunTurnEvidence([
+        packet({
+            stun: channelBind('1'.repeat(64), '198.51.100.10', 40_000),
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.100Z'),
+            turnChannelData: { channelNumber: 0x4001, payloadLength: 80 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:01.000Z'),
+            srcPort: 50_001,
+            dstIp: alternateTurnServer,
+            stun: channelBind('2'.repeat(64), '198.51.100.11', 40_001),
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:01.100Z'),
+            srcIp: alternateTurnServer,
+            dstIp: localIp,
+            srcPort: 34_78,
+            dstPort: 50_001,
+            turnChannelData: { channelNumber: 0x4001, payloadLength: 120 },
+        }),
+    ], ip => ip === localIp);
+
+    assert.equal(evidence.channels.length, 2);
+    assert.deepEqual(evidence.channels.map(channel => ({
+        peerEndpointKey: channel.peerEndpointKey,
+        packets: channel.packets,
+        bytesTotal: channel.bytesTotal,
+    })), [
+        { peerEndpointKey: '198.51.100.10:40000', packets: 1, bytesTotal: 80 },
+        { peerEndpointKey: '198.51.100.11:40001', packets: 1, bytesTotal: 120 },
+    ]);
+});
+
+test('TURN ChannelData cannot inherit a channel binding from another allocation', () => {
+    const bind: ParsedStunMessage = {
+        messageClass: 'request',
+        method: 'channel_bind',
+        methodCode: 9,
+        messageType: 9,
+        transactionFingerprint: '3'.repeat(64),
+        endpoints: [{
+            ip: '198.51.100.12',
+            port: 40_002,
+            addressFamily: 4,
+            role: 'peer_candidate',
+            attribute: 'xor_peer_address',
+        }],
+        attributeCount: 2,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_other',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: 0x4002,
+        limitations: [],
+    };
+    const evidence = buildStunTurnEvidence([
+        packet({ stun: bind }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.100Z'),
+            turnChannelData: { channelNumber: 0x4002, payloadLength: 64 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.200Z'),
+            srcPort: 50_001,
+            dstIp: '203.0.113.21',
+            turnChannelData: { channelNumber: 0x4002, payloadLength: 256 },
+        }),
+    ], ip => ip === localIp);
+
+    assert.equal(evidence.channels.length, 1);
+    assert.equal(evidence.channels[0]?.packets, 1);
+    assert.equal(evidence.channels[0]?.bytesTotal, 64);
+    assert.ok(evidence.limitations.includes('turn_channel_data_without_observed_channel_bind'));
+});
+
+test('TURN channel correlation separates transport protocols and IPv6 allocations', () => {
+    const bind = (
+        transactionFingerprint: string,
+        peerIp: string,
+        addressFamily: 4 | 6,
+    ): ParsedStunMessage => ({
+        messageClass: 'request',
+        method: 'channel_bind',
+        methodCode: 9,
+        messageType: 9,
+        transactionFingerprint,
+        endpoints: [{
+            ip: peerIp,
+            port: 40_003,
+            addressFamily,
+            role: 'peer_candidate',
+            attribute: 'xor_peer_address',
+        }],
+        attributeCount: 2,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_other',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: 0x4003,
+        limitations: [],
+    });
+    const localIpv6 = '2001:db8::10';
+    const turnIpv6 = '2001:db8::20';
+    const peerIpv6 = '2001:db8::30';
+    const evidence = buildStunTurnEvidence([
+        packet({ stun: bind('4'.repeat(64), '198.51.100.13', 4) }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.100Z'),
+            turnChannelData: { channelNumber: 0x4003, payloadLength: 40 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.200Z'),
+            protocol: 6,
+            stun: bind('5'.repeat(64), '198.51.100.14', 4),
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.300Z'),
+            protocol: 6,
+            turnChannelData: { channelNumber: 0x4003, payloadLength: 50 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.400Z'),
+            srcIp: localIpv6,
+            dstIp: turnIpv6,
+            addressFamily: 6,
+            stun: bind('6'.repeat(64), peerIpv6, 6),
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.500Z'),
+            srcIp: turnIpv6,
+            dstIp: localIpv6,
+            srcPort: 34_78,
+            dstPort: 50_000,
+            addressFamily: 6,
+            turnChannelData: { channelNumber: 0x4003, payloadLength: 60 },
+        }),
+    ], ip => ip === localIp || ip === localIpv6);
+
+    assert.deepEqual(evidence.channels.map(channel => ({
+        peerEndpointKey: channel.peerEndpointKey,
+        packets: channel.packets,
+        bytesTotal: channel.bytesTotal,
+    })), [
+        { peerEndpointKey: '198.51.100.13:40003', packets: 1, bytesTotal: 40 },
+        { peerEndpointKey: '198.51.100.14:40003', packets: 1, bytesTotal: 50 },
+        { peerEndpointKey: '2001:db8::30:40003', packets: 1, bytesTotal: 60 },
+    ]);
+});
+
+test('TURN channel reuse for a different peer creates separate bounded evidence', () => {
+    const bind = (fingerprint: string, peerIp: string): ParsedStunMessage => ({
+        messageClass: 'request',
+        method: 'channel_bind',
+        methodCode: 9,
+        messageType: 9,
+        transactionFingerprint: fingerprint,
+        endpoints: [{
+            ip: peerIp,
+            port: 40_004,
+            addressFamily: 4,
+            role: 'peer_candidate',
+            attribute: 'xor_peer_address',
+        }],
+        attributeCount: 2,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_other',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: 0x4004,
+        limitations: [],
+    });
+    const evidence = buildStunTurnEvidence([
+        packet({ stun: bind('7'.repeat(64), '198.51.100.15') }),
+        packet({
+            timestamp: new Date('2026-09-11T12:00:00.100Z'),
+            turnChannelData: { channelNumber: 0x4004, payloadLength: 70 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:15:00.000Z'),
+            stun: bind('8'.repeat(64), '198.51.100.16'),
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:15:00.100Z'),
+            turnChannelData: { channelNumber: 0x4004, payloadLength: 90 },
+        }),
+    ], ip => ip === localIp);
+
+    assert.deepEqual(evidence.channels.map(channel => ({
+        peerEndpointKey: channel.peerEndpointKey,
+        packets: channel.packets,
+        bytesTotal: channel.bytesTotal,
+    })), [
+        { peerEndpointKey: '198.51.100.15:40004', packets: 1, bytesTotal: 70 },
+        { peerEndpointKey: '198.51.100.16:40004', packets: 1, bytesTotal: 90 },
+    ]);
+});
+
+test('TURN channel bindings expire after ten minutes and ChannelData does not refresh them', () => {
+    const bind: ParsedStunMessage = {
+        messageClass: 'request',
+        method: 'channel_bind',
+        methodCode: 9,
+        messageType: 9,
+        transactionFingerprint: '9'.repeat(64),
+        endpoints: [{
+            ip: '198.51.100.17',
+            port: 40_005,
+            addressFamily: 4,
+            role: 'peer_candidate',
+            attribute: 'xor_peer_address',
+        }],
+        attributeCount: 2,
+        ignoredAttributeCount: 0,
+        unknownAttributeCount: 0,
+        protocolEvidence: 'stun_other',
+        useCandidate: false,
+        iceRole: 'unknown',
+        channelNumber: 0x4005,
+        limitations: [],
+    };
+    const evidence = buildStunTurnEvidence([
+        packet({ stun: bind }),
+        packet({
+            timestamp: new Date('2026-09-11T12:09:00.000Z'),
+            turnChannelData: { channelNumber: 0x4005, payloadLength: 100 },
+        }),
+        packet({
+            timestamp: new Date('2026-09-11T12:10:00.001Z'),
+            turnChannelData: { channelNumber: 0x4005, payloadLength: 200 },
+        }),
+    ], ip => ip === localIp);
+
+    assert.equal(evidence.channels.length, 1);
+    assert.equal(evidence.channels[0]?.packets, 1);
+    assert.equal(evidence.channels[0]?.bytesTotal, 100);
+    assert.ok(evidence.limitations.includes('turn_channel_data_without_observed_channel_bind'));
+});
+
+test('TURN channel evidence declares its bounded-memory limit', () => {
+    const packets: ObservedCallPacketMetadata[] = [];
+    for (let index = 0; index < 65; index += 1) {
+        const channelNumber = 0x4000 + index;
+        packets.push(packet({
+            timestamp: new Date(index * 2),
+            stun: {
+                messageClass: 'request',
+                method: 'channel_bind',
+                methodCode: 9,
+                messageType: 9,
+                transactionFingerprint: index.toString(16).padStart(64, '0'),
+                endpoints: [{
+                    ip: `198.51.100.${index + 1}`,
+                    port: 40_000 + index,
+                    addressFamily: 4,
+                    role: 'peer_candidate',
+                    attribute: 'xor_peer_address',
+                }],
+                attributeCount: 2,
+                ignoredAttributeCount: 0,
+                unknownAttributeCount: 0,
+                protocolEvidence: 'stun_other',
+                useCandidate: false,
+                iceRole: 'unknown',
+                channelNumber,
+                limitations: [],
+            },
+        }));
+        packets.push(packet({
+            timestamp: new Date((index * 2) + 1),
+            turnChannelData: { channelNumber, payloadLength: 100 },
+        }));
+    }
+    const evidence = buildStunTurnEvidence(packets, ip => ip === localIp);
+
+    assert.equal(evidence.channels.length, 64);
+    assert.ok(evidence.limitations.includes('turn_channel_limit_reached'));
+});
+
+test('TURN channel bindings are bounded even before ChannelData is observed', () => {
+    const packets: ObservedCallPacketMetadata[] = [];
+    for (let index = 0; index < 65; index += 1) {
+        const channelNumber = 0x4000 + index;
+        packets.push(packet({
+            timestamp: new Date(index),
+            stun: {
+                messageClass: 'request',
+                method: 'channel_bind',
+                methodCode: 9,
+                messageType: 9,
+                transactionFingerprint: index.toString(16).padStart(64, '0'),
+                endpoints: [{
+                    ip: `198.51.100.${index + 1}`,
+                    port: 41_000 + index,
+                    addressFamily: 4,
+                    role: 'peer_candidate',
+                    attribute: 'xor_peer_address',
+                }],
+                attributeCount: 2,
+                ignoredAttributeCount: 0,
+                unknownAttributeCount: 0,
+                protocolEvidence: 'stun_other',
+                useCandidate: false,
+                iceRole: 'unknown',
+                channelNumber,
+                limitations: [],
+            },
+        }));
+    }
+    packets.push(packet({
+        timestamp: new Date(100),
+        turnChannelData: { channelNumber: 0x4040, payloadLength: 100 },
+    }));
+
+    const evidence = buildStunTurnEvidence(packets, ip => ip === localIp);
+
+    assert.equal(evidence.channels.length, 0);
+    assert.ok(evidence.limitations.includes('turn_channel_limit_reached'));
+    assert.ok(evidence.limitations.includes('turn_channel_data_without_observed_channel_bind'));
+});
+
 test('STUN request and response correlation is stable when observations arrive out of timestamp order', () => {
     const base: ParsedStunMessage = {
         messageClass: 'success_response',

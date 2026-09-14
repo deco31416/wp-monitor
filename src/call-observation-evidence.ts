@@ -143,6 +143,7 @@ const MAX_FLOW_COUNT = 1_024;
 const MAX_STUN_TRANSACTIONS = 256;
 const STUN_TRANSACTION_MAX_SPAN_MS = 39_500;
 const MAX_TURN_CHANNELS = 64;
+const TURN_CHANNEL_BINDING_LIFETIME_MS = 10 * 60 * 1_000;
 const MAX_WEBRTC_PAIRS = 16;
 const MAX_WEBRTC_STATES = 64;
 const MAX_LIMITATIONS = 32;
@@ -371,14 +372,24 @@ export function buildStunTurnEvidence(
     const droppedTransactionStarts = new Map<string, number[]>();
     let droppedTransactions = 0;
     let droppedTransactionCountCapped = false;
-    const channelBindings = new Map<number, string>();
-    const channels = new Map<number, TurnChannelEvidence>();
+    const channelBindings = new Map<string, { peerEndpointKey: string; lastBoundAt: number }>();
+    const channels = new Map<string, TurnChannelEvidence>();
+    let unmatchedChannelDataObserved = false;
+    let turnChannelLimitReached = false;
     const orderedPackets = [...packets].sort((left, right) => (
         left.timestamp.getTime() - right.timestamp.getTime()
     ));
     for (const packet of orderedPackets) {
         const direction = packetDirection(packet, isLocalIp);
         if (!direction) continue;
+        const allocationKey = [
+            packet.addressFamily,
+            packet.protocol,
+            direction.localIp,
+            direction.localPort,
+            direction.remoteIp,
+            direction.remotePort,
+        ].join('|');
         const stun = packet.stun;
         if (stun) {
             const observedAt = packet.timestamp.getTime();
@@ -450,16 +461,44 @@ export function buildStunTurnEvidence(
             transaction.endpointKeys = [...new Set([...transaction.endpointKeys, ...endpointKeys])].slice(0, 16);
             const peerEndpoint = stun.endpoints.find(endpoint => endpoint.role === 'peer_candidate');
             if (stun.method === 'channel_bind' && stun.channelNumber && peerEndpoint) {
-                channelBindings.set(stun.channelNumber, `${peerEndpoint.ip}:${peerEndpoint.port}`);
+                for (const [bindingKey, binding] of channelBindings) {
+                    if (observedAt - binding.lastBoundAt > TURN_CHANNEL_BINDING_LIFETIME_MS) {
+                        channelBindings.delete(bindingKey);
+                    }
+                }
+                const channelBindingKey = `${allocationKey}|${stun.channelNumber}`;
+                if (!channelBindings.has(channelBindingKey) && channelBindings.size >= MAX_TURN_CHANNELS) {
+                    turnChannelLimitReached = true;
+                } else {
+                    channelBindings.set(channelBindingKey, {
+                        peerEndpointKey: `${peerEndpoint.ip}:${peerEndpoint.port}`,
+                        lastBoundAt: observedAt,
+                    });
+                }
             }
         }
 
         const channel = packet.turnChannelData;
-        const peerEndpointKey = channel ? channelBindings.get(channel.channelNumber) : undefined;
-        if (!channel || !peerEndpointKey) continue;
-        let evidence = channels.get(channel.channelNumber);
+        if (!channel) continue;
+        const bindingKey = `${allocationKey}|${channel.channelNumber}`;
+        const binding = channelBindings.get(bindingKey);
+        const channelObservedAt = packet.timestamp.getTime();
+        if (
+            !binding
+            || !Number.isFinite(channelObservedAt)
+            || channelObservedAt - binding.lastBoundAt > TURN_CHANNEL_BINDING_LIFETIME_MS
+        ) {
+            unmatchedChannelDataObserved = true;
+            continue;
+        }
+        const { peerEndpointKey } = binding;
+        const evidenceKey = `${bindingKey}|${peerEndpointKey}`;
+        let evidence = channels.get(evidenceKey);
         if (!evidence) {
-            if (channels.size >= MAX_TURN_CHANNELS) continue;
+            if (channels.size >= MAX_TURN_CHANNELS) {
+                turnChannelLimitReached = true;
+                continue;
+            }
             evidence = {
                 channelNumber: channel.channelNumber,
                 peerEndpointKey,
@@ -468,7 +507,7 @@ export function buildStunTurnEvidence(
                 packets: 0,
                 bytesTotal: 0,
             };
-            channels.set(channel.channelNumber, evidence);
+            channels.set(evidenceKey, evidence);
         }
         if (packet.timestamp < evidence.firstObservedAt) evidence.firstObservedAt = packet.timestamp;
         if (packet.timestamp > evidence.lastObservedAt) evidence.lastObservedAt = packet.timestamp;
@@ -479,9 +518,10 @@ export function buildStunTurnEvidence(
     const limitations = new Set<string>();
     if (droppedTransactions > 0) limitations.add('stun_transaction_limit_reached');
     if (droppedTransactionCountCapped) limitations.add('stun_dropped_transaction_count_capped');
-    if (packets.some(packet => packet.turnChannelData) && channels.size === 0) {
+    if (unmatchedChannelDataObserved) {
         limitations.add('turn_channel_data_without_observed_channel_bind');
     }
+    if (turnChannelLimitReached) limitations.add('turn_channel_limit_reached');
     return {
         version: 1,
         transactionLimit: boundedLimit,

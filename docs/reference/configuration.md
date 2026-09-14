@@ -57,7 +57,7 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 | `WEBRTC_OBSERVER_URL` | Origen HTTP(S) interno sin path; Compose fija `http://wa-browser:4200` |
 | `WEBRTC_OBSERVER_SHARED_SECRET` | Secreto de 32+ bytes, distinto de auth y de `CAPTURE_AGENT_SHARED_SECRET`; requerido solo al habilitar |
 | `WEBRTC_OBSERVER_TIMEOUT_MS` | Entero 500-30000; default 5000 |
-| `WEBRTC_OBSERVER_TTL_MS` | TTL de armado exclusivo, 30000-1800000; default 900000 |
+| `WEBRTC_OBSERVER_TTL_MS` | TTL de armado exclusivo, 30000-1800000; default 900000; al vencer toma un snapshot final y no extiende la observacion |
 | `BROWSER_UI_PORT` | Puerto host de noVNC; Compose lo enlaza solo a `127.0.0.1` |
 | `BROWSER_VNC_PASSWORD` | Valor de 15+ caracteres requerido al arrancar; VNC solo usa los primeros ocho significativos y no sustituye el tunel SSH |
 | `BROWSER_VNC_PASSWORD_FILE` | Alternativa de archivo absoluto dentro del contenedor, con prioridad sobre la variable |
@@ -67,7 +67,7 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 | `BROWSER_TUNNEL_ALIAS` | Obligatorio en Dokploy; el valor concreto del despliegue se mantiene fuera de Git |
 | `TUNNEL_NETWORK_NAME` | Obligatorio en Dokploy; red externa del proveedor de tunel/acceso |
 
-El control backend→agente y backend→observer firma metodo, path, timestamp, nonce y hash del cuerpo. Ambos rechazan replay y solicitudes concurrentes incompatibles. El agente rechaza ademas cuerpos mayores de 64 KiB e interfaces no enumeradas. Los puertos `4100` y `4200` no se publican al host; CDP `9222` solo escucha en loopback dentro del namespace compartido. El observer se instala dormido y no conserva SDP, credenciales ICE, contenido, media ni payload.
+El control backend→agente y backend→observer firma metodo, path, timestamp, nonce y hash del cuerpo. Ambos rechazan replay y solicitudes concurrentes incompatibles. El agente rechaza ademas cuerpos mayores de 64 KiB e interfaces no enumeradas. Los puertos `4100` y `4200` no se publican al host; CDP `9222` solo escucha en loopback dentro del namespace compartido. El observer se instala dormido y no conserva SDP, credenciales ICE, contenido, media ni payload. Al vencer su TTL desarma la sonda y conserva el snapshot acotado por el mismo `callId` durante una hora como maximo; la captura de paquetes puede continuar y declara esta cobertura parcial.
 
 ## Operador unico
 

@@ -27,6 +27,8 @@ const CDP_COMMAND_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 256 * 1_024;
 const WEBRTC_PROBE_RUNTIME_VERSION = 2;
 const WEBRTC_PROBE_IMPLEMENTATION = 'bounded-periodic-stats-v2';
+const EXPIRED_EVIDENCE_TTL_MS = 60 * 60_000;
+const EXPIRED_EVIDENCE_LIMIT = 32;
 
 function buildProbeReadyExpression(): string {
     return `Boolean(
@@ -441,6 +443,10 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
     private active: { callId: string; targetJid: string; startedAt: Date; expiresAt: number } | null = null;
     private expiryTimer: NodeJS.Timeout | null = null;
     private lifecycleTail: Promise<void> = Promise.resolve();
+    private readonly expiredEvidence = new Map<string, {
+        evidence: BrowserWebRtcEvidence;
+        completedAt: number;
+    }>();
     private generation = 0;
     private initialized = false;
 
@@ -484,7 +490,9 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
 
     async start(callId: string, targetJid: string, ttlMs: number): Promise<void> {
         return this.withLifecycleLock(async () => {
+            this.pruneExpiredEvidence();
             if (this.active) throw new Error('observer_already_active');
+            if (this.expiredEvidence.has(callId)) throw new Error('observer_call_id_reused');
             const client = await this.getWhatsappClient();
             try {
                 await this.installProbe(client);
@@ -518,6 +526,9 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
 
     async stop(callId: string): Promise<BrowserWebRtcEvidence> {
         return this.withLifecycleLock(async () => {
+            this.pruneExpiredEvidence();
+            const expired = this.expiredEvidence.get(callId);
+            if (expired) return expired.evidence;
             const active = this.active;
             const client = this.client;
             if (!active || active.callId !== callId || !client) throw new Error('observer_scope_mismatch');
@@ -546,6 +557,7 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
             this.clearExpiryTimer();
             const client = this.client;
             this.active = null;
+            this.expiredEvidence.clear();
             if (client) await this.disarmProbe(client);
             this.releaseClient(client ?? undefined);
         });
@@ -614,14 +626,68 @@ export class WebRtcCdpObserver implements WebRtcObservationAdapter {
 
     private async expireActiveScope(generation: number): Promise<void> {
         await this.withLifecycleLock(async () => {
-            if (!this.active || generation !== this.generation) return;
+            const active = this.active;
+            if (!active || generation !== this.generation) return;
             const client = this.client;
             this.clearExpiryTimer();
-            this.active = null;
-            if (!client) return;
-            const reusable = await this.disarmProbe(client);
-            if (!reusable) this.releaseClient(client);
+            let evidence: BrowserWebRtcEvidence;
+            try {
+                if (!client) throw new Error('cdp_not_connected');
+                const evaluation = await client.send('Runtime.evaluate', {
+                    expression: buildSnapshotAndDisarmExpression(),
+                    awaitPromise: true,
+                    returnByValue: true,
+                });
+                const result = evaluation.result as Record<string, unknown> | undefined;
+                const raw = result?.value && typeof result.value === 'object'
+                    ? result.value as RawWebRtcSnapshot
+                    : {};
+                const snapshot = sanitizeSnapshot(raw, active.startedAt, new Date(this.now()));
+                evidence = {
+                    ...snapshot,
+                    limitations: [...new Set([
+                        ...snapshot.limitations,
+                        'browser_webrtc_observer_ttl_expired',
+                    ])],
+                };
+            } catch {
+                evidence = {
+                    version: 1,
+                    status: 'unavailable',
+                    startedAt: active.startedAt,
+                    endedAt: new Date(this.now()),
+                    connectionCount: 0,
+                    selectedPairs: [],
+                    stateTransitions: [],
+                    truncated: false,
+                    limitations: [
+                        'browser_webrtc_observer_ttl_expired',
+                        'browser_webrtc_observer_ttl_snapshot_unavailable',
+                    ],
+                };
+            } finally {
+                if (client) {
+                    const reusable = await this.disarmProbe(client);
+                    if (!reusable) this.releaseClient(client);
+                }
+                if (this.active === active) this.active = null;
+            }
+            this.expiredEvidence.delete(active.callId);
+            this.expiredEvidence.set(active.callId, { evidence, completedAt: this.now() });
+            this.pruneExpiredEvidence();
         });
+    }
+
+    private pruneExpiredEvidence(): void {
+        const expiresBefore = this.now() - EXPIRED_EVIDENCE_TTL_MS;
+        for (const [callId, value] of this.expiredEvidence) {
+            if (value.completedAt < expiresBefore) this.expiredEvidence.delete(callId);
+        }
+        while (this.expiredEvidence.size > EXPIRED_EVIDENCE_LIMIT) {
+            const oldest = this.expiredEvidence.keys().next().value as string | undefined;
+            if (!oldest) break;
+            this.expiredEvidence.delete(oldest);
+        }
     }
 
     private releaseClient(expected?: CdpClient): void {

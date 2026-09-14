@@ -13,7 +13,7 @@ import { listInterfaces } from './packet-capture.js';
 import type { NetworkInterface } from './packet-capture.js';
 import type { CallCaptureMode } from './runtime.js';
 import type { BrowserWebRtcEvidence } from './call-observation-evidence.js';
-import { WebRtcObserverClient } from './webrtc-observer-client.js';
+import { WebRtcObserverClient, type WebRtcObserverStatus } from './webrtc-observer-client.js';
 import {
     isCallCapturePhaseStatus,
     type CallCapturePhaseObservation,
@@ -57,9 +57,15 @@ export class CallCaptureService {
         callId: string;
         targetJid: string;
         startedAt: Date;
-        trigger: CallCaptureStartContext['trigger'];
+        trigger: CallCaptureStartContext['trigger'] | 'recovered';
+    } | null = null;
+    private completedObserverEvidence: {
+        callId: string;
+        evidence: BrowserWebRtcEvidence;
+        trigger: CallCaptureStartContext['trigger'] | 'recovered';
     } | null = null;
     private observerStartFailure: { callId: string; startedAt: Date; limitation: string } | null = null;
+    private observerLifecycleTail: Promise<void> = Promise.resolve();
 
     constructor(options: CallCaptureServiceOptions) {
         if (options.mode === 'agent' && !options.agent) {
@@ -93,9 +99,22 @@ export class CallCaptureService {
 
     async refreshAvailability(): Promise<boolean> {
         if (this.observer) this.observerAvailable = await this.observer.ready();
-        if (this.mode === 'local') return hasPacketCapturePrivileges();
+        if (this.mode === 'local') {
+            const available = hasPacketCapturePrivileges();
+            if (available && this.observer) {
+                await this.reconcileObserverScope();
+            }
+            return available;
+        }
         if (this.mode === 'disabled') return false;
         this.agentAvailable = await this.agent!.ready();
+        if (this.agentAvailable && this.observer) {
+            try {
+                await this.reconcileObserverScope();
+            } catch {
+                this.agentAvailable = false;
+            }
+        }
         return this.agentAvailable;
     }
 
@@ -136,6 +155,24 @@ export class CallCaptureService {
         packetCallback?: CallPacketCallback,
         context: CallCaptureStartContext = { trigger: 'manual' },
     ): Promise<boolean> {
+        return this.withObserverLifecycle(() => this.startWithinObserverLifecycle(
+            interfaceAddr,
+            targetJid,
+            callId,
+            isVideo,
+            packetCallback,
+            context,
+        ));
+    }
+
+    private async startWithinObserverLifecycle(
+        interfaceAddr: string,
+        targetJid: string,
+        callId: string,
+        isVideo: boolean,
+        packetCallback?: CallPacketCallback,
+        context: CallCaptureStartContext = { trigger: 'manual' },
+    ): Promise<boolean> {
         let started = false;
         if (this.mode === 'local') {
             started = startCallCapture(interfaceAddr, targetJid, callId, isVideo, packetCallback, context);
@@ -145,12 +182,18 @@ export class CallCaptureService {
             if (started) this.activeAgentCapture = { callId, targetJid };
         }
         if (!started) return false;
-        const observerStartedAt = new Date();
+        this.completedObserverEvidence = null;
         this.observerStartFailure = null;
         if (this.observer) {
+            const observerStartedAt = new Date();
             try {
                 await this.observer.start(callId, targetJid, this.observerTtlMs);
-                this.activeObserverCapture = { callId, targetJid, startedAt: observerStartedAt, trigger: context.trigger };
+                this.activeObserverCapture = {
+                    callId,
+                    targetJid,
+                    startedAt: observerStartedAt,
+                    trigger: context.trigger,
+                };
                 this.observerAvailable = true;
             } catch {
                 this.activeObserverCapture = null;
@@ -199,6 +242,10 @@ export class CallCaptureService {
     }
 
     async stop(expectedCallId?: string): Promise<CallAnalysisResult | null> {
+        return this.withObserverLifecycle(() => this.stopWithinObserverLifecycle(expectedCallId));
+    }
+
+    private async stopWithinObserverLifecycle(expectedCallId?: string): Promise<CallAnalysisResult | null> {
         let result: CallAnalysisResult | null = null;
         let stoppedCallId = expectedCallId;
         if (this.mode === 'local') {
@@ -226,18 +273,25 @@ export class CallCaptureService {
             } catch (error) {
                 if (error instanceof CaptureAgentClientError && error.code === 'capture_not_active') {
                     if (this.activeAgentCapture?.callId === callId) this.activeAgentCapture = null;
-                    await this.finishObserverEvidence(callId);
+                    await this.finishObserverEvidenceWithinLifecycle(callId);
                     return null;
                 }
                 throw error;
             }
         }
         if (!result || !stoppedCallId) return result;
-        const browserWebRtcEvidence = await this.finishObserverEvidence(stoppedCallId);
+        const browserWebRtcEvidence = await this.finishObserverEvidenceWithinLifecycle(stoppedCallId);
         return browserWebRtcEvidence ? { ...result, browserWebRtcEvidence } : result;
     }
 
-    private async finishObserverEvidence(callId: string): Promise<BrowserWebRtcEvidence | null> {
+    private async finishObserverEvidenceWithinLifecycle(callId: string): Promise<BrowserWebRtcEvidence | null> {
+        const completed = this.completedObserverEvidence?.callId === callId
+            ? this.completedObserverEvidence
+            : null;
+        if (completed) {
+            this.completedObserverEvidence = null;
+            return this.decorateObserverEvidence(completed.evidence, completed.trigger);
+        }
         const active = this.activeObserverCapture;
         const failed = this.observerStartFailure?.callId === callId ? this.observerStartFailure : null;
         this.observerStartFailure = null;
@@ -246,14 +300,7 @@ export class CallCaptureService {
             try {
                 const evidence = await this.observer.stop(callId);
                 this.observerAvailable = true;
-                if (active.trigger !== 'auto') return evidence;
-                return {
-                    ...evidence,
-                    limitations: [...new Set([
-                        ...evidence.limitations,
-                        'browser_webrtc_armed_after_automatic_call_signal',
-                    ])],
-                };
+                return this.decorateObserverEvidence(evidence, active.trigger);
             } catch {
                 this.observerAvailable = false;
                 return {
@@ -281,5 +328,162 @@ export class CallCaptureService {
             truncated: false,
             limitations: [failed.limitation],
         };
+    }
+
+    private decorateObserverEvidence(
+        evidence: BrowserWebRtcEvidence,
+        trigger: CallCaptureStartContext['trigger'] | 'recovered',
+    ): BrowserWebRtcEvidence {
+        if (trigger === 'manual') return evidence;
+        const lifecycleLimitation = trigger === 'auto'
+            ? 'browser_webrtc_armed_after_automatic_call_signal'
+            : 'browser_webrtc_observer_scope_recovered_after_backend_restart';
+        return {
+            ...evidence,
+            limitations: [...new Set([...evidence.limitations, lifecycleLimitation])],
+        };
+    }
+
+    private async reconcileObserverScope(): Promise<void> {
+        if (!this.observer) return;
+        await this.withObserverLifecycle(async () => {
+            const captureStatus = this.mode === 'local'
+                ? getCallCaptureStatus()
+                : this.mode === 'agent'
+                    ? await this.agent!.getCallCaptureStatus()
+                    : { ...EMPTY_STATUS };
+            if (this.mode === 'agent') {
+                this.activeAgentCapture = captureStatus.isCapturing && captureStatus.callId && captureStatus.targetJid
+                    ? { callId: captureStatus.callId, targetJid: captureStatus.targetJid }
+                    : null;
+            }
+            let observerStatus: WebRtcObserverStatus;
+            try {
+                observerStatus = await this.observer!.status();
+            } catch {
+                this.observerAvailable = false;
+                return;
+            }
+
+            const captureActive = captureStatus.isCapturing
+                && captureStatus.callId !== null
+                && captureStatus.targetJid !== null;
+            if (!captureActive) {
+                const known = this.activeObserverCapture;
+                if (known) {
+                    const recoverableScope = !observerStatus.active || (
+                        observerStatus.callId === known.callId
+                        && observerStatus.targetJid === known.targetJid
+                    );
+                    if (recoverableScope) {
+                        try {
+                            const evidence = await this.observer!.stop(known.callId);
+                            this.completedObserverEvidence = {
+                                callId: known.callId,
+                                evidence,
+                                trigger: known.trigger,
+                            };
+                            this.observerStartFailure = null;
+                            this.observerAvailable = true;
+                        } catch {
+                            this.observerAvailable = false;
+                            this.observerStartFailure = {
+                                callId: known.callId,
+                                startedAt: known.startedAt,
+                                limitation: 'browser_webrtc_observer_scope_lost_during_capture',
+                            };
+                        }
+                        this.activeObserverCapture = null;
+                        return;
+                    }
+                    this.observerStartFailure = {
+                        callId: known.callId,
+                        startedAt: known.startedAt,
+                        limitation: 'browser_webrtc_observer_scope_lost_during_capture',
+                    };
+                }
+                this.activeObserverCapture = null;
+                if (observerStatus.active && observerStatus.callId) {
+                    try {
+                        await this.observer!.stop(observerStatus.callId);
+                    } catch {
+                        this.observerAvailable = false;
+                    }
+                }
+                return;
+            }
+
+            const callId = captureStatus.callId!;
+            const targetJid = captureStatus.targetJid!;
+            if (
+                observerStatus.active
+                && observerStatus.callId === callId
+                && observerStatus.targetJid === targetJid
+                && observerStatus.startedAt
+            ) {
+                if (
+                    this.activeObserverCapture?.callId !== callId
+                    || this.activeObserverCapture.targetJid !== targetJid
+                ) {
+                    this.activeObserverCapture = {
+                        callId,
+                        targetJid,
+                        startedAt: observerStatus.startedAt,
+                        trigger: 'recovered',
+                    };
+                }
+                this.observerStartFailure = null;
+                return;
+            }
+
+            if (!observerStatus.active && this.observerStartFailure?.callId !== callId) {
+                const known = this.activeObserverCapture?.callId === callId
+                    && this.activeObserverCapture.targetJid === targetJid
+                    ? this.activeObserverCapture
+                    : null;
+                try {
+                    const evidence = await this.observer!.stop(callId);
+                    this.completedObserverEvidence = {
+                        callId,
+                        evidence,
+                        trigger: known?.trigger ?? 'recovered',
+                    };
+                    this.activeObserverCapture = null;
+                    this.observerStartFailure = null;
+                    this.observerAvailable = true;
+                    return;
+                } catch {
+                    // No bounded TTL result exists; continue to explicit loss handling.
+                }
+            }
+
+            if (observerStatus.active && observerStatus.callId) {
+                try {
+                    await this.observer!.stop(observerStatus.callId);
+                } catch {
+                    this.observerAvailable = false;
+                }
+            }
+            this.activeObserverCapture = null;
+            if (this.observerStartFailure?.callId !== callId) {
+                this.observerStartFailure = {
+                    callId,
+                    startedAt: captureStatus.startTime ?? new Date(),
+                    limitation: 'browser_webrtc_observer_scope_lost_during_capture',
+                };
+            }
+        });
+    }
+
+    private async withObserverLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+        const previous = this.observerLifecycleTail;
+        let release!: () => void;
+        this.observerLifecycleTail = new Promise<void>(resolve => { release = resolve; });
+        await previous;
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
     }
 }

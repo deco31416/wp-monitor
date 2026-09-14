@@ -356,6 +356,135 @@ test('readiness keeps one early-document registration per active CDP target', as
     }
 });
 
+test('TTL expiration snapshots once, disarms the probe and preserves an idempotent bounded result', async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    let probeInstalled = false;
+    let snapshotCount = 0;
+    let disarmCount = 0;
+    let snapshotFails = false;
+    let now = Date.parse('2026-09-14T12:00:00.000Z');
+
+    class FakeWebSocket extends EventTarget {
+        static readonly OPEN = 1;
+        readyState = 0;
+
+        constructor(_url: string) {
+            super();
+            queueMicrotask(() => {
+                this.readyState = FakeWebSocket.OPEN;
+                this.dispatchEvent(new Event('open'));
+            });
+        }
+
+        send(data: string) {
+            const command = JSON.parse(data) as {
+                id: number;
+                method: string;
+                params?: Record<string, unknown>;
+            };
+            let result: Record<string, unknown> = {};
+            let error: { code: number } | undefined;
+            if (command.method === 'Runtime.evaluate') {
+                const expression = String(command.params?.expression ?? '');
+                if (expression.startsWith('(() => {') && expression.includes('bounded-periodic-stats-v2')) {
+                    probeInstalled = true;
+                }
+                if (expression.startsWith('Boolean(')) {
+                    result = { result: { type: 'boolean', value: probeInstalled } };
+                } else if (expression === 'globalThis.__wpMonitorWebRtcProbe?.arm?.() === true') {
+                    result = { result: { type: 'boolean', value: true } };
+                } else if (expression === buildSnapshotAndDisarmExpression()) {
+                    snapshotCount += 1;
+                    if (snapshotFails) {
+                        error = { code: -32_000 };
+                    } else {
+                        result = {
+                            result: {
+                                type: 'object',
+                                value: {
+                                    connectionCount: 1,
+                                    selectedPairs: [],
+                                    stateTransitions: [],
+                                    statsFailures: 0,
+                                    truncated: false,
+                                },
+                            },
+                        };
+                    }
+                } else if (expression === buildDisarmExpression()) {
+                    disarmCount += 1;
+                    result = { result: { type: 'boolean', value: true } };
+                }
+            }
+            queueMicrotask(() => {
+                this.dispatchEvent(new MessageEvent('message', {
+                    data: JSON.stringify({ id: command.id, ...(error ? { error } : { result }) }),
+                }));
+            });
+        }
+
+        close() {
+            this.readyState = 3;
+            this.dispatchEvent(new Event('close'));
+        }
+    }
+
+    const fetchImpl = (async () => {
+        const targets = JSON.stringify([{
+            type: 'page',
+            url: 'https://web.whatsapp.com/',
+            webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/page/whatsapp',
+        }]);
+        return new Response(targets, {
+            status: 200,
+            headers: { 'content-length': String(Buffer.byteLength(targets, 'utf8')) },
+        });
+    }) as typeof fetch;
+
+    Object.defineProperty(globalThis, 'WebSocket', {
+        configurable: true,
+        writable: true,
+        value: FakeWebSocket,
+    });
+    try {
+        const observer = new WebRtcCdpObserver('http://127.0.0.1:9222', fetchImpl, () => now);
+        await observer.start('CALL-TTL-001', '573001112233@s.whatsapp.net', 5);
+        await new Promise(resolve => setTimeout(resolve, 25));
+
+        assert.equal(observer.status().active, false);
+        const first = await observer.stop('CALL-TTL-001');
+        const second = await observer.stop('CALL-TTL-001');
+
+        assert.equal(first.status, 'available');
+        assert.equal(first.connectionCount, 1);
+        assert.ok(first.limitations.includes('browser_webrtc_observer_ttl_expired'));
+        assert.deepEqual(second, first);
+        assert.equal(snapshotCount, 1);
+        assert.ok(disarmCount >= 1);
+        await assert.rejects(
+            observer.start('CALL-TTL-001', '573001112233@s.whatsapp.net', 5),
+            /observer_call_id_reused/,
+        );
+        now += 60 * 60_000 + 1;
+        await assert.rejects(observer.stop('CALL-TTL-001'), /observer_scope_mismatch/);
+
+        snapshotFails = true;
+        await observer.start('CALL-TTL-002', '573001112233@s.whatsapp.net', 5);
+        await new Promise(resolve => setTimeout(resolve, 25));
+        const unavailable = await observer.stop('CALL-TTL-002');
+        assert.equal(unavailable.status, 'unavailable');
+        assert.deepEqual(unavailable.limitations, [
+            'browser_webrtc_observer_ttl_expired',
+            'browser_webrtc_observer_ttl_snapshot_unavailable',
+        ]);
+        assert.equal(snapshotCount, 2);
+        await observer.shutdown();
+    } finally {
+        if (originalDescriptor) Object.defineProperty(globalThis, 'WebSocket', originalDescriptor);
+        else Reflect.deleteProperty(globalThis, 'WebSocket');
+    }
+});
+
 test('production observer prioritizes the WhatsApp page over an unrelated blank page', () => {
     const selected = selectWhatsappCdpTarget([
         { type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/page/blank' },

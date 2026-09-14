@@ -62,6 +62,9 @@ Maintainer guidance:
 
 ### Fixed
 
+- Scoped TURN `CHANNEL-BIND` correlation to the exact allocation tuple, transport and peer, expired bindings after ten minutes, bounded active bindings and retained channel evidence to 64 entries, and declared unmatched or truncated observations instead of merging reused channel numbers.
+- Reconciled the packet capture and WebRTC observer as one serialized lifecycle across backend restarts, periodic health checks and concurrent stop operations; exact scopes recover safely, foreign/orphan scopes are disarmed, and an agent result that finishes first no longer causes browser evidence to be discarded.
+- Changed WebRTC TTL expiry to take one final bounded snapshot before disarming and retain it idempotently for the same `callId` for at most one hour and 32 calls; snapshot failures remain explicit and continue to fall back to packet evidence.
 - Serialized WebRTC observer start, stop, expiry and shutdown so concurrent requests cannot replace a newer scope and every controlled failure attempts to disarm the in-page probe.
 - Prevented unknown ICE candidate types from producing a direct-route confirmation; only explicit `host`, `srflx` or `prflx` pairs can corroborate an exact active five-tuple.
 - Prioritized the real WhatsApp Web CDP target over unrelated blank pages and made the synthetic CDP harness wait for signal-based Chrome termination before removing its temporary profile.
@@ -96,6 +99,7 @@ Maintainer guidance:
 
 ### Verification
 
+- OBS-29 hardening closeout on 2026-09-14: 436 backend tests and 42 frontend tests passed with typecheck, lint and both production builds; directed suites covered TURN allocation isolation/bounds, observer restart and race recovery, agent-first completion, TTL snapshot retrieval, idempotence, fail-closed scope mismatch and commercial report parity. Five synthetic report artifacts, documentation, Compose, immutable-container, production-license and dependency-audit gates passed without product data.
 - OBS-29 local closeout on 2026-09-12: 408 backend tests, 42 frontend tests, typecheck, lint, application builds, 71 Markdown files, 154 relative links, 36 Mermaid blocks, five report fixtures, 218 production packages and both dependency audits passed. Both observer flag states rendered correctly; all five images built, Node runtime images excluded TypeScript/`tsx`, and an isolated browser/observer CDP smoke passed without product data or published ports.
 - Selkies supply-chain recovery: the replacement digest resolved from the official GHCR manifest, the browser image built successfully, and an isolated non-root/read-only smoke returned `200` from both loopback noVNC and authenticated Selkies while the container remained healthy.
 - `pnpm run qa`: 323 backend/contract tests and 38 frontend tests passed with lint, TypeScript checks and production builds on 2026-09-08.

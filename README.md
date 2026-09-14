@@ -96,6 +96,7 @@ flowchart LR
         Calls[Call Traffic Analyzer]
         Browser[Persistent WhatsApp Web Browser]
         Agent[Isolated Capture Agent]
+        Observer[Unprivileged WebRTC Observer]
         IPIntel[IP Classification and Enrichment]
     end
 
@@ -123,8 +124,11 @@ flowchart LR
 
     Network --> IPIntel
     Browser --> Agent
+    Browser -->|loopback CDP| Observer
     API -->|HMAC control| Agent
+    API -->|signed bounded scope| Observer
     Agent --> Calls
+    Observer --> Calls
     Calls --> IPIntel
     Network --> Cases
     Calls --> Cases
@@ -142,12 +146,16 @@ flowchart TB
         LocalAPI[Backend API and Socket.IO]
         Browser[Chromium WhatsApp Web]
         Capture[Capture agent in browser network namespace]
+        Observer[WebRTC observer in browser network namespace]
         Analysis[Network and Call Analysis]
 
         LocalUI --> LocalAPI
         LocalAPI -->|signed HMAC commands| Capture
+        LocalAPI -->|signed bounded scope| Observer
         Browser --> Capture
+        Browser -->|loopback CDP| Observer
         Capture --> Analysis
+        Observer --> Analysis
     end
 
     subgraph NativeLocal[Native local-full]
@@ -188,6 +196,7 @@ sequenceDiagram
     participant WhatsApp as WhatsApp / Baileys
     participant Browser as WhatsApp Web Browser
     participant Capture as Isolated Capture Agent
+    participant Observer as WebRTC Observer
     participant MongoDB
     participant Reports as Report Engine
 
@@ -209,6 +218,11 @@ sequenceDiagram
         API->>MongoDB: Store RTT measurement or inconclusive result
     else Local network or call analysis
         API->>Capture: Open bounded capture window
+        opt Browser WebRTC evidence enabled
+            API->>Observer: Arm signed call scope
+            Browser-->>Observer: Sanitized selected-pair statistics
+            API->>Observer: Stop or recover bounded evidence
+        end
         Capture-->>API: Packet metadata and IP observations
         API->>MongoDB: Store analysis and audit metadata
     end
@@ -308,6 +322,8 @@ The call-analysis view can include:
 - Backend-owned route assessment that separates confirmed direct, probable
   direct, relay, mixed, and unresolved outcomes with explicit evidence sources
   and limitations
+- Optional sanitized WebRTC selected-pair evidence reconciled against the exact
+  IPv4/IPv6 five-tuple and bounded STUN/TURN transaction context
 - Customer-facing route conclusions in the existing Call tab, with accessible
   calibration, capture, processing, partial-result, and error states
 
@@ -446,7 +462,7 @@ docker compose up --build
 
 Before the first Compose start, set a unique `CAPTURE_AGENT_SHARED_SECRET` (32+ random bytes) and a 15+ character `BROWSER_VNC_PASSWORD` in the ignored `.env`. Provide a private MongoDB URI reachable from the backend container; use `host.docker.internal` instead of `127.0.0.1` when MongoDB runs on the Linux host. Compose forces general local capture off and delegates call capture to the isolated agent. The stack exposes the frontend on `4001`, backend on `4000`, noVNC fallback on `127.0.0.1:7900`, and a Selkies contingency binding on `127.0.0.1:7901` targeting internal port `8080`. Neither browser port is an Internet publication. It persists Baileys authentication, uploads, Redis AOF and the Chromium profile in named volumes. MongoDB remains an independently managed private service.
 
-Browser WebRTC evidence is disabled by default. To validate it in an authorized environment, set `WEBRTC_OBSERVER_ENABLED=true` and a dedicated `WEBRTC_OBSERVER_SHARED_SECRET` different from every other application secret. Compose then enables Chromium CDP only on `127.0.0.1:9222` inside the shared browser namespace and arms the unprivileged observer only for the bounded call capture. Neither CDP nor observer port `4200` is published to the host. The observer records sanitized ICE candidate-pair metadata and never SDP, credentials, media, message content or packet payload.
+Browser WebRTC evidence is disabled by default. To validate it in an authorized environment, set `WEBRTC_OBSERVER_ENABLED=true` and a dedicated `WEBRTC_OBSERVER_SHARED_SECRET` different from every other application secret. Compose then enables Chromium CDP only on `127.0.0.1:9222` inside the shared browser namespace and arms the unprivileged observer only for the bounded call capture. Neither CDP nor observer port `4200` is published to the host. The observer records sanitized ICE candidate-pair metadata and never SDP, credentials, media, message content or packet payload. When its TTL expires, it takes one final snapshot, disarms immediately and retains the result for the same `callId` only, for at most one hour and 32 calls; this recovery is idempotent and never extends or rearms observation.
 
 A Dokploy deployment may reuse private MongoDB/Redis services. Deploy it with `docker-compose.yml` plus `deploy/docker-compose.dokploy.yml`; the override selects `server-full`, reuses the configured data and tunnel networks, suppresses the bundled Redis container and removes backend/client host publications. Production volume names are mandatory and external: set them privately to the exact existing Baileys/uploads volumes and a dedicated pre-created browser-profile volume. Keeping the Compose project name alone does not guarantee compatibility with historical explicit names. See [Ubuntu VPS](docs/operations/ubuntu-vps.md) for the preview gate and E4 checklist.
 

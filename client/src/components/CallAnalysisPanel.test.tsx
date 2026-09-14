@@ -348,7 +348,14 @@ test.each([
 test('marks a bounded result as partial and explains its limitations', () => {
     const result = analysis();
     result.routeAssessment = routeAssessment('direct_probable', {
-        limitations: ['packet_capture_truncated', 'stun_peer_is_not_independent_confirmation'],
+        limitations: [
+            'packet_capture_truncated',
+            'stun_peer_is_not_independent_confirmation',
+            'browser_webrtc_observer_scope_recovered_after_backend_restart',
+            'browser_webrtc_observer_scope_lost_during_capture',
+            'browser_webrtc_observer_ttl_expired',
+            'browser_webrtc_observer_ttl_snapshot_unavailable',
+        ],
     });
 
     render(panel(result));
@@ -356,6 +363,10 @@ test('marks a bounded result as partial and explains its limitations', () => {
     expect(screen.getByRole('status')).toHaveTextContent('La captura alcanzó su límite');
     expect(screen.getByText('Resultado parcial')).toBeInTheDocument();
     expect(screen.getByText(/no constituye una segunda confirmación independiente/)).toBeInTheDocument();
+    expect(screen.getByText(/fue recuperado después de reiniciar el backend/)).toBeInTheDocument();
+    expect(screen.getByText(/perdió su alcance durante la captura/)).toBeInTheDocument();
+    expect(screen.getByText(/alcanzó su tiempo máximo y conservó automáticamente/)).toBeInTheDocument();
+    expect(screen.getByText(/snapshot final al vencer la ventana WebRTC/)).toBeInTheDocument();
 });
 
 test('shows WebRTC, five-tuple, and STUN/TURN evidence inside the existing call result', () => {

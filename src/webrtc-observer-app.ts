@@ -170,7 +170,11 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
             try {
                 await options.adapter.start(callId, target.value!, ttlMs);
                 res.status(201).json({ ok: true, callId, targetJid: target.value, idempotent: false });
-            } catch {
+            } catch (error) {
+                if (error instanceof Error && error.message === 'observer_call_id_reused') {
+                    res.status(409).json({ error: 'Call ID was already completed recently', code: 'observer_call_id_reused' });
+                    return;
+                }
                 res.status(503).json({ error: 'Browser WebRTC observation is unavailable', code: 'observer_start_unavailable' });
             }
         });
@@ -192,7 +196,7 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
                 return;
             }
             const status = options.adapter.status();
-            if (!status.active || status.callId !== callId) {
+            if (status.active && status.callId !== callId) {
                 res.status(409).json({ error: 'Observer scope does not match', code: 'observer_scope_mismatch' });
                 return;
             }
@@ -204,6 +208,10 @@ export function createWebRtcObserverApp(options: WebRtcObserverAppOptions): Expr
                 prune();
                 res.json(evidence);
             } catch {
+                if (!status.active) {
+                    res.status(409).json({ error: 'Observer scope does not match', code: 'observer_scope_mismatch' });
+                    return;
+                }
                 res.status(503).json({ error: 'Browser WebRTC evidence is unavailable', code: 'observer_stop_unavailable' });
             }
         });

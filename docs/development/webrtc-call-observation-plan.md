@@ -145,6 +145,24 @@ flowchart TD
   para impedir contaminacion entre llamadas, `getStats()` tolerante a conexiones
   cerradas y contratos acotados. La captura automatica declara que el inicio
   puede ser parcial; `ICE connected` no reemplaza el marcador humano.
+- Endurecimiento E2 del 2026-09-14: el backend reconcilia el alcance exacto del
+  observer con el estado autoritativo de la captura durante arranque y salud
+  periodica. Recupera un alcance coincidente despues de reiniciar, declara si el
+  observer perdio su estado, desarma alcances huerfanos o divergentes por su
+  `callId` exacto y serializa reconciliacion, inicio y cierre. No rearma una
+  observacion parcial ni mezcla contactos de forma automatica.
+- Endurecimiento E2 del 2026-09-14: al vencer el TTL, el observer obtiene un
+  unico snapshot final, desarma inmediatamente la sonda y conserva el resultado
+  por un maximo de una hora y 32 llamadas. El contrato `stop` puede recuperar
+  ese resultado por el mismo `callId` de forma idempotente; otro `callId`, una
+  entrada vencida o un observer reiniciado fallan cerrados. La reconciliacion
+  del backend consume primero esta evidencia acotada antes de declarar perdida
+  de alcance, sin rearmar ni prolongar la observacion.
+- Cierre de carrera E2 del 2026-09-14: si el capture-agent completa primero, la
+  reconciliacion conserva el snapshot activo o expirado del observer hasta que
+  el backend recupere el resultado idempotente de paquetes. Un alcance distinto
+  se desarma y produce una limitacion explicita; nunca se adjunta evidencia de
+  otra llamada.
 
 ### OBS-29.4 — Libro de flujos de cinco tuplas — `IMPLEMENTED (E2 LOCAL)`
 
@@ -167,6 +185,14 @@ flowchart TD
   rol ICE, `CHANNEL-NUMBER` y ChannelData sin payload. ChannelData solo se
   correlaciona tras un `CHANNEL-BIND`; una envoltura aislada queda como
   limitacion y nunca como prueba de ruta.
+- Endurecimiento E2 del 2026-09-14: cada enlace de canal queda acotado a la
+  asignacion TURN canonica (familia, protocolo, IP/puerto local e IP/puerto del
+  servidor). La reutilizacion de un numero entre relays, transportes o peers no
+  mezcla paquetes ni bytes; ChannelData sin enlace en esa asignacion y el
+  limite de 64 canales y enlaces activos se declaran como limitaciones. El enlace observado
+  expira a los 10 minutos, puede refrescarse solo mediante otro `CHANNEL-BIND` y
+  ChannelData no renueva su vigencia. Fixtures UDP/TCP, IPv4/IPv6, direccion
+  inversa, expiracion, reasignacion y memoria acotada pasan localmente.
 
 ### OBS-29.6 — Correlador de ruta v4 — `IMPLEMENTED (E2 LOCAL)`
 
@@ -215,6 +241,13 @@ flowchart TD
   finalizar sin tocar perfiles productivos.
 - Pendiente: repetir las puertas sobre el commit exacto en el VPS, verificar
   backup/rollback y ejecutar la unica llamada E4 autorizada de `OBS-29.9`.
+- Cierre local de endurecimiento del 2026-09-14: 436/436 pruebas backend y
+  42/42 frontend, typecheck, lint, builds y cinco fixtures de informe pasaron.
+  Las regresiones nuevas cubren asignaciones TURN aisladas, memoria acotada,
+  reinicios, vencimiento TTL, cierre concurrente, finalizacion del agente antes
+  del observer, idempotencia y rechazo de alcances ajenos. Documentacion,
+  Compose sintetico, contenedores inmutables, 218 licencias y ambos audits de
+  dependencias permanecen en PASS. Esto es E2 local; no reemplaza `OBS-29.9`.
 
 ### OBS-29.9 — Despliegue VPS y E4 autorizada — `TODO`
 
