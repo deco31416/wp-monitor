@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocateEvidenceRecordLimits, buildEvidencePackage, buildEvidenceZip, buildFinalCaseReport, renderFinalCaseReportHtml, renderFinalCaseReportPdf } from '../src/evidence-package.js';
+import { normalizeStoredCallObservationEvidence, normalizeStoredCallPhaseData } from '../src/call-analysis-history.js';
+import { normalizeStoredRouteAssessment } from '../src/call-route-assessment.js';
+import { relayWithEmptyWebRtc } from './fixtures/relay-empty-webrtc.js';
 
 function readStoredZipEntry(zip: Buffer, expectedName: string): string {
     let offset = 0;
@@ -642,6 +645,41 @@ test('keeps OBS-29 protocol provenance aligned across report, HTML, PDF, ZIP, an
     assert.match(zipText, /browserWebRtcStatus/);
     assert.match(callCsv, /"browserWebRtcStatus","browserSelectedPairCount","browserExposedRemoteCandidateCount","flowCount","stunTransactionCount","turnChannelCount"/);
     assert.match(callCsv, /"available","1","1","3","4","1"/);
+});
+
+test('E4 stored relay retains classification, confidence and empty browser coverage in every report format', () => {
+    const original = relayWithEmptyWebRtc();
+    const normalized = normalizeStoredCallObservationEvidence(normalizeStoredCallPhaseData(
+        JSON.parse(JSON.stringify(original)),
+    ));
+    const restored = {
+        ...normalized,
+        routeAssessment: normalizeStoredRouteAssessment(normalized.routeAssessment, normalized),
+    };
+    const evidencePackage = sampleEvidencePackage();
+    evidencePackage.sections.callAnalysis = [restored];
+    const report = buildFinalCaseReport(evidencePackage);
+    const route = report.findings.callRoutes[0];
+    assert.equal(route?.classification, 'relay_confirmed');
+    assert.equal(route?.confidenceScore, 78);
+    assert.equal(route?.primaryCandidateIp, null);
+    assert.equal(route?.independentDirectEvidenceCount, 0);
+    assert.equal(route?.browserSelectedPairCount, 0);
+    assert.equal(route?.flowCount, 1);
+    assert.ok(route?.limitations.includes('browser_peer_connection_not_observed'));
+    assert.equal(report.summary.candidateIpCount, 0);
+    const html = renderFinalCaseReportHtml(report);
+    const pdf = renderFinalCaseReportPdf(report).toString('ascii');
+    assert.match(html, /Conexión mediante infraestructura de WhatsApp/);
+    assert.match(pdf, /Conexion mediante infraestructura de WhatsApp/);
+    assert.match(pdf, /^%PDF-/);
+    const zip = buildEvidenceZip(evidencePackage);
+    const zippedReport = JSON.parse(readStoredZipEntry(zip, 'final-report.json'));
+    assert.deepEqual(zippedReport.findings.callRoutes, JSON.parse(JSON.stringify(report.findings.callRoutes)));
+    assert.match(readStoredZipEntry(zip, 'annexes/call-analysis.csv'), /relay_confirmed/);
+    for (const output of [JSON.stringify(evidencePackage), JSON.stringify(report), html, pdf, zip.toString('latin1')]) {
+        assert.doesNotMatch(output, /stored_observation_invalid/);
+    }
 });
 
 test('keeps route conclusions commercially equivalent across JSON, HTML and PDF', () => {

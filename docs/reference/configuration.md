@@ -69,6 +69,8 @@ El backend no escucha si MongoDB o Redis no estan disponibles, porque ambos son 
 
 El control backend→agente y backend→observer firma metodo, path, timestamp, nonce y hash del cuerpo. Ambos rechazan replay y solicitudes concurrentes incompatibles. El agente rechaza ademas cuerpos mayores de 64 KiB e interfaces no enumeradas. Los puertos `4100` y `4200` no se publican al host; CDP `9222` solo escucha en loopback dentro del namespace compartido. El observer se instala dormido y no conserva SDP, credenciales ICE, contenido, media ni payload. Cuando esta habilitado, el inicio solo se confirma si agente y observer acreditan el mismo alcance; la captura manual repite esa comprobacion tras dos segundos y un inicio parcial se compensa. Al vencer su TTL desarma la sonda y conserva el snapshot acotado por el mismo `callId` durante una hora como maximo; la captura de paquetes puede continuar y declara esta cobertura parcial.
 
+El observer toma checkpoints cada segundo fuera del documento Chromium, sin nueva variable de entorno. Una navegacion no extiende `WEBRTC_OBSERVER_TTL_MS`: solo puede rearmarse el alcance vigente en origen WhatsApp. El status firmado distingue `active` (propiedad del alcance) de `instrumentationActive` (instrumentacion comprobada recientemente); un alcance activo puede estar interrumpido o pendiente de verificar su desarme. Un stop no verificable conserva esa propiedad para reintentar hasta el vencimiento original. Los checkpoints son memoria acotada del proceso, no persistencia frente a reinicios. Detalle y limites: [plan WebRTC](../development/webrtc-call-observation-plan.md).
+
 ## Operador unico
 
 | Variable | Regla |

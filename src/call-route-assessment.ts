@@ -98,7 +98,11 @@ export function normalizeStoredRouteAssessment(
         && (!uniqueEvidenceSources.includes('five_tuple_flow') || Boolean(evidence.flowEvidence))
         && (!uniqueEvidenceSources.includes('stun_turn') || Boolean(evidence.stunTurnEvidence))
     );
-    const browserFlowMatchAvailable = evidence === undefined || hasTransportEvidence || !hasBrowserFlowEvidence
+    // Browser/flow books can be contextual (including an empty browser window).
+    // A matching direct pair is required only to substantiate a direct confirmation.
+    const requiresBrowserFlowMatch = (classification === 'direct_confirmed' || classification === 'mixed')
+        && directEvidenceCount === 2 && !hasTransportEvidence && hasBrowserFlowEvidence;
+    const browserFlowMatchAvailable = !requiresBrowserFlowMatch || evidence === undefined
         || evidence.browserWebRtcEvidence?.status === 'available'
             && evidence.browserWebRtcEvidence.selectedPairs.some(pair => (
                 pair.selected

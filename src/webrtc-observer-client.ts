@@ -16,6 +16,7 @@ export interface WebRtcObserverStatus {
     callId: string | null;
     targetJid: string | null;
     startedAt: Date | null;
+    instrumentationActive?: boolean;
 }
 
 export class WebRtcObserverClientError extends Error {
@@ -93,7 +94,11 @@ export class WebRtcObserverClient {
         if (active !== Boolean(callId && targetJid && startedAt && !Number.isNaN(startedAt.getTime()))) {
             throw this.invalidResponse();
         }
-        return { active, callId, targetJid, startedAt };
+        if (object.instrumentationActive !== undefined && typeof object.instrumentationActive !== 'boolean') throw this.invalidResponse();
+        if (object.instrumentationActive === true && !active) throw this.invalidResponse();
+        return { active, callId, targetJid, startedAt,
+            ...(object.instrumentationActive === undefined ? {} : { instrumentationActive: object.instrumentationActive }),
+        };
     }
 
     async start(callId: string, targetJid: string, ttlMs = 15 * 60_000): Promise<void> {

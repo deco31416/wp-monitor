@@ -3,6 +3,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {
     buildDisarmExpression,
+    buildProbeStatusExpression,
+    buildCheckpointExpression,
     buildProductionObserverInjection,
     buildSnapshotAndDisarmExpression,
     selectWhatsappCdpTarget,
@@ -26,8 +28,8 @@ test('production WebRTC probe is dormant by default and retains no SDP or conten
     assert.match(source, /disarm\(\)/);
     assert.match(source, /getStats\(\)/);
     assert.match(source, /setInterval/);
-    assert.match(source, /version: 2/);
-    assert.match(source, /bounded-periodic-stats-v2/);
+    assert.match(source, /version: 3/);
+    assert.match(source, /bounded-document-stats-v3/);
     assert.match(source, /firstObservedAt/);
     assert.match(source, /lastObservedAt/);
     assert.doesNotMatch(source, /createOffer/);
@@ -63,8 +65,8 @@ test('production WebRTC probe upgrades the legacy wrapper once without stacking 
     vm.runInContext(buildProductionObserverInjection(), context);
     const upgradedConstructor = context.RTCPeerConnection;
     assert.equal(legacyDisarms, 1);
-    assert.equal(context.__wpMonitorWebRtcProbe.version, 2);
-    assert.equal(context.__wpMonitorWebRtcProbe.implementation, 'bounded-periodic-stats-v2');
+    assert.equal(context.__wpMonitorWebRtcProbe.version, 3);
+    assert.equal(context.__wpMonitorWebRtcProbe.implementation, 'bounded-document-stats-v3');
     assert.equal(Object.getPrototypeOf(upgradedConstructor), FakeNativePeerConnection);
 
     vm.runInContext(buildProductionObserverInjection(), context);
@@ -294,7 +296,7 @@ test('readiness keeps one early-document registration per active CDP target', as
                 result = { identifier: 'script-1' };
             } else if (command.method === 'Runtime.evaluate') {
                 const expression = String(command.params?.expression ?? '');
-                if (expression.startsWith('(() => {') && expression.includes('bounded-periodic-stats-v2')) {
+                if (expression.startsWith('(() => {') && expression.includes('bounded-document-stats-v3')) {
                     probeInstalled = true;
                 }
                 if (expression.startsWith('Boolean(')) {
@@ -362,6 +364,7 @@ test('TTL expiration snapshots once, disarms the probe and preserves an idempote
     let snapshotCount = 0;
     let disarmCount = 0;
     let snapshotFails = false;
+    let scopeToken: string | null = null;
     let now = Date.parse('2026-09-14T12:00:00.000Z');
 
     class FakeWebSocket extends EventTarget {
@@ -386,14 +389,17 @@ test('TTL expiration snapshots once, disarms the probe and preserves an idempote
             let error: { code: number } | undefined;
             if (command.method === 'Runtime.evaluate') {
                 const expression = String(command.params?.expression ?? '');
-                if (expression.startsWith('(() => {') && expression.includes('bounded-periodic-stats-v2')) {
+                if (expression.startsWith('(() => {') && expression.includes('bounded-document-stats-v3')) {
                     probeInstalled = true;
                 }
                 if (expression.startsWith('Boolean(')) {
                     result = { result: { type: 'boolean', value: probeInstalled } };
-                } else if (expression === 'globalThis.__wpMonitorWebRtcProbe?.arm?.() === true') {
+                } else if (expression.startsWith('globalThis.__wpMonitorWebRtcProbe?.arm?.(')) {
+                    scopeToken = JSON.parse(expression.slice(expression.indexOf('(') + 1, expression.indexOf(',')));
                     result = { result: { type: 'boolean', value: true } };
-                } else if (expression === buildSnapshotAndDisarmExpression()) {
+                } else if (expression === buildProbeStatusExpression()) {
+                    result = { result: { value: { origin: 'https://web.whatsapp.com', probe: { documentToken: 'doc-1', scopeToken, armed: scopeToken !== null } } } };
+                } else if (expression === buildCheckpointExpression()) {
                     snapshotCount += 1;
                     if (snapshotFails) {
                         error = { code: -32_000 };
@@ -402,17 +408,19 @@ test('TTL expiration snapshots once, disarms the probe and preserves an idempote
                             result: {
                                 type: 'object',
                                 value: {
-                                    connectionCount: 1,
+                                    state: { documentToken: 'doc-1', scopeToken },
+                                    snapshot: { connectionCount: 1,
                                     selectedPairs: [],
                                     stateTransitions: [],
                                     statsFailures: 0,
-                                    truncated: false,
+                                    truncated: false },
                                 },
                             },
                         };
                     }
                 } else if (expression === buildDisarmExpression()) {
                     disarmCount += 1;
+                    scopeToken = null;
                     result = { result: { type: 'boolean', value: true } };
                 }
             }
@@ -475,7 +483,7 @@ test('TTL expiration snapshots once, disarms the probe and preserves an idempote
         assert.equal(unavailable.status, 'unavailable');
         assert.deepEqual(unavailable.limitations, [
             'browser_webrtc_observer_ttl_expired',
-            'browser_webrtc_observer_ttl_snapshot_unavailable',
+            'browser_final_checkpoint_unavailable',
         ]);
         assert.equal(snapshotCount, 2);
         await observer.shutdown();

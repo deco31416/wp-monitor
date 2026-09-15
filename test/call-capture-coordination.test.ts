@@ -17,7 +17,7 @@ interface HarnessOptions {
     agentStart?: 'ok' | 'reject' | 'hang';
     observerStart?: 'ok' | 'reject';
     agentPostStartStatus?: 'state' | 'inactive' | 'inactive_after_first' | 'error';
-    observerPostStartStatus?: 'state' | 'inactive' | 'error';
+    observerPostStartStatus?: 'state' | 'inactive' | 'error' | 'disarmed';
     agentStopFails?: boolean;
     observerStopFails?: boolean;
     observerFailuresBeforeSuccess?: number;
@@ -124,6 +124,7 @@ function buildHarness(options: HarnessOptions = {}) {
             const active = options.observerPostStartStatus === 'inactive' ? false : observerActive;
             return {
                 active,
+                instrumentationActive: active && options.observerPostStartStatus !== 'disarmed',
                 callId: active ? activeCallId : null,
                 targetJid: active ? TARGET_JID : null,
                 startedAt: active ? new Date('2026-09-14T20:00:00.010Z') : null,
@@ -220,6 +221,13 @@ test('post-start inactive capture reproduces E4 and disarms the active observer'
     assert.equal(harness.state().agentActive, false);
     assert.equal(harness.state().observerActive, false);
     assert.ok(harness.logs[0]?.causes.includes('capture_post_start_inactive'));
+});
+
+test('a logical observer scope without effective instrumentation fails coordinated startup', async () => {
+    const harness = buildHarness({ observerPostStartStatus: 'disarmed' });
+    await expectIncompleteStart(harness.service, 'CALL-ATOMIC-DISARMED');
+    assert.equal(harness.state().agentActive, false);
+    assert.equal(harness.state().observerActive, false);
 });
 
 test('stability verification catches a capture that closes after its first active acknowledgement', async () => {

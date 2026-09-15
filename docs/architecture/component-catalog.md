@@ -37,6 +37,12 @@ Frontera unica para captura de llamada. En modo `local` delega al analizador nat
 
 Instalan una sonda dormida sobre `RTCPeerConnection`, separan capturas por generacion y consultan unicamente campos permitidos de `getStats()`. El servicio interno usa HMAC, nonce, TTL, exclusion e idempotencia; el cliente bloquea redirects y valida el contrato completo. CDP solo acepta loopback y targets WhatsApp/about:blank. No se leen SDP, ICE credentials, media, mensajes ni payload.
 
+El rearme de una captura exige origen WhatsApp, alcance vigente y vencimiento original. Eventos CDP y checkpoints periodicos detectan perdida del contexto; el status distingue alcance logico e instrumentacion efectiva. Stop bloquea rearmes y un desarme no verificable conserva el alcance para reintento, sin extender su TTL.
+
+### `src/webrtc-checkpoints.ts`
+
+Conserva snapshots sanitizados en memoria del observer, fuera del documento Chromium: sustituye consultas acumulativas de la misma generacion y agrega generaciones con IDs separados. Limita a 16 generaciones, 32 conexiones, 16 pares y 64 transiciones; declara huecos y truncacion. No sobrevive a reinicios del observer ni recupera observaciones perdidas entre checkpoints.
+
 ### `src/call-observation-evidence.ts`
 
 Define y normaliza fail-closed los libros versionados `browserWebRtcEvidence`, `flowEvidence` y `stunTurnEvidence`. Cada libro tiene limites, truncamiento y limitaciones explicitas para que historial, correlador, UI e informes consuman una sola verdad.

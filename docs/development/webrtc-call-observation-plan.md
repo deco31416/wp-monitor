@@ -46,6 +46,7 @@ flowchart TD
     Observer[webrtc-observer no privilegiado]
     Agent[capture-agent NET_RAW + NET_ADMIN]
     Stats[WebRTC getStats sanitizado]
+    Checkpoints[Checkpoints acotados fuera del documento]
     Flow[Libro de flujos 5-tupla]
     Stun[Transacciones STUN/TURN]
     Baileys[Evidencia Baileys disponible]
@@ -59,7 +60,7 @@ flowchart TD
     Browser --> CDP --> Observer --> Stats
     Browser -->|metadata de red| Agent --> Flow
     Agent --> Stun
-    Stats --> Correlator
+    Stats --> Checkpoints --> Correlator
     Flow --> Correlator
     Stun --> Correlator
     Baileys --> Correlator
@@ -262,7 +263,60 @@ flowchart TD
   Compose sintetico, contenedores inmutables, 218 licencias y ambos audits de
   dependencias permanecen en PASS. Esto es E2 local; no reemplaza `OBS-29.9`.
 
-### OBS-29.9 — Despliegue VPS y E4 autorizada — `TODO`
+### OBS-29.9 — Despliegue VPS y E4 autorizada — `PARTIAL / E4 BLOCKED`
+
+- Informe operacional del operador tras desplegar la correccion `fff696b`:
+  coordinacion atomica PASS, 10.409 paquetes en 359 s, cero descartados,
+  stop idempotente y ninguna captura residual. E1/E2/E3 reportados PASS.
+- Bloqueo reproducido localmente: el resultado original `relay_confirmed`
+  (78/100, sin candidata directa) se convertia al leerlo en `unresolved` con
+  `stored_observation_invalid`. El normalizador exigia coincidencia directa
+  al encontrar libros `browser_webrtc` y `five_tuple_flow`, aun si WebRTC
+  no tenia conexiones ni pares seleccionados.
+- Correccion local: exigir esa coincidencia solo cuando se afirma una
+  confirmacion directa sustentada por navegador; conservar los controles de
+  libros ausentes, conteos imposibles y candidatos desconocidos. Regresiones
+  sinteticas cubren serializacion, lectura y paridad JSON/HTML/PDF/ZIP.
+- Diagnostico separado del observer (informe de terminal): el documento de
+  Chromium fue sustituido despues del fin de llamada y antes del snapshot
+  final. El estado residia solo en `globalThis`, se perdia con el documento y
+  la nueva sonda quedaba dormida. Esto explica la perdida de continuidad,
+  pero no demuestra que existieran pares seleccionados antes de la perdida.
+- Correccion local de continuidad: checkpoints sanitizados en memoria del
+  proceso observer cada segundo, con una sola lectura en curso; sustitucion
+  de snapshots dentro de una generacion y agregacion entre generaciones.
+  Eventos CDP y comprobacion periodica invalidan la instrumentacion perdida;
+  solo se rearma en `https://web.whatsapp.com`, con el mismo token de alcance
+  y el vencimiento absoluto original. Cierre o TTL impiden nuevos rearmes.
+- Limites: 16 generaciones, 32 conexiones, 16 pares y 64 transiciones en el
+  resultado; truncacion y huecos declarados. Los checkpoints sobreviven al
+  cambio de documento, no al reinicio del observer. Se puede perder evidencia
+  entre checkpoints o antes del rearme; no se recuperan conexiones ya creadas
+  antes de instrumentar. No se infiere una IP ni una ruta por esa ausencia.
+- El status firmado distingue `active` (alcance logico) de
+  `instrumentationActive` (CDP conectado, sonda instalada/armada y comprobada
+  en los ultimos dos intervalos). Incluye `cdpConnected`, `probeInstalled`,
+  `probeArmed` y `documentGeneration`. El backend rechaza instrumentacion
+  explicitamente inactiva al confirmar el inicio; conserva compatibilidad
+  con el status anterior que no incluia el campo. Un desarme no verificable
+  mantiene el alcance en cierre, sin rearme, hasta reintento o TTL; no se
+  anuncia una detencion verificada. Los logs contienen causa acotada,
+  `callIdHash`, `targetHash` y generacion, nunca JID, IP o token.
+- Regresiones locales: VM ejecuta la sonda real con CDP y conexiones sinteticas;
+  cubre navegacion, desconexion, rearme fallido, timeout, TTL, stop concurrente,
+  desarme no verificable, limites, ausencia de duplicados y ciclos posteriores.
+  Es evidencia E2, no una validacion de Chromium/WhatsApp en el VPS.
+- Verificacion local de estas correcciones: `pnpm run qa` PASS, 467 pruebas
+  backend y 43 frontend; typecheck de producto/pruebas, lint y ambos builds
+  PASS. `docs:check`: 71 Markdown, 155 enlaces relativos y 36 Mermaid PASS;
+  `git diff --check` PASS. No se hicieron llamadas, despliegues ni cambios de
+  infraestructura durante esta verificacion.
+- Pendiente: desplegar una correccion autorizada y verificar la lectura del
+  analisis existente y sus exportaciones; no requiere otra llamada para
+  reproducir el bug de normalizacion. Validar continuidad con Chromium
+  aislado y despues en el VPS bajo autorizacion separada. La evidencia TURN
+  de la captura anterior procede de la red y no prueba observacion WebRTC.
+- OBS-29.9 permanece abierta hasta resolver y verificar los puntos anteriores.
 
 - El intento RELEASE del SHA `7a5b60e` completo E1, E2, Preview Compose y
   backup, pero se detuvo antes de modificar el runtime: GHCR habia retirado el
@@ -271,9 +325,8 @@ flowchart TD
   `v2.0.0rc0-debiantrixie` fijada a su indice OCI y hace que
   `containers:check` rechace `main` y `latest` incluso con digest. El build
   limpio y el smoke aislado no-root/read-only pasaron, incluidos noVNC,
-  autenticacion Selkies, Chromium y CDP solo interno. Falta generar el nuevo
-  SHA autorizado y repetir la promocion en VPS; el runtime anterior no fue
-  modificado.
+  autenticacion Selkies, Chromium y CDP solo interno. Esa puerta se supero
+  posteriormente; el informe operacional mas reciente figura arriba.
 - Validar Preview Compose, red, puertos, privilegios, secretos por nombre,
   persistencia, backup y rollback antes de desplegar.
 - Activar inicialmente en `develop` y ejecutar una unica llamada autorizada.

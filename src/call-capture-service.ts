@@ -399,7 +399,8 @@ export class CallCaptureService {
     }
 
     private matchesObserverScope(status: WebRtcObserverStatus | null, callId: string, targetJid: string): boolean {
-        return status?.active === true && status.callId === callId && status.targetJid === targetJid;
+        return status?.active === true && status.instrumentationActive !== false
+            && status.callId === callId && status.targetJid === targetJid;
     }
 
     private async compensateFailedStart(callId: string): Promise<CallCaptureCompensationOutcome> {

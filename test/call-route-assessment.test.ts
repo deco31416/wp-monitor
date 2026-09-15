@@ -1,6 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeStoredRouteAssessment } from '../src/call-route-assessment.js';
+import { normalizeStoredCallObservationEvidence, normalizeStoredCallPhaseData } from '../src/call-analysis-history.js';
+import { relayWithEmptyWebRtc } from './fixtures/relay-empty-webrtc.js';
+
+test('E4 relay survives serialization and evidence normalization with no selected browser pair', () => {
+    const original = relayWithEmptyWebRtc();
+    assert.equal(original.routeAssessment?.classification, 'relay_confirmed');
+    assert.equal(original.routeAssessment?.confidenceScore, 78);
+    assert.equal(original.routeAssessment?.primaryCandidateIp, null);
+    const stored = normalizeStoredCallObservationEvidence(normalizeStoredCallPhaseData(
+        JSON.parse(JSON.stringify(original)),
+    ));
+    assert.ok(stored.browserWebRtcEvidence);
+    assert.ok(stored.flowEvidence);
+    assert.deepEqual(normalizeStoredRouteAssessment(stored.routeAssessment, stored), original.routeAssessment);
+});
+
+test('contextual browser and flow books do not require direct confirmation for probable, mixed-probable or unresolved routes', () => {
+    const evidence = relayWithEmptyWebRtc();
+    for (const classification of ['direct_probable', 'mixed', 'unresolved'] as const) {
+        const assessment = {
+            ...evidence.routeAssessment!, classification,
+            confidenceScore: classification === 'unresolved' ? 20 : 60,
+            independentDirectEvidenceCount: classification === 'unresolved' ? 0 : 1,
+            primaryCandidateIp: classification === 'unresolved' ? null : '203.0.113.40',
+            reasonCodes: [], limitations: [],
+        };
+        assert.deepEqual(normalizeStoredRouteAssessment(assessment, evidence), assessment);
+    }
+});
+
+test('direct and mixed confirmations still reject empty browser pairs', () => {
+    const evidence = relayWithEmptyWebRtc();
+    for (const classification of ['direct_confirmed', 'mixed'] as const) {
+        const assessment = {
+            ...evidence.routeAssessment!, classification,
+            independentDirectEvidenceCount: 2, primaryCandidateIp: '203.0.113.40',
+        };
+        assert.deepEqual(normalizeStoredRouteAssessment(assessment, evidence)?.limitations, ['stored_observation_invalid']);
+    }
+});
+
+test('relay still rejects missing declared books and impossible direct evidence counts', () => {
+    const evidence = relayWithEmptyWebRtc();
+    assert.deepEqual(normalizeStoredRouteAssessment(evidence.routeAssessment, {})?.limitations, ['stored_observation_invalid']);
+    assert.deepEqual(normalizeStoredRouteAssessment({
+        ...evidence.routeAssessment!, independentDirectEvidenceCount: 2,
+    }, evidence)?.limitations, ['stored_observation_invalid']);
+});
 
 test('preserves and deduplicates a valid stored route assessment', () => {
     assert.deepEqual(normalizeStoredRouteAssessment({

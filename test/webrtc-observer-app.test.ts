@@ -88,6 +88,21 @@ async function withServer(
     }
 }
 
+test('signed status distinguishes a logical scope from interrupted instrumentation', async () => {
+    await withServer(async (origin, adapter) => {
+        const originalStatus = adapter.status.bind(adapter);
+        adapter.status = () => ({ ...originalStatus(), instrumentationActive: false });
+        const client = new WebRtcObserverClient({ baseUrl: origin, sharedSecret: secret });
+        await client.start(callId, targetJid, 60000);
+        const status = await client.status();
+        assert.equal(status.active, true);
+        assert.equal(status.instrumentationActive, false);
+        assert.equal(status.callId, callId);
+        await client.stop(callId);
+        assert.equal((await client.status()).active, false);
+    });
+});
+
 test('observer enforces a signed exclusive scope and idempotent stop', async () => {
     await withServer(async origin => {
         let nonce = 0;
